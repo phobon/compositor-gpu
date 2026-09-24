@@ -233,7 +233,7 @@ export class ImagePass implements RenderPass {
       fragment: {
         module,
         entryPoint: 'fs_blit',
-        targets: [{ format: 'rgba8unorm-srgb' }]
+        targets: [{ format: 'rgba8unorm' }]
       },
       primitive: { topology: 'triangle-list' }
     })
@@ -313,7 +313,7 @@ export class ImagePass implements RenderPass {
       : 1 + Math.floor(Math.log2(Math.max(w, h)))
     const texture = device.createTexture({
       size: [w, h],
-      format: 'rgba8unorm-srgb',
+      format: 'rgba8unorm',
       mipLevelCount,
       usage:
         GPUTextureUsage.TEXTURE_BINDING |

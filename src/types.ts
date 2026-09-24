@@ -72,6 +72,8 @@ export interface Compositor {
   destroy(): void
   /** True when a real GPU pipeline is active (false in passthrough). */
   readonly active: boolean
+  /** The overlay canvas; null in passthrough/inert. */
+  readonly canvas: HTMLCanvasElement | null
   /** Live counts + fps, for debug overlays. */
   stats(): CompositorStats
 }

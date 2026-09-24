@@ -13,10 +13,38 @@ window.addEventListener('error', (e) => {
   logEl.textContent += `${e.message}\n`
 })
 
-const state = { animate: true }
+// `?vr` selects deterministic capture mode for the visual-regression harness:
+// no glyph animation, live canvas frozen after one frame.
+const vrMode = new URLSearchParams(location.search).has('vr')
+const state = { animate: !vrMode }
+
+function raf(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+async function raf2(): Promise<void> {
+  await raf()
+  await raf()
+}
+
+function imagesReady(): Promise<void> {
+  const imgs = Array.from(document.images)
+  return Promise.all(
+    imgs.map((img) =>
+      img.complete
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            img.addEventListener('load', () => resolve(), { once: true })
+            img.addEventListener('error', () => resolve(), { once: true })
+          })
+    )
+  ).then(() => undefined)
+}
 
 async function boot(): Promise<void> {
   const stage = $('stage')
+
+  if (vrMode) $('b-animate').setAttribute('aria-pressed', 'false')
 
   const compositor = await createCompositor({
     root: stage,
@@ -46,6 +74,42 @@ async function boot(): Promise<void> {
   $('s-gpu').textContent = compositor.active ? 'yes' : 'no'
   $('s-gpu').className = compositor.active ? 'ok' : 'bad'
   $('s-state').textContent = compositor.active ? 'active' : 'passthrough'
+
+  const textReady = (): Promise<void> =>
+    new Promise((resolve) => {
+      const check = (): void => {
+        if (!compositor.text || compositor.text.ready) resolve()
+        else requestAnimationFrame(check)
+      }
+      check()
+    })
+
+  window.__vr = {
+    ready: (async () => {
+      if (!compositor.active) return
+      await textReady()
+      await document.fonts.ready
+      await imagesReady()
+      await raf2()
+    })(),
+    async setMode(mode) {
+      const cv = compositor.canvas
+      if (cv) {
+        if (mode === 'dom') {
+          compositor.setSourceHidden(false)
+          cv.style.visibility = 'hidden'
+        } else if (mode === 'gpu') {
+          compositor.setSourceHidden(true)
+          cv.style.visibility = 'visible'
+        } else {
+          compositor.setSourceHidden(false)
+          cv.style.visibility = 'visible'
+        }
+      }
+      await raf2()
+    },
+    stats: () => compositor.stats()
+  }
 
   if (!compositor.active) {
     logEl.textContent = 'WebGPU unavailable — showing the plain DOM.'
@@ -105,7 +169,7 @@ async function boot(): Promise<void> {
   })
 }
 
-function animateLiveCanvas(): void {
+function animateLiveCanvas({ once }: { once: boolean }): void {
   const cv = document.querySelector('.livecanvas') as HTMLCanvasElement | null
   const ctx = cv?.getContext('2d')
   if (!cv || !ctx) return
@@ -120,10 +184,13 @@ function animateLiveCanvas(): void {
       ctx.fillStyle = `hsl(${((t / 18 + i * 52) % 360).toFixed(0)} 82% 62%)`
       ctx.fill()
     }
-    requestAnimationFrame(draw)
+    if (!once) requestAnimationFrame(draw)
   }
-  requestAnimationFrame(draw)
+  // Under `?vr` a single deterministic frame is drawn directly (a real rAF
+  // timestamp would differ between harness runs and break the diff).
+  if (once) draw(1000)
+  else requestAnimationFrame(draw)
 }
 
-animateLiveCanvas()
+animateLiveCanvas({ once: vrMode })
 void boot()

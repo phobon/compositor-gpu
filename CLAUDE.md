@@ -13,10 +13,21 @@ npm run lint:fix   # biome check --write src
 npm run format     # biome format --write .
 ```
 
-There is **no test framework**. Correctness — especially of the WGSL — is
-validated visually in the playground; WebGPU cannot run headless in a sandbox.
-When changing shaders or the sync loop, say so and ask the user to check the
-playground rather than claiming it works.
+There is no unit-test framework. Rendering is checked with the
+**visual-regression harness**: `npm run test:visual` (Playwright + pixelmatch,
+`test/visual/run.ts`) captures each `section[data-vr]` of the playground in
+DOM-only and GPU-only mode and reports `parity` (DOM vs GPU mismatch %,
+informational — Slug's glyph AA differs from the browser's, so text sections
+sit around 3–5%) and `regression` (GPU capture vs a local golden, gating at
+0.5%; `--update` rewrites goldens, which are GPU-specific and gitignored).
+Headless WebGPU works: the harness tries the real GPU first and falls back to
+SwiftShader (`--enable-unsafe-webgpu --enable-features=Vulkan
+--use-angle=swiftshader --use-vulkan=swiftshader`), so it also runs in a
+sandbox with no GPU. First run needs `npx playwright install chromium`. After
+any shader / reader / sync change: run it, read the `*-parity-diff.png` files
+in `test/visual/out/`, and describe what differs rather than claiming it
+works. WGSL can also be validated offline with `naga` (`cargo install
+naga-cli`) before a run.
 
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
 bundles `src/index.ts` as an ES library with `typegpu` and `opentype.js`
@@ -88,9 +99,10 @@ Conventions each pass must follow:
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is
   the only way WGSL compile errors become visible.
 
-Colours are **linear** (converted from sRGB in `util/color.ts` by a 1×1 canvas
-probe) and blending is **premultiplied** (`one` / `one-minus-src-alpha`), so
-fragment shaders must return `vec4f(rgb * a, a)`.
+Colours are **sRGB-encoded** (via a 1×1 canvas probe in `util/color.ts`, no
+linearisation) and blending is **premultiplied in sRGB space** (`one` /
+`one-minus-src-alpha`), deliberately, to match browser compositing —
+fragment shaders still return `vec4f(rgb * a, a)`.
 
 ### Text (`src/text/slug/`)
 The marquee feature; read `src/text/slug/README.md` for data layout and

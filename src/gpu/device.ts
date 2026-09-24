@@ -8,7 +8,8 @@ export interface GpuContext {
   canvas: HTMLCanvasElement
   context: GPUCanvasContext
   format: GPUTextureFormat
-  /** sRGB view format the render pass targets, so linear output encodes right. */
+  /** View format the render pass targets — the preferred canvas format,
+   * unmodified, so we blend in sRGB space like the browser does. */
   viewFormat: GPUTextureFormat
 }
 
@@ -45,14 +46,11 @@ export async function initGpu(
       return null
     }
     const format = navigator.gpu.getPreferredCanvasFormat()
-    const viewFormat = (
-      format.endsWith('-srgb') ? format : `${format}-srgb`
-    ) as GPUTextureFormat
+    const viewFormat = format
     context.configure({
       device,
       format,
-      alphaMode: 'premultiplied',
-      viewFormats: [viewFormat]
+      alphaMode: 'premultiplied'
     })
     return { root, device, canvas, context, format, viewFormat }
   } catch (err) {

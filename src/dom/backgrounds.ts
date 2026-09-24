@@ -1,5 +1,5 @@
 import type { ImageRecord, Rect } from '../scene/records'
-import { readCorners } from './styles'
+import { mapBackgroundPosition, px, readCorners } from './styles'
 
 /**
  * Split a CSS value list on top-level commas (commas inside parentheses,
@@ -57,33 +57,6 @@ export function mapBackgroundSize(
   return 'fill'
 }
 
-/** One background-position component -> a 0..1 fraction of the free space.
- * Percentages map directly; keywords resolve to their CSS fraction; a
- * length (px etc.) can't be turned into a fraction without knowing the free
- * space here, so it's clamped to 0 or 1 by sign (an approximation). */
-function positionComponent(token: string): number | null {
-  if (token === 'center') return 0.5
-  if (token === 'left' || token === 'top') return 0
-  if (token === 'right' || token === 'bottom') return 1
-  if (token.endsWith('%')) {
-    const n = Number.parseFloat(token)
-    return Number.isFinite(n) ? n / 100 : null
-  }
-  const n = Number.parseFloat(token)
-  if (!Number.isFinite(n)) return null
-  return n <= 0 ? 0 : 1
-}
-
-/** background-position -> [x, y] fractions. Defaults to [0, 0] (the
- * ImageRecord default for backgrounds) whenever it can't be parsed. */
-export function mapBackgroundPosition(position: string): [number, number] {
-  const tokens = position.trim().split(/\s+/).filter(Boolean)
-  if (tokens.length < 2) return [0, 0]
-  const x = positionComponent(tokens[0] ?? '') ?? 0
-  const y = positionComponent(tokens[1] ?? '') ?? 0
-  return [x, y]
-}
-
 /** background-repeat -> whether the image tiles. Only exact `no-repeat`
  * turns tiling off; `repeat-x`/`repeat-y`/`space`/`round` are approximated
  * as tiling (fit 'none' repeats both axes; see imageRenderer.ts). */
@@ -120,12 +93,33 @@ export function loadBackground(
 }
 
 /**
+ * The padding-box rect (document space) for an element's doc-space border
+ * box `rect`, given its computed border widths.
+ */
+function paddingRect(s: CSSStyleDeclaration, rect: Rect): Rect {
+  const bl = px(s.borderLeftWidth)
+  const bt = px(s.borderTopWidth)
+  const br = px(s.borderRightWidth)
+  const bb = px(s.borderBottomWidth)
+  return {
+    x: rect.x + bl,
+    y: rect.y + bt,
+    width: Math.max(0, rect.width - bl - br),
+    height: Math.max(0, rect.height - bt - bb)
+  }
+}
+
+/**
  * Build an ImageRecord for an element's first `background-image` url layer,
  * or null when there isn't one (none, a gradient, or still loading).
- * `rect` is the element's doc-space border box, used as the background
- * positioning area — the CSS default is actually the padding-box, so this
- * is an approximation that ignores border width. `onReady` is called once
- * the image finishes loading, so the caller can re-read the element.
+ * `rect` is the element's doc-space border box. The tile/cover/contain
+ * area is the padding box (CSS `background-origin: padding-box`, the
+ * default), so the record's `rect` is `rect` inset by the border widths.
+ * `ImageRecord` has only one `rect`, used for both placement and the
+ * border-radius clip, so the clip ends up applied to the padding box too
+ * — a minor approximation (the border ring itself isn't otherwise clipped
+ * by the radius here anyway). `onReady` is called once the image finishes
+ * loading, so the caller can re-read the element.
  */
 export function readBackgroundImage(
   el: Element,
@@ -139,16 +133,17 @@ export function readBackgroundImage(
   if (!url) return null
   const img = loadBackground(url, onReady)
   if (!img) return null
-  if (rect.width <= 0 || rect.height <= 0) return null
+  const paintRect = paddingRect(s, rect)
+  if (paintRect.width <= 0 || paintRect.height <= 0) return null
   return {
     kind: 'image',
     id,
-    rect,
+    rect: paintRect,
     source: img,
     objectFit: mapBackgroundSize(s.backgroundSize),
     position: mapBackgroundPosition(s.backgroundPosition),
     repeat: mapBackgroundRepeat(s.backgroundRepeat),
-    radius: readCorners(s),
+    radius: readCorners(s, rect),
     opacity: 1,
     z: 0,
     clip,

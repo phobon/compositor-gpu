@@ -215,94 +215,111 @@
   </head>
   <body>
     <div id="stage">
-      <h1>Every letter can move.</h1>
-      <p>
-        This is a real DOM — <span class="pill">selectable</span>, accessible,
-        laid out by the browser — then mirrored onto the GPU and painted with
-        the Slug algorithm.
-      </p>
-      <h2>Boxes track layout</h2>
-      <div class="card">
-        Backgrounds, borders and radii mirror as instanced rounded rects. Hit
-        <b>GPU-only</b> to hide the DOM paint and see just the GPU layer.
-      </div>
-
-      <h2>Images mirror too</h2>
-      <div class="imgrow">
-        <figure><img class="fill" src="./test.png" alt="" /><figcaption>fill</figcaption></figure>
-        <figure><img class="cover" src="./test.png" alt="" /><figcaption>cover</figcaption></figure>
-        <figure><img class="contain" src="./test.png" alt="" /><figcaption>contain</figcaption></figure>
-      </div>
-
-      <h2>Gradients &amp; backgrounds</h2>
-      <div class="imgrow">
-        <figure style="width: 150px;">
-          <div style="width: 150px; height: 100px; border-radius: 14px; background: linear-gradient(to top right, #6a5cff, #06b6d4);"></div>
-          <figcaption>to top right</figcaption>
-        </figure>
-        <figure style="width: 150px;">
-          <div style="width: 150px; height: 100px; border-radius: 14px; background-color: #22222a; background: linear-gradient(90deg, #ec4899, transparent);"></div>
-          <figcaption>→ transparent</figcaption>
-        </figure>
-        <figure style="width: 150px;">
-          <div style="width: 150px; height: 100px; border-radius: 14px; background: radial-gradient(circle at 30% 70%, #fbbf24, #7f1d1d 70%);"></div>
-          <figcaption>radial</figcaption>
-        </figure>
-        <figure style="width: 150px;">
-          <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) center / cover no-repeat; border: 1px solid #2a2a30;"></div>
-          <figcaption>cover, rounded</figcaption>
-        </figure>
-        <figure style="width: 150px;">
-          <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) 0 0 / auto repeat; border: 1px solid #2a2a30;"></div>
-          <figcaption>tiled</figcaption>
-        </figure>
-        <figure style="width: 150px;">
-          <img src="./test.png" style="width: 150px; height: 150px; border-radius: 50%; object-fit: cover; object-position: 100% 50%; display: block; border: 1px solid #2a2a30;" alt="" />
-          <figcaption>object-position, circle</figcaption>
-        </figure>
-      </div>
-      <p class="hint">Gradients and background images render in the GPU layer; compare against the DOM with GPU-only toggle.</p>
-
-      <h2>Overflow clips</h2>
-      <div class="clipbox">
-        <div class="clipbig">overflow</div>
-      </div>
-
-      <h2>Stacking order</h2>
-      <div class="stackdemo">
-        <p>Text sits under the badge but over the tinted plate…</p>
-        <div class="plate"></div>
-        <div class="badge">on top</div>
-        <div class="ghost">
-          <div class="ghost-inner"></div>
-          opacity auto
-        </div>
-      </div>
-      <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
-
-      <h2>Mutations re-read only their subtree</h2>
-      <!-- Wrapper: an attribute change on the card scopes the re-read to its
-           parent, so the parent must not be the root or the read is full. -->
-      <div class="mutwrap">
-      <div class="mutdemo card">
+      <section data-vr="text">
+        <h1>Every letter can move.</h1>
         <p>
-          Text: <span id="m-text">Hello World</span>
+          This is a real DOM — <span class="pill">selectable</span>, accessible,
+          laid out by the browser — then mirrored onto the GPU and painted with
+          the Slug algorithm.
         </p>
-        <ul id="m-list">
-          <li>First item</li>
-          <li>Second item</li>
-        </ul>
-        <div style="display: flex; gap: 8px; margin-top: 1rem;">
-          <button id="b-edit">Edit text</button>
-          <button id="b-class">Toggle colour</button>
-          <button id="b-add">Add item</button>
-        </div>
-      </div>
-      </div>
-      <p class="hint">Watch the <b>read</b> stat — the first two stay small, the third jumps to the full element count.</p>
+      </section>
 
-      <h2>Live canvas mirrors</h2>
-      <canvas class="livecanvas" width="480" height="160"></canvas>
+      <section data-vr="boxes">
+        <h2>Boxes track layout</h2>
+        <div class="card">
+          Backgrounds, borders and radii mirror as instanced rounded rects. Hit
+          <b>GPU-only</b> to hide the DOM paint and see just the GPU layer.
+        </div>
+      </section>
+
+      <section data-vr="images">
+        <h2>Images mirror too</h2>
+        <div class="imgrow">
+          <figure><img class="fill" src="./test.png" alt="" /><figcaption>fill</figcaption></figure>
+          <figure><img class="cover" src="./test.png" alt="" /><figcaption>cover</figcaption></figure>
+          <figure><img class="contain" src="./test.png" alt="" /><figcaption>contain</figcaption></figure>
+        </div>
+      </section>
+
+      <section data-vr="gradients">
+        <h2>Gradients &amp; backgrounds</h2>
+        <div class="imgrow">
+          <figure style="width: 150px;">
+            <div style="width: 150px; height: 100px; border-radius: 14px; background: linear-gradient(to top right, #6a5cff, #06b6d4);"></div>
+            <figcaption>to top right</figcaption>
+          </figure>
+          <figure style="width: 150px;">
+            <div style="width: 150px; height: 100px; border-radius: 14px; background-color: #22222a; background: linear-gradient(90deg, #ec4899, transparent);"></div>
+            <figcaption>→ transparent</figcaption>
+          </figure>
+          <figure style="width: 150px;">
+            <div style="width: 150px; height: 100px; border-radius: 14px; background: radial-gradient(circle at 30% 70%, #fbbf24, #7f1d1d 70%);"></div>
+            <figcaption>radial</figcaption>
+          </figure>
+          <figure style="width: 150px;">
+            <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) center / cover no-repeat; border: 1px solid #2a2a30;"></div>
+            <figcaption>cover, rounded</figcaption>
+          </figure>
+          <figure style="width: 150px;">
+            <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) 0 0 / auto repeat; border: 1px solid #2a2a30;"></div>
+            <figcaption>tiled</figcaption>
+          </figure>
+          <figure style="width: 150px;">
+            <img src="./test.png" style="width: 150px; height: 150px; border-radius: 50%; object-fit: cover; object-position: 100% 50%; display: block; border: 1px solid #2a2a30;" alt="" />
+            <figcaption>object-position, circle</figcaption>
+          </figure>
+        </div>
+        <p class="hint">Gradients and background images render in the GPU layer; compare against the DOM with GPU-only toggle.</p>
+      </section>
+
+      <section data-vr="overflow">
+        <h2>Overflow clips</h2>
+        <div class="clipbox">
+          <div class="clipbig">overflow</div>
+        </div>
+      </section>
+
+      <section data-vr="stacking">
+        <h2>Stacking order</h2>
+        <div class="stackdemo">
+          <p>Text sits under the badge but over the tinted plate…</p>
+          <div class="plate"></div>
+          <div class="badge">on top</div>
+          <div class="ghost">
+            <div class="ghost-inner"></div>
+            opacity auto
+          </div>
+        </div>
+        <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
+      </section>
+
+      <section data-vr="mutations">
+        <h2>Mutations re-read only their subtree</h2>
+        <!-- Wrapper: an attribute change on the card scopes the re-read to its
+             parent, so the parent must not be the root or the read is full. -->
+        <div class="mutwrap">
+        <div class="mutdemo card">
+          <p>
+            Text: <span id="m-text">Hello World</span>
+          </p>
+          <ul id="m-list">
+            <li>First item</li>
+            <li>Second item</li>
+          </ul>
+          <div style="display: flex; gap: 8px; margin-top: 1rem;">
+            <button id="b-edit">Edit text</button>
+            <button id="b-class">Toggle colour</button>
+            <button id="b-add">Add item</button>
+          </div>
+        </div>
+        </div>
+        <p class="hint">Watch the <b>read</b> stat — the first two stay small, the third jumps to the full element count.</p>
+      </section>
+
+      <section data-vr="canvas">
+        <h2>Live canvas mirrors</h2>
+        <canvas class="livecanvas" width="480" height="160"></canvas>
+      </section>
     </div>
 
     <div id="panel">

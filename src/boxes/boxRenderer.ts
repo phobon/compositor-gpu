@@ -13,15 +13,15 @@ ${FRAME_WGSL}
 struct Box {
   rect   : vec4f,   // x, y, w, h  (document space, CSS px)
   radius : vec4f,   // tl, tr, br, bl
-  fill   : vec4f,   // linear rgba
-  border : vec4f,   // linear rgba
+  fill   : vec4f,   // sRGB rgba
+  border : vec4f,   // sRGB rgba
   params : vec4f,   // borderWidth, opacity, z, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
-// Two entries per stop: linear straight-alpha rgba, then (pos, 0, 0, 0).
+// Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
 @group(1) @binding(1) var<storage, read> stops : array<vec4f>;
 
 struct VOut {
@@ -59,28 +59,14 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
 }
 
-fn srgb_to_linear(c : vec3f) -> vec3f {
-  let x = max(c, vec3f(0.0));
-  return select(pow((x + vec3f(0.055)) / 1.055, vec3f(2.4)),
-                x / 12.92,
-                x <= vec3f(0.04045));
-}
-
-fn linear_to_srgb(c : vec3f) -> vec3f {
-  let x = max(c, vec3f(0.0));
-  return select(1.055 * pow(x, vec3f(1.0 / 2.4)) - vec3f(0.055),
-                x * 12.92,
-                x <= vec3f(0.0031308));
-}
-
-// Interpolate two linear straight-alpha stops in premultiplied sRGB (the CSS
-// default), returning linear straight alpha.
+// Interpolate two sRGB straight-alpha stops in premultiplied sRGB (the CSS
+// default), returning sRGB straight alpha.
 fn mix_stops(c0 : vec4f, c1 : vec4f, f : f32) -> vec4f {
-  let p0 = linear_to_srgb(c0.rgb) * c0.a;
-  let p1 = linear_to_srgb(c1.rgb) * c1.a;
+  let p0 = c0.rgb * c0.a;
+  let p1 = c1.rgb * c1.a;
   let a = mix(c0.a, c1.a, f);
   let s = mix(p0, p1, f) / max(a, 1e-6);
-  return vec4f(srgb_to_linear(s), a);
+  return vec4f(s, a);
 }
 
 // Colour at gradient-line position t. Stops are sorted by position (CSS

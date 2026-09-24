@@ -18,18 +18,82 @@ export function toDocRect(r: DOMRect): Rect {
   }
 }
 
-function px(v: string): number {
+export function px(v: string): number {
   const n = Number.parseFloat(v)
   return Number.isFinite(n) ? n : 0
 }
 
-export function readCorners(s: CSSStyleDeclaration): Corners {
-  return [
-    px(s.borderTopLeftRadius),
-    px(s.borderTopRightRadius),
-    px(s.borderBottomRightRadius),
-    px(s.borderBottomLeftRadius)
-  ]
+/** One `border-*-radius` longhand -> its horizontal (first) value in px.
+ * The computed value can be two lengths (`10px 20px`, an elliptical
+ * corner) — only the first (horizontal) one is used, an approximation.
+ * `%` resolves against `min(rect.width, rect.height)`, also an
+ * approximation of the per-axis CSS rule (horizontal % of width, vertical
+ * % of height). */
+function cornerRadius(value: string, rect: Rect): number {
+  const first = value.trim().split(/\s+/)[0] ?? ''
+  if (first.endsWith('%')) {
+    const n = Number.parseFloat(first)
+    return Number.isFinite(n)
+      ? (n / 100) * Math.min(rect.width, rect.height)
+      : 0
+  }
+  return px(first)
+}
+
+/**
+ * Border radii for `rect`, CSS-clamped so adjacent corners never overlap:
+ * scale all four by `f = min(1, w/(tl+tr), w/(bl+br), h/(tl+bl), h/(tr+br))`.
+ * Without this an oversized radius (e.g. a `999px` pill) makes every
+ * fragment fail the rounded-box SDF and the box vanishes entirely.
+ */
+export function readCorners(s: CSSStyleDeclaration, rect: Rect): Corners {
+  const tl = cornerRadius(s.borderTopLeftRadius, rect)
+  const tr = cornerRadius(s.borderTopRightRadius, rect)
+  const br = cornerRadius(s.borderBottomRightRadius, rect)
+  const bl = cornerRadius(s.borderBottomLeftRadius, rect)
+  const { width: w, height: h } = rect
+  const ratio = (sum: number, dim: number) => (sum > 0 ? dim / sum : 1)
+  const f = Math.min(
+    1,
+    ratio(tl + tr, w),
+    ratio(bl + br, w),
+    ratio(tl + bl, h),
+    ratio(tr + br, h)
+  )
+  return [tl * f, tr * f, br * f, bl * f]
+}
+
+/** One `object-position` / `background-position` component -> a 0..1
+ * fraction of the free space. Percentages map directly; keywords resolve
+ * to their CSS fraction; a length (px etc.) can't be turned into a
+ * fraction without knowing the free space here, so it's clamped to 0 or 1
+ * by sign (an approximation). */
+function positionComponent(token: string): number | null {
+  if (token === 'center') return 0.5
+  if (token === 'left' || token === 'top') return 0
+  if (token === 'right' || token === 'bottom') return 1
+  if (token.endsWith('%')) {
+    const n = Number.parseFloat(token)
+    return Number.isFinite(n) ? n / 100 : null
+  }
+  const n = Number.parseFloat(token)
+  if (!Number.isFinite(n)) return null
+  return n <= 0 ? 0 : 1
+}
+
+/** `object-position` / `background-position` -> [x, y] fractions.
+ * `fallback` is returned whenever it can't be parsed (fewer than two
+ * tokens): [0.5, 0.5] for `object-position`, [0, 0] for
+ * `background-position`. */
+export function mapBackgroundPosition(
+  position: string,
+  fallback: [number, number] = [0, 0]
+): [number, number] {
+  const tokens = position.trim().split(/\s+/).filter(Boolean)
+  if (tokens.length < 2) return fallback
+  const x = positionComponent(tokens[0] ?? '') ?? fallback[0]
+  const y = positionComponent(tokens[1] ?? '') ?? fallback[1]
+  return [x, y]
 }
 
 /** Own (not effective/ancestor-multiplied) opacity, defaulting to 1. */
@@ -83,7 +147,7 @@ export function readBox(
     kind: 'box',
     id,
     rect,
-    radius: readCorners(s),
+    radius: readCorners(s, rect),
     fill,
     gradient,
     border: hasBorder ? { width: borderWidth, color: borderColor } : null,
@@ -156,9 +220,9 @@ export function readImageRecord(
     rect,
     source,
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
-    position: [0.5, 0.5],
+    position: mapBackgroundPosition(s.objectPosition || '50% 50%', [0.5, 0.5]),
     repeat: false,
-    radius: readCorners(s),
+    radius: readCorners(s, rect),
     opacity: 1,
     z: 0,
     clip,

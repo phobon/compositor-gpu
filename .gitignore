@@ -3,3 +3,6 @@ dist
 .DS_Store
 *.log
 .vite
+# visual-regression captures + local, GPU-specific goldens
+test/visual/out/
+test/visual/golden/

@@ -177,6 +177,7 @@ export async function createCompositor(
 
   return {
     active: true,
+    canvas,
     text,
     stats: () => ({
       active: true,
@@ -224,6 +225,7 @@ export async function createCompositor(
 function inert(): Compositor & { text: null } {
   return {
     active: false,
+    canvas: null,
     text: null,
     stats: () => ({
       active: false,

@@ -35,7 +35,12 @@
 ## Phase 3 — reach & polish
 - [ ] Culling via IntersectionObserver in the draw path
 - [ ] Colour/emoji fonts (COLR/CBDT) fallback
-- [ ] Visual-regression harness (GPU layer vs DOM paint diff)
+- [x] Visual-regression harness (`npm run test:visual`: per-section DOM vs GPU
+      parity + golden regression, headless WebGPU via SwiftShader fallback)
+- [x] Blend in sRGB space like the browser (found by the harness: linear
+      blending made every translucent overlay too light)
+- [ ] `::marker` / `::before` / `::after` pseudo-elements (list bullets are
+      currently missing from the mirror)
 - [ ] Optional WebGL2 backend behind the renderer interface
 - [ ] Transforms / perspective on boxes (text already supports it via Slug)
 
