@@ -31,6 +31,7 @@ import {
   readMarker
 } from './pseudo'
 import {
+  beginRead,
   clipRectFor,
   readBox,
   readImageRecord,
@@ -299,6 +300,7 @@ export class SceneReader {
 
   /** Re-read the whole root subtree and rebuild the scene. */
   fullRead(): void {
+    beginRead()
     this.readElements = 0
     this.ordinals.clear()
     this.readAll()
@@ -321,6 +323,7 @@ export class SceneReader {
    * which forces a full read.
    */
   partialRead(scopes: ReadonlySet<Element>): void {
+    beginRead()
     this.readElements = 0
     this.ordinals.clear()
     const tree = this.tree

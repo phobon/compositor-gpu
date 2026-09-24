@@ -63,6 +63,12 @@ export interface CompositorStats {
   readElements: number
   /** Running count of mutation-scoped (non-full) DOM reads. */
   partialReads: number
+  /** Wall time of the last DOM read (full or partial), ms. */
+  readMs: number
+  /** Wall time spent in pass uploads in the most recent render, ms. */
+  uploadMs: number
+  /** Wall time from createCommandEncoder to submit, ms. */
+  encodeMs: number
   fps: number
 }
 

@@ -9,11 +9,24 @@ import { parseColor } from '../util/color'
 import { firstBackgroundLayer, parseGradient } from './gradient'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
+// Scroll offset for the current read pass. `window.scrollX/Y` are native
+// getters and were ~19% of a full read when called once per glyph; the reader
+// snapshots them once per read (`beginRead`) since scroll can't change during
+// the synchronous pass.
+let readScrollX = 0
+let readScrollY = 0
+
+/** Snapshot the scroll offset for `toDocRect`. Call at the start of a read. */
+export function beginRead(): void {
+  readScrollX = window.scrollX
+  readScrollY = window.scrollY
+}
+
 /** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
 export function toDocRect(r: DOMRect): Rect {
   return {
-    x: r.left + window.scrollX,
-    y: r.top + window.scrollY,
+    x: r.left + readScrollX,
+    y: r.top + readScrollY,
     width: r.width,
     height: r.height
   }

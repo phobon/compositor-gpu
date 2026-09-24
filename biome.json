@@ -14,5 +14,7 @@
     "enabled": true,
     "rules": { "recommended": true, "suspicious": { "noExplicitAny": "warn" } }
   },
-  "files": { "ignore": ["dist", "node_modules"] }
+  "files": {
+    "ignore": ["dist", "node_modules", "test/visual/out", "test/perf/out"]
+  }
 }

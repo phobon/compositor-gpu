@@ -8,9 +8,20 @@ const segmenter =
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     : null
 
+// Segmentation is pure and text nodes repeat across reads, so cache it.
+// Bounded: cleared when it grows past CACHE_MAX entries.
+const CACHE_MAX = 4096
+const graphemeCache = new Map<string, string[]>()
+
 function graphemes(text: string): string[] {
-  if (segmenter) return Array.from(segmenter.segment(text), (s) => s.segment)
-  return Array.from(text)
+  const hit = graphemeCache.get(text)
+  if (hit) return hit
+  const out = segmenter
+    ? Array.from(segmenter.segment(text), (s) => s.segment)
+    : Array.from(text)
+  if (graphemeCache.size >= CACHE_MAX) graphemeCache.clear()
+  graphemeCache.set(text, out)
+  return out
 }
 
 /**

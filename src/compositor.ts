@@ -76,6 +76,7 @@ export async function createCompositor(
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0
+  let readMs = 0
 
   const resizeCanvas = (): void => {
     canvas.width = Math.floor(window.innerWidth * dpr)
@@ -100,9 +101,13 @@ export async function createCompositor(
 
     if (flags & Dirty.LAYOUT) resizeCanvas()
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
+      const t0 = performance.now()
       reader.fullRead()
+      readMs = performance.now() - t0
     } else if (flags & Dirty.MUTATION) {
+      const t0 = performance.now()
       reader.partialRead(dirty.scopes)
+      readMs = performance.now() - t0
     }
 
     const ctx: FrameContext = {
@@ -200,6 +205,9 @@ export async function createCompositor(
       groups: renderer.lastGroups,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
+      readMs,
+      uploadMs: renderer.lastUploadMs,
+      encodeMs: renderer.lastEncodeMs,
       fps
     }),
     start() {
@@ -250,6 +258,9 @@ function inert(): Compositor & { text: null } {
       groups: 0,
       readElements: 0,
       partialReads: 0,
+      readMs: 0,
+      uploadMs: 0,
+      encodeMs: 0,
       fps: 0
     }),
     start() {},

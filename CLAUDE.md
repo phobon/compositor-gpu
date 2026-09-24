@@ -29,6 +29,16 @@ in `test/visual/out/`, and describe what differs rather than claiming it
 works. WGSL can also be validated offline with `naga` (`cargo install
 naga-cli`) before a run.
 
+**Performance harness**: `npm run test:perf` renders `playground/perf.html`
+(400 cards, ~4.8k elements, ~84k glyphs) headless and reports full-read,
+partial-read and frame-encode medians (`test/perf/out/last.json`);
+`npx tsx test/perf/profile.ts` writes a CPU profile of five full reads to
+`test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~370 ms
+(dominated by per-grapheme `Range.getBoundingClientRect`, the approach's
+floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms.
+`readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
+in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
+
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
 bundles `src/index.ts` as an ES library with `typegpu` and `opentype.js`
 external. `@/*` aliases `src/*` in both tsconfig and vite.

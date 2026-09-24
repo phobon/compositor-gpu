@@ -34,6 +34,8 @@
 - [x] Sub-tree reconciliation: mutations re-read only their boundary subtree; escalates to a full read when the boundary's rect changes (persistent element tree, CPU-only re-flatten)
 
 ## Phase 3 — reach & polish
+- [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
+      and grapheme-segmentation cache (full read −30%)
 - [x] `text-decoration` underline / overline / line-through (per line fragment,
       propagated to inline descendants, transform-aware; solid style only)
 - [ ] `text-decoration-skip-ink`, dotted/dashed/wavy/double decoration styles

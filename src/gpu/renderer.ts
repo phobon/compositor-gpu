@@ -71,6 +71,11 @@ export class Renderer {
   lastBatches = 0
   /** Opacity groups composited in the most recent render. */
   lastGroups = 0
+  /** Wall time spent in pass uploads in the most recent render, ms. */
+  lastUploadMs = 0
+  /** Wall time from createCommandEncoder to submit in the most recent
+   * render, ms. */
+  lastEncodeMs = 0
   private readonly composite: GroupCompositor
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
@@ -174,14 +179,19 @@ export class Renderer {
     this.shared.dpr = dpr
     // Upload only the layers that changed since they were last drawn.
     let uploads = 0
+    let uploadMs = 0
     for (const pass of this.passes) {
       if (scene.isDirty(pass.layer)) {
+        const t0 = performance.now()
         pass.upload(scene)
+        uploadMs += performance.now() - t0
         scene.clearDirty(pass.layer)
         uploads++
       }
     }
     this.lastUploads = uploads
+    this.lastUploadMs = uploadMs
+    const encodeStart = performance.now()
     const encoder = this.device.createCommandEncoder()
     const texture = this.gpu.context.getCurrentTexture()
     const main: Target = {
@@ -245,6 +255,7 @@ export class Renderer {
     rp.end()
     this.composite.flush()
     this.device.queue.submit([encoder.finish()])
+    this.lastEncodeMs = performance.now() - encodeStart
   }
 
   /**

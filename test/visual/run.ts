@@ -15,9 +15,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
-import { type Browser, type Page, chromium } from 'playwright'
+import type { Browser, Page } from 'playwright'
 import { PNG } from 'pngjs'
 import { type ViteDevServer, createServer } from 'vite'
+import { launchWithFallback } from '../lib/browser'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
@@ -42,14 +43,6 @@ const SECTIONS = [
   'pseudo',
   'canvas'
 ] as const
-
-const SWIFTSHADER_ARGS = [
-  '--enable-unsafe-webgpu',
-  '--enable-features=Vulkan',
-  '--use-angle=swiftshader',
-  '--use-vulkan=swiftshader',
-  '--ignore-gpu-blocklist'
-]
 
 interface Args {
   update: boolean
@@ -105,46 +98,6 @@ function setMode(page: Page, mode: 'dom' | 'gpu' | 'both'): Promise<void> {
   }, mode)
 }
 
-async function waitForAdapter(page: Page): Promise<boolean> {
-  return page.evaluate(async () => {
-    if (!navigator.gpu) return false
-    const adapter = await navigator.gpu.requestAdapter()
-    return adapter !== null
-  })
-}
-
-async function launchWithFallback(url: string): Promise<{
-  browser: Browser
-  usedSwiftshader: boolean
-}> {
-  const executablePath = process.env.CHROMIUM_PATH || undefined
-  const launchOpts = { executablePath } as const
-
-  const probe = await chromium.launch({ ...launchOpts, args: [] })
-  try {
-    const page = await probe.newPage()
-    // Needs a secure context, so probe against the real dev-server origin
-    // rather than about:blank.
-    await page.goto(url)
-    const hasAdapter = await waitForAdapter(page)
-    await page.close()
-    if (hasAdapter) {
-      console.log('[visual] using native GPU adapter (no swiftshader args)')
-      return { browser: probe, usedSwiftshader: false }
-    }
-  } catch (e) {
-    console.log('[visual] native GPU probe failed:', (e as Error).message)
-  }
-  await probe.close()
-
-  console.log('[visual] falling back to swiftshader (software WebGPU)')
-  const browser = await chromium.launch({
-    ...launchOpts,
-    args: SWIFTSHADER_ARGS
-  })
-  return { browser, usedSwiftshader: true }
-}
-
 interface SectionResult {
   name: string
   parityPct: number | null
@@ -176,7 +129,10 @@ async function main(): Promise<void> {
     if (!url) throw new Error('vite dev server produced no resolved URL')
     console.log(`[visual] vite dev server at ${url}`)
 
-    const { browser: b, usedSwiftshader } = await launchWithFallback(url)
+    const { browser: b, usedSwiftshader } = await launchWithFallback(
+      url,
+      'visual'
+    )
     browser = b
     console.log(
       `[visual] chromium launched (${usedSwiftshader ? 'swiftshader' : 'native'})`

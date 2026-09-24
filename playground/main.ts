@@ -69,7 +69,9 @@ async function boot(): Promise<void> {
       $('s-batches').textContent = String(s.batches)
       $('s-groups').textContent = String(s.groups)
       $('s-read').textContent = String(s.readElements)
+      $('s-read-ms').textContent = s.readMs.toFixed(2)
       $('s-partial').textContent = String(s.partialReads)
+      $('s-encode-ms').textContent = s.encodeMs.toFixed(2)
       $('s-fps').textContent = s.fps.toFixed(0)
       const ready = compositor.text?.ready ?? false
       $('s-text').textContent = ready ? 'ready' : 'loading'
