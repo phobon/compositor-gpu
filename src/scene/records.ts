@@ -26,8 +26,11 @@ export interface BoxRecord {
   radius: Corners
   fill: RGBA
   border: { width: number; color: RGBA } | null
+  /** Effective opacity: own opacity × every ancestor's (see stacking.ts). */
   opacity: number
-  z: number /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
+  /** Global paint order (integer; back-to-front across all layers). */
+  z: number
+  /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
 }
 
@@ -37,7 +40,9 @@ export interface ImageRecord {
   rect: Rect
   source: CanvasImageSource
   objectFit: 'fill' | 'contain' | 'cover'
+  /** Effective opacity (own × ancestors). */
   opacity: number
+  /** Global paint order (integer; back-to-front across all layers). */
   z: number
   /** Source pixels change over time (<video>, <canvas>): re-upload each frame. */
   dynamic?: boolean
@@ -71,6 +76,9 @@ export interface GlyphRun {
   italic: boolean
   color: RGBA
   glyphs: Glyph[]
+  /** Effective opacity of the run's element (own × ancestors). */
+  opacity: number
+  /** Global paint order (integer; back-to-front across all layers). */
   z: number
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null

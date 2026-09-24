@@ -24,7 +24,8 @@
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
 - [x] Images: `<canvas>`/`<video>` sources (dynamic textures, live re-upload)
 - [ ] Images: background-image + CSS gradients, shared atlas, mipmaps
-- [ ] Stacking contexts + z-index + opacity groups
+- [x] Stacking contexts + z-index + opacity (Appendix E paint order, cross-layer draw batches; opacity is propagated per record — isolated offscreen groups are a follow-up)
+- [ ] Opacity groups: render opacity<1 subtrees offscreen and composite once (overlap inside a group currently double-blends)
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
 - [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
 - [x] Per-layer dirty tracking (upload only changed layers; `uploads` stat)

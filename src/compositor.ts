@@ -175,6 +175,7 @@ export async function createCompositor(
       images: scene.images.length,
       glyphs: scene.glyphCount(),
       uploads: renderer.lastUploads,
+      batches: renderer.lastBatches,
       fps
     }),
     start() {
@@ -219,6 +220,7 @@ function inert(): Compositor & { text: null } {
       images: 0,
       glyphs: 0,
       uploads: 0,
+      batches: 0,
       fps: 0
     }),
     start() {},

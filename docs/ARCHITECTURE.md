@@ -165,10 +165,16 @@ rects is the whole trick behind "perfectly replicating the HTML text."
 - **Images.** `<img>`, `<canvas>`, and `background-image` become textured
   quads. Images upload once to a texture (or a shared atlas for many small
   ones); `object-fit` maps to UV. Video is out of scope for v1.
-- **Stacking.** We honour DOM order + `z-index` by sorting records into paint
-  order and drawing back-to-front; opacity groups and `overflow: hidden`
-  clipping are applied via scissor / per-instance clip rects. Full stacking
-  contexts and blend modes are a v2 concern.
+- **Stacking.** The walker builds a simplified CSS stacking-context tree
+  (`scene/stacking.ts`: positioned+z-index, fixed/sticky, opacity<1,
+  transform, isolation, filter, blend mode) and flattens it per Appendix E
+  into one integer paint order per record. Because boxes, images and text are
+  separate pipelines, `scene/batches.ts` merges the three lists into
+  cross-layer draw batches: layers are only split where a later record
+  actually overlaps an earlier one, so a flat page stays at ~3 draw calls and a
+  z-indexed overlay costs a couple more. Opacity is propagated as a per-record
+  multiplier (own × ancestors); isolated offscreen opacity groups and blend
+  modes are follow-ups. `overflow: hidden` is a per-instance clip rect.
 
 ---
 

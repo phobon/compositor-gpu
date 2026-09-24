@@ -53,6 +53,8 @@ export interface CompositorStats {
   glyphs: number
   /** Layers re-uploaded in the most recent frame (0..3). */
   uploads: number
+  /** Draw batches issued in the most recent frame. */
+  batches: number
   fps: number
 }
 

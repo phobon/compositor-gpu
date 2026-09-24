@@ -1,4 +1,5 @@
 import type { Layer } from '../types'
+import { type DrawBatch, buildBatches, unionRect } from './batches'
 import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
 
 /**
@@ -12,6 +13,12 @@ export class Scene {
   boxes: BoxRecord[] = []
   images: ImageRecord[] = []
   runs: GlyphRun[] = []
+
+  private _batches: DrawBatch[] = []
+  /** Cross-layer draw batches for the current paint order; see sort(). */
+  get batches(): readonly DrawBatch[] {
+    return this._batches
+  }
 
   /** Layers whose instance buffers need re-upload since they were last drawn. */
   private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text'])
@@ -65,12 +72,16 @@ export class Scene {
     }
   }
 
-  /** Paint order: back-to-front by z then insertion order. */
+  /** Paint order: back-to-front by z then insertion order. Rebuilds batches. */
   sort(): void {
     const byZ = (a: { z: number }, b: { z: number }) => a.z - b.z
     this.boxes.sort(byZ)
     this.images.sort(byZ)
     this.runs.sort(byZ)
+    const runRects = this.runs.map((r) =>
+      unionRect(r.glyphs.map((g) => g.rect))
+    )
+    this._batches = buildBatches(this.boxes, this.images, this.runs, runRects)
   }
 
   glyphCount(): number {

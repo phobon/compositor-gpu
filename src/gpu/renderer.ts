@@ -1,5 +1,5 @@
 import type { Scene } from '../scene/scene'
-import type { FrameContext } from '../types'
+import type { FrameContext, Layer } from '../types'
 import type { GpuContext } from './device'
 import { FRAME_BYTES, type RenderPass, type Shared } from './frame'
 
@@ -12,9 +12,12 @@ export class Renderer {
   private readonly frameBuffer: GPUBuffer
   readonly shared: Shared
   private readonly passes: RenderPass[] = []
+  private readonly passByLayer = new Map<Layer, RenderPass>()
   private readonly frameData = new Float32Array(FRAME_BYTES / 4)
   /** Layers re-uploaded in the most recent render (for debug/stats). */
   lastUploads = 0
+  /** Draw batches issued in the most recent render (for debug/stats). */
+  lastBatches = 0
 
   constructor(private readonly gpu: GpuContext) {
     this.device = gpu.device
@@ -45,6 +48,7 @@ export class Renderer {
 
   addPass(pass: RenderPass): void {
     this.passes.push(pass)
+    this.passByLayer.set(pass.layer, pass)
   }
 
   private writeFrame(ctx: FrameContext, dpr: number): void {
@@ -87,7 +91,14 @@ export class Renderer {
       ]
     })
     rp.setBindGroup(0, this.shared.frameBindGroup)
-    for (const pass of this.passes) pass.draw(rp)
+    let batches = 0
+    for (const batch of scene.batches) {
+      const pass = this.passByLayer.get(batch.layer)
+      if (!pass) continue
+      pass.draw(rp, batch.first, batch.count)
+      batches++
+    }
+    this.lastBatches = batches
     rp.end()
     this.device.queue.submit([encoder.finish()])
   }

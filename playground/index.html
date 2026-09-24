@@ -91,6 +91,66 @@
         font-weight: 600;
         font-size: 0.95rem;
       }
+      .stackdemo {
+        position: relative;
+        height: 160px;
+        margin-top: 2.5rem;
+        padding: 16px;
+        border: 3px solid #6a5cff;
+        border-radius: 18px;
+        background: #16161f;
+        z-index: 0;
+      }
+      .stackdemo > p { margin: 0; font-size: 14px; color: #d1d5db; }
+      .stackdemo .plate {
+        position: absolute;
+        left: 8px;
+        top: 8px;
+        width: 120px;
+        height: 80px;
+        background: #ec4899;
+        opacity: 0.5;
+        z-index: -1;
+        border-radius: 8px;
+      }
+      .stackdemo .badge {
+        position: absolute;
+        right: 16px;
+        top: 24px;
+        width: 72px;
+        height: 40px;
+        background: #06b6d4;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 600;
+        color: #000;
+        z-index: 5;
+      }
+      .stackdemo .ghost {
+        position: relative;
+        margin-top: 8px;
+        padding: 8px;
+        background: rgba(34, 197, 94, 0.3);
+        border-radius: 6px;
+        opacity: 0.4;
+        font-size: 12px;
+      }
+      .stackdemo .ghost-inner {
+        width: 60px;
+        height: 24px;
+        background: #22c55e;
+        border-radius: 4px;
+        margin-bottom: 4px;
+      }
+      .hint {
+        font-size: 14px;
+        color: #8a8a94;
+        margin-top: 1rem;
+        font-style: italic;
+      }
 
       /* GPU-only A/B is driven by compositor.setSourceHidden() (replace mode):
          the DOM stays selectable and accessible while the GPU layer stands in
@@ -153,6 +213,18 @@
         <div class="clipbig">overflow</div>
       </div>
 
+      <h2>Stacking order</h2>
+      <div class="stackdemo">
+        <p>Text sits under the badge but over the tinted plate…</p>
+        <div class="plate"></div>
+        <div class="badge">on top</div>
+        <div class="ghost">
+          <div class="ghost-inner"></div>
+          opacity auto
+        </div>
+      </div>
+      <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
+
       <h2>Live canvas mirrors</h2>
       <canvas class="livecanvas" width="480" height="160"></canvas>
     </div>
@@ -165,6 +237,7 @@
       <div class="row"><span>glyphs</span><b id="s-glyphs">0</b></div>
       <div class="row"><span>images</span><b id="s-images">0</b></div>
       <div class="row"><span>uploads</span><b id="s-uploads">0</b></div>
+      <div class="row"><span>batches</span><b id="s-batches">0</b></div>
       <div class="row"><span>text</span><b id="s-text">…</b></div>
       <div class="row"><span>fps</span><b id="s-fps">0</b></div>
       <button id="b-gpuonly" aria-pressed="false">GPU-only</button>

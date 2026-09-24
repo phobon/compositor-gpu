@@ -51,13 +51,13 @@ batched phase before any GPU write. **Never call `getBoundingClientRect` /
 `getClientRects` from a pass, a shader upload, or anything downstream of the
 reader** — per-glyph rects are already a forced-reflow hazard.
 
-`scene.dirty` is a single scene-wide flag; setting it re-uploads every pass's
-instance buffer. `onGlyph` sets it every frame, so any scene with a glyph hook
-re-uploads all instances each frame. Per-layer dirty tracking is a known
-follow-up, not an oversight.
+Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
+`upload()` runs only when its layer is dirty. `onGlyph` dirties the text layer
+every frame; dynamic images dirty the image layer every frame.
 
 ### RenderPass contract (`gpu/frame.ts`)
-Every layer implements `upload(scene)` / `draw(encoder)` / `destroy()`.
+Every layer implements `upload(scene)` / `draw(encoder, first, count)` /
+`destroy()`.
 Conventions each pass must follow:
 
 - **Bind group 0 is the shared `Frame` uniform**, set once by `Renderer`; the
@@ -66,8 +66,14 @@ Conventions each pass must follow:
 - Prepend `FRAME_WGSL` to the shader source so `doc_to_clip` and the `Frame`
   struct are in scope. `FRAME_BYTES` must stay in step with the struct.
 - Instances live in a **storage buffer** indexed by `instance_index`, drawn as
-  `encoder.draw(6, count)` against a hardcoded 6-vertex quad — there are no
-  vertex buffers anywhere.
+  `encoder.draw(6, count, 0, first)` against a hardcoded 6-vertex quad — there
+  are no vertex buffers anywhere. `draw(encoder, first, count)` is called once
+  per cross-layer batch (`scene.batches`), so **instance index i must
+  correspond to scene record i** of that layer (glyph i for text): never
+  `continue` past a record in `upload()` — write a zero-size instance instead.
+- Paint order is `record.z`, a unique integer assigned by
+  `scene/stacking.ts` from a simplified CSS stacking-context tree; passes
+  never sort or reorder.
 - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
   bind group; `writeBuffer` only the used prefix.
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is

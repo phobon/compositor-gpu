@@ -25,12 +25,23 @@ function readCorners(s: CSSStyleDeclaration): Corners {
   ]
 }
 
+/** Own (not effective/ancestor-multiplied) opacity, defaulting to 1. */
+export function readOpacity(s: CSSStyleDeclaration): number {
+  const n = Number.parseFloat(s.opacity)
+  return Number.isFinite(n) ? n : 1
+}
+
 /**
  * Build a BoxRecord for an element's background + border, or null when it
  * paints nothing we care about. Radii/border are read from computed style.
+ * `opacity` and `z` are placeholders the walker overwrites (effective
+ * opacity and global paint order aren't known until the stacking pass).
  */
-export function readBox(el: Element, id: number, z: number): BoxRecord | null {
-  const s = getComputedStyle(el)
+export function readBox(
+  el: Element,
+  s: CSSStyleDeclaration,
+  id: number
+): BoxRecord | null {
   if (s.visibility === 'hidden' || s.display === 'none') return null
 
   const fill = parseColor(s.backgroundColor)
@@ -50,8 +61,8 @@ export function readBox(el: Element, id: number, z: number): BoxRecord | null {
     radius: readCorners(s),
     fill,
     border: hasBorder ? { width: borderWidth, color: borderColor } : null,
-    opacity: px(s.opacity || '1') || 1,
-    z
+    opacity: 1,
+    z: 0
   }
 }
 
@@ -61,8 +72,7 @@ const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])
  * The padding-box clip rect (document space) an element imposes on its content
  * when it clips overflow, or null when overflow is visible.
  */
-export function clipRectFor(el: Element): Rect | null {
-  const s = getComputedStyle(el)
+export function clipRectFor(el: Element, s: CSSStyleDeclaration): Rect | null {
   if (!CLIP_OVERFLOW.has(s.overflowX) && !CLIP_OVERFLOW.has(s.overflowY)) {
     return null
   }
@@ -82,12 +92,13 @@ export function clipRectFor(el: Element): Rect | null {
 /**
  * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
  * null when it isn't ready to sample. Canvas and video are marked dynamic so
- * their textures re-upload every frame.
+ * their textures re-upload every frame. `opacity` and `z` are placeholders
+ * the walker overwrites, as in readBox.
  */
 export function readImageRecord(
   el: Element,
+  s: CSSStyleDeclaration,
   id: number,
-  z: number,
   clip: Rect | null
 ): ImageRecord | null {
   let source: CanvasImageSource
@@ -111,7 +122,7 @@ export function readImageRecord(
   }
   const rect = toDocRect(el.getBoundingClientRect())
   if (rect.width <= 0 || rect.height <= 0) return null
-  const of = getComputedStyle(el).objectFit
+  const of = s.objectFit
   return {
     kind: 'image',
     id,
@@ -119,7 +130,7 @@ export function readImageRecord(
     source,
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
     opacity: 1,
-    z: z + 0.5,
+    z: 0,
     clip,
     dynamic
   }

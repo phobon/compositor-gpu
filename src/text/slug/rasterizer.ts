@@ -429,7 +429,15 @@ export class SlugText implements TextBackend {
     let i = 0
     for (const run of scene.runs) {
       const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
-      if (!face) continue
+      if (!face) {
+        // No resolvable face: emit zero-rect instances so glyph index still
+        // matches scene's cumulative count (Scene.batches indexes by it).
+        for (let k = 0; k < run.glyphs.length; k++) {
+          f.fill(0, i * GLYPH_FLOATS, (i + 1) * GLYPH_FLOATS)
+          i++
+        }
+        continue
+      }
       const font = face.font
       const ascPx = font.ascender
       const descPx = -font.descender
@@ -466,7 +474,7 @@ export class SlugText implements TextBackend {
         f[base + 8] = g.color.r
         f[base + 9] = g.color.g
         f[base + 10] = g.color.b
-        f[base + 11] = g.color.a
+        f[base + 11] = g.color.a * run.opacity
         u[base + 12] = slot >= 0 ? slot * BAND_COUNT : 0
         u[base + 13] = slot >= 0 ? BAND_COUNT : 0
         u[base + 14] = 0
@@ -494,11 +502,12 @@ export class SlugText implements TextBackend {
     )
   }
 
-  draw(encoder: GPURenderPassEncoder): void {
-    if (!this.ready || this.count === 0 || !this.bindGroup) return
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
+    if (!this.ready || this.count === 0 || count === 0 || !this.bindGroup)
+      return
     encoder.setPipeline(this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
-    encoder.draw(6, this.count)
+    encoder.draw(6, count, 0, first)
   }
 
   destroy(): void {

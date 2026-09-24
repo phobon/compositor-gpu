@@ -78,7 +78,8 @@ export class ImagePass implements RenderPass {
   private capacity = 0
   private data = new Float32Array(0)
   private cache = new WeakMap<CanvasImageSource, Cached>()
-  private draws: GPUBindGroup[] = []
+  /** Aligned with scene.images: null where the texture isn't ready yet. */
+  private draws: (GPUBindGroup | null)[] = []
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
@@ -185,13 +186,19 @@ export class ImagePass implements RenderPass {
     if (images.length === 0) return
     this.ensureCapacity(images.length)
     const d = this.data
-    let i = 0
-    for (const rec of images) {
-      const cached = this.textureFor(rec)
-      if (!cached) continue
+    for (let i = 0; i < images.length; i++) {
+      const rec = images[i]
+      const o = i * FLOATS_PER_IMAGE
+      const cached = rec ? this.textureFor(rec) : null
+      if (!rec || !cached) {
+        // Keep the instance index aligned with scene.images: zero-size quad,
+        // no bind group, so draw() skips it without shifting later indices.
+        d.fill(0, o, o + FLOATS_PER_IMAGE)
+        this.draws.push(null)
+        continue
+      }
       const [nw, nh] = naturalSize(rec.source)
       const { rect, uv } = fit(rec, nw, nh)
-      const o = i * FLOATS_PER_IMAGE
       d[o + 0] = rect.x
       d[o + 1] = rect.y
       d[o + 2] = rect.w
@@ -219,23 +226,24 @@ export class ImagePass implements RenderPass {
           ]
         })
       )
-      i++
     }
-    if (i === 0) return
     this.shared.device.queue.writeBuffer(
       this.buffer as GPUBuffer,
       0,
       d,
       0,
-      i * FLOATS_PER_IMAGE
+      images.length * FLOATS_PER_IMAGE
     )
   }
 
-  draw(encoder: GPURenderPassEncoder): void {
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
     if (this.draws.length === 0) return
     encoder.setPipeline(this.pipeline)
-    for (let i = 0; i < this.draws.length; i++) {
-      encoder.setBindGroup(1, this.draws[i] as GPUBindGroup)
+    const end = first + count
+    for (let i = first; i < end; i++) {
+      const bg = this.draws[i]
+      if (!bg) continue
+      encoder.setBindGroup(1, bg)
       encoder.draw(6, 1, 0, i)
     }
   }

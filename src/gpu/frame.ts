@@ -26,8 +26,12 @@ export interface RenderPass {
   readonly layer: 'boxes' | 'images' | 'text'
   /** Re-pack instance buffers from the (dirty) scene. */
   upload(scene: Scene): void
-  /** Record draw calls into an open render pass encoder. */
-  draw(encoder: GPURenderPassEncoder): void
+  /**
+   * Draw instances [first, first + count) of this layer, in scene order.
+   * Called once per draw batch (Scene.batches); the renderer interleaves
+   * layers so paint order holds across boxes/images/text.
+   */
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): void
   destroy(): void
 }
 

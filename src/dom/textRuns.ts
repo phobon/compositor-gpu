@@ -83,6 +83,7 @@ export function readTextNode(
     italic,
     color,
     glyphs,
+    opacity: 1,
     z: 0
   }
 }

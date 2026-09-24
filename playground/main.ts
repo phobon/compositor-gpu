@@ -33,6 +33,7 @@ async function boot(): Promise<void> {
       $('s-glyphs').textContent = String(s.glyphs)
       $('s-images').textContent = String(s.images)
       $('s-uploads').textContent = String(s.uploads)
+      $('s-batches').textContent = String(s.batches)
       $('s-fps').textContent = s.fps.toFixed(0)
       const ready = compositor.text?.ready ?? false
       $('s-text').textContent = ready ? 'ready' : 'loading'
