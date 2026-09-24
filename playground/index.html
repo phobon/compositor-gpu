@@ -5,11 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>compositor-gpu playground</title>
     <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/font.ttf');
+        font-weight: 100 900;
+      }
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: 'Inter Test', -apple-system, system-ui, sans-serif;
+        font-family: 'Inter Play', -apple-system, system-ui, sans-serif;
         background: #0b0b0c;
         color: #f2f2f2;
         -webkit-font-smoothing: antialiased;
@@ -17,6 +22,7 @@
 
       /* Only #stage is mirrored onto the GPU. The control panel stays real DOM. */
       #stage { padding: 10vh 6vw 40vh; }
+      #stage, #stage * { font-weight: 400 !important; }
       #stage h1 {
         font-size: clamp(2.5rem, 9vw, 6rem);
         letter-spacing: -0.03em;

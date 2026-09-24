@@ -12,10 +12,12 @@
 
 ## Phase 1 — text that renders
 - [ ] Validate the Slug shader in-browser; fix winding sign + band selection
-- [ ] Analytic anti-aliasing (sub-pixel coverage from the reference)
+- [x] Analytic anti-aliasing (signed sub-pixel coverage + 3-tap vertical AA)
 - [ ] Resolve FontFace → bytes at runtime in `prepare()`
 - [ ] Real shaped glyph ids (cmap + browser shaping) for ligatures/bidi
 - [ ] On-demand per-glyph band upload with an LRU
+- [ ] Match per-element font-weight/style to a variable-font instance
+      (currently rasterises the font's default master)
 
 ## Phase 2 — fidelity
 - [ ] Image pass (textures, object-fit, background-image, shared atlas)

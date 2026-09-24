@@ -55,47 +55,68 @@ fn vs(@builtin(vertex_index) vi : u32,
   return out;
 }
 
-fn winding_at(p : vec2f, q : Curve, t : f32) -> f32 {
-  if (t < 0.0 || t > 1.0) { return 0.0; }
+fn bezier_x(q : Curve, t : f32) -> f32 {
   let mt = 1.0 - t;
-  let x = mt * mt * q.p.x + 2.0 * mt * t * q.c.x + t * t * q.p.z;
-  if (x < p.x) { return 0.0; }
-  let dy = 2.0 * (mt * (q.c.y - q.p.y) + t * (q.p.w - q.c.y));
-  return select(-1.0, 1.0, dy > 0.0);
+  return mt * mt * q.p.x + 2.0 * mt * t * q.c.x + t * t * q.p.z;
 }
 
-fn ray_quad(p : vec2f, q : Curve) -> f32 {
+fn dy_at(q : Curve, t : f32) -> f32 {
+  let mt = 1.0 - t;
+  return 2.0 * (mt * (q.c.y - q.p.y) + t * (q.p.w - q.c.y));
+}
+
+// Signed sub-pixel coverage of one crossing: +/-1 far to the right of the
+// pixel, ramping through 0.5 as the crossing passes the pixel centre. invPx
+// converts em-space x distance into pixels (1 / em-per-pixel).
+fn crossing_cov(p : vec2f, q : Curve, t : f32, invPx : f32) -> f32 {
+  if (t < 0.0 || t > 1.0) { return 0.0; }
+  let x = bezier_x(q, t);
+  let s = select(-1.0, 1.0, dy_at(q, t) > 0.0);
+  return s * clamp((x - p.x) * invPx + 0.5, 0.0, 1.0);
+}
+
+// Signed coverage contributed by a curve's crossings of the ray at p.y.
+fn ray_coverage(p : vec2f, q : Curve, invPx : f32) -> f32 {
   let y0 = q.p.y - p.y;
   let yc = q.c.y - p.y;
   let y1 = q.p.w - p.y;
   let a = y0 - 2.0 * yc + y1;
   let b = y0 - yc;
   if (abs(a) < 1e-6) {
-    // linear in t: y0 + t*(y1 - y0) = 0
-    let t = y0 / (y0 - y1);
-    return winding_at(p, q, t);
+    return crossing_cov(p, q, y0 / (y0 - y1), invPx);
   }
   let d = b * b - a * y0;
   if (d < 0.0) { return 0.0; }
   let s = sqrt(d);
-  return winding_at(p, q, (b - s) / a) + winding_at(p, q, (b + s) / a);
+  return crossing_cov(p, q, (b - s) / a, invPx)
+       + crossing_cov(p, q, (b + s) / a, invPx);
+}
+
+// Summed signed coverage across the band containing em.y.
+fn coverage_row(em : vec2f, gref : vec4u, invPx : f32) -> f32 {
+  let bandCount = gref.y;
+  let bi = clamp(u32(em.y * f32(bandCount)), 0u, bandCount - 1u);
+  let band = bands[gref.x + bi];
+  let start = u32(band.bounds.z);
+  let end = u32(band.bounds.w);
+  var cov = 0.0;
+  for (var i = start; i < end; i = i + 1u) {
+    cov = cov + ray_coverage(em, curves[i], invPx);
+  }
+  return cov;
 }
 
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let g = glyphs[in.idx];
-  let bandCount = g.gref.y;
-  if (bandCount == 0u) { discard; }
-  let bi = clamp(u32(in.em.y * f32(bandCount)), 0u, bandCount - 1u);
-  let band = bands[g.gref.x + bi];
-  let start = u32(band.bounds.z);
-  let end = u32(band.bounds.w);
-  var winding = 0.0;
-  for (var i = start; i < end; i = i + 1u) {
-    winding += ray_quad(in.em, curves[i]);
-  }
-  let cov = clamp(abs(winding), 0.0, 1.0); // TODO analytic AA from reference
+  if (g.gref.y == 0u) { discard; }
+  let invPx = 1.0 / max(fwidth(in.em.x), 1e-5);
+  let pxH = max(fwidth(in.em.y), 1e-5);
+  // 3-tap vertical supersample for anti-aliasing of near-horizontal edges.
+  let c0 = abs(coverage_row(vec2f(in.em.x, in.em.y - 0.36 * pxH), g.gref, invPx));
+  let c1 = abs(coverage_row(in.em, g.gref, invPx));
+  let c2 = abs(coverage_row(vec2f(in.em.x, in.em.y + 0.36 * pxH), g.gref, invPx));
+  let cov = clamp((c0 + c1 + c2) / 3.0, 0.0, 1.0);
   let a = cov * g.color.a;
   return vec4f(g.color.rgb * a, a);
-}
 `
