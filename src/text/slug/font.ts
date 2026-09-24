@@ -1,4 +1,4 @@
-import opentype from 'opentype.js'
+import * as opentype from 'opentype.js'
 
 /** A quadratic Bézier segment in em space (unitsPerEm normalised to 0..1). */
 export interface Quad {
