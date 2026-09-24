@@ -13,6 +13,8 @@ export class Renderer {
   readonly shared: Shared
   private readonly passes: RenderPass[] = []
   private readonly frameData = new Float32Array(FRAME_BYTES / 4)
+  /** Layers re-uploaded in the most recent render (for debug/stats). */
+  lastUploads = 0
 
   constructor(private readonly gpu: GpuContext) {
     this.device = gpu.device
@@ -60,10 +62,16 @@ export class Renderer {
 
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
     this.writeFrame(ctx, dpr)
-    if (scene.dirty) {
-      for (const pass of this.passes) pass.upload(scene)
-      scene.dirty = false
+    // Upload only the layers that changed since they were last drawn.
+    let uploads = 0
+    for (const pass of this.passes) {
+      if (scene.isDirty(pass.layer)) {
+        pass.upload(scene)
+        scene.clearDirty(pass.layer)
+        uploads++
+      }
     }
+    this.lastUploads = uploads
     const encoder = this.device.createCommandEncoder()
     const view = this.gpu.context
       .getCurrentTexture()

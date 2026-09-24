@@ -1,3 +1,4 @@
+import type { Layer } from '../types'
 import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
 
 /**
@@ -12,8 +13,8 @@ export class Scene {
   images: ImageRecord[] = []
   runs: GlyphRun[] = []
 
-  /** True when instance buffers need re-upload. */
-  dirty = true
+  /** Layers whose instance buffers need re-upload since they were last drawn. */
+  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text'])
   /** True when any image source is dynamic (drives a continuous render). */
   hasDynamic = false
 
@@ -27,24 +28,41 @@ export class Scene {
     this.boxes = []
     this.images = []
     this.runs = []
-    this.dirty = true
+    this.markAllDirty()
     this.hasDynamic = false
+  }
+
+  markDirty(layer: Layer): void {
+    this.dirtyLayers.add(layer)
+  }
+  markAllDirty(): void {
+    this.dirtyLayers.add('boxes')
+    this.dirtyLayers.add('images')
+    this.dirtyLayers.add('text')
+  }
+  isDirty(layer: Layer): boolean {
+    return this.dirtyLayers.has(layer)
+  }
+  clearDirty(layer: Layer): void {
+    this.dirtyLayers.delete(layer)
   }
 
   add(record: SceneRecord): void {
     switch (record.kind) {
       case 'box':
         this.boxes.push(record)
+        this.markDirty('boxes')
         break
       case 'image':
         this.images.push(record)
         if (record.dynamic) this.hasDynamic = true
+        this.markDirty('images')
         break
       case 'text':
         this.runs.push(record)
+        this.markDirty('text')
         break
     }
-    this.dirty = true
   }
 
   /** Paint order: back-to-front by z then insertion order. */

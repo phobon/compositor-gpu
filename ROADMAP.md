@@ -27,7 +27,8 @@
 - [ ] Stacking contexts + z-index + opacity groups
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
 - [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
-- [ ] Per-layer dirty tracking + sub-tree reconciliation (stop full re-reads)
+- [x] Per-layer dirty tracking (upload only changed layers; `uploads` stat)
+- [ ] Sub-tree reconciliation: stop full DOM re-reads on every mutation
 
 ## Phase 3 — reach & polish
 - [ ] Culling via IntersectionObserver in the draw path

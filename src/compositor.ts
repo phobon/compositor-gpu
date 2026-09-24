@@ -99,10 +99,12 @@ export async function createCompositor(
       for (const run of scene.runs) {
         for (const g of run.glyphs) options.onGlyph(g, ctx)
       }
-      // offsets changed -> re-upload instances. v1 uses a scene-wide dirty; a
-      // per-layer dirty flag is a cheap follow-up (ROADMAP §Sync).
-      scene.dirty = true
+      // Only glyph offsets changed: re-upload just the text layer.
+      scene.markDirty('text')
     }
+    // A live <video>/<canvas> changes without a DOM mutation: re-upload just the
+    // image layer (which re-copies its texture) and keep the loop running.
+    if (scene.hasDynamic) scene.markDirty('images')
     options.onFrame?.(ctx)
 
     // The swapchain texture can't be created at 0x0 (e.g. before the canvas
@@ -172,6 +174,7 @@ export async function createCompositor(
       boxes: scene.boxes.length,
       images: scene.images.length,
       glyphs: scene.glyphCount(),
+      uploads: renderer.lastUploads,
       fps
     }),
     start() {
@@ -210,7 +213,14 @@ function inert(): Compositor & { text: null } {
   return {
     active: false,
     text: null,
-    stats: () => ({ active: false, boxes: 0, images: 0, glyphs: 0, fps: 0 }),
+    stats: () => ({
+      active: false,
+      boxes: 0,
+      images: 0,
+      glyphs: 0,
+      uploads: 0,
+      fps: 0
+    }),
     start() {},
     stop() {},
     invalidate() {},

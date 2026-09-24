@@ -51,6 +51,8 @@ export interface CompositorStats {
   boxes: number
   images: number
   glyphs: number
+  /** Layers re-uploaded in the most recent frame (0..3). */
+  uploads: number
   fps: number
 }
 
