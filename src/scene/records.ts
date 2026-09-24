@@ -48,6 +48,8 @@ export interface Glyph {
   /** Index into the font's glyph table (resolved by the text backend). */
   glyphId: number
   fontId: number
+  /** Computed font-size in CSS px (for baseline/ink placement). */
+  fontSize: number
   color: RGBA
   /** Per-glyph displacement applied in the vertex shader. Mutated by onGlyph. */
   offset: { x: number; y: number }

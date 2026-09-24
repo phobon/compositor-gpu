@@ -3,6 +3,8 @@ import type { Scene } from '../../scene/scene'
 import { log, reportShaderErrors } from '../../util/log'
 import type { TextBackend } from '../textRasterizer'
 import { type ParsedFont, parseFont } from './font'
+
+type BBox = { x1: number; y1: number; x2: number; y2: number }
 import { SLUG_WGSL } from './shaders'
 
 const GLYPH_FLOATS = 16 // rect(4)+offset(4)+color(4)+gref(4)
@@ -31,7 +33,12 @@ export class SlugText implements TextBackend {
   private glyphBytes = new ArrayBuffer(0)
   private glyphF32 = new Float32Array(0)
   private glyphU32 = new Uint32Array(0)
-  private codeToGref = new Map<number, { start: number; count: number }>()
+  private codeToGref = new Map<
+    number,
+    { start: number; count: number; bbox: BBox }
+  >()
+  private ascender = 0.8
+  private descender = -0.2
   private fonts: ParsedFont[] = []
 
   constructor(private readonly shared: Shared) {
@@ -85,6 +92,8 @@ export class SlugText implements TextBackend {
   ): void {
     const font = parseFont(buffer, fontId)
     this.fonts.push(font)
+    this.ascender = font.ascender
+    this.descender = font.descender
 
     const bandData: number[] = [] // vec4f per band
     const curveData: number[] = [] // 8 floats per curve (vec4 + vec4)
@@ -105,7 +114,11 @@ export class SlugText implements TextBackend {
       for (const q of gb.curves) {
         curveData.push(q.x0, q.y0, q.x1, q.y1, q.cx, q.cy, 0, 0)
       }
-      this.codeToGref.set(cp, { start: bandStart, count: gb.bands.length })
+      this.codeToGref.set(cp, {
+        start: bandStart,
+        count: gb.bands.length,
+        bbox: gb.bbox
+      })
     }
 
     const { device } = this.shared
@@ -170,10 +183,27 @@ export class SlugText implements TextBackend {
     for (const run of scene.runs) {
       for (const g of run.glyphs) {
         const base = i * GLYPH_FLOATS
-        f[base + 0] = g.rect.x
-        f[base + 1] = g.rect.y
-        f[base + 2] = g.rect.width
-        f[base + 3] = g.rect.height
+        const gref = this.codeToGref.get(g.glyphId)
+        const F = g.fontSize
+        // Baseline within the grapheme's line box, then place the glyph's tight
+        // ink box (bbox, in em) at font-size on that baseline. The curves fill
+        // [0,1] of bbox, so the quad IS the ink box — no stretch.
+        const ascPx = this.ascender * F
+        const descPx = -this.descender * F
+        const halfLead = (g.rect.height - (ascPx + descPx)) / 2
+        const baseline = g.rect.y + halfLead + ascPx
+        const bb = gref?.bbox
+        if (bb) {
+          f[base + 0] = g.rect.x + bb.x1 * F
+          f[base + 1] = baseline - bb.y2 * F
+          f[base + 2] = (bb.x2 - bb.x1) * F
+          f[base + 3] = (bb.y2 - bb.y1) * F
+        } else {
+          f[base + 0] = g.rect.x
+          f[base + 1] = g.rect.y
+          f[base + 2] = g.rect.width
+          f[base + 3] = g.rect.height
+        }
         f[base + 4] = g.offset.x
         f[base + 5] = g.offset.y
         f[base + 6] = 0
@@ -182,7 +212,6 @@ export class SlugText implements TextBackend {
         f[base + 9] = g.color.g
         f[base + 10] = g.color.b
         f[base + 11] = g.color.a
-        const gref = this.codeToGref.get(g.glyphId)
         u[base + 12] = gref?.start ?? 0
         u[base + 13] = gref?.count ?? 0
         u[base + 14] = 0

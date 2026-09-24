@@ -36,6 +36,7 @@ export function readTextNode(
   if (!text || !text.trim()) return null
   const s = getComputedStyle(parent)
   const color = parseColor(s.color)
+  const fontSize = Number.parseFloat(s.fontSize) || 16
   const glyphs: Glyph[] = []
 
   const range = document.createRange()
@@ -58,6 +59,7 @@ export function readTextNode(
         rect: toDocRect(r),
         glyphId: cell.codePointAt(0) ?? 0,
         fontId,
+        fontSize,
         color,
         offset: { x: 0, y: 0 }
       })

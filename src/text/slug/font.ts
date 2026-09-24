@@ -12,6 +12,8 @@ export interface Quad {
 
 export interface GlyphBands {
   advance: number
+  /** Tight glyph bounding box in em units (÷ unitsPerEm), y-up. */
+  bbox: { x1: number; y1: number; x2: number; y2: number }
   /** Band boundaries (y, ascending) with slice [start,end) into `curves`. */
   bands: { yMin: number; yMax: number; start: number; end: number }[]
   /** Flat quad list, grouped by band (a quad may appear in multiple bands). */
@@ -21,6 +23,9 @@ export interface GlyphBands {
 export interface ParsedFont {
   fontId: number
   unitsPerEm: number
+  /** Font ascent/descent in em units (÷ unitsPerEm); descender is negative. */
+  ascender: number
+  descender: number
   glyphForCodePoint(cp: number): number
   glyph(index: number): GlyphBands
 }
@@ -49,10 +54,17 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
     const cached = cache.get(index)
     if (cached) return cached
     const g = font.glyphs.get(index)
-    const quads = outlineToQuads(g)
+    const bb = g.getBoundingBox()
+    const quads = outlineToQuads(g, bb)
     const bands = bucketIntoBands(quads)
     const result: GlyphBands = {
       advance: (g.advanceWidth ?? 0) / upm,
+      bbox: {
+        x1: bb.x1 / upm,
+        y1: bb.y1 / upm,
+        x2: bb.x2 / upm,
+        y2: bb.y2 / upm
+      },
       bands: bands.bands,
       curves: bands.curves
     }
@@ -60,7 +72,14 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
     return result
   }
 
-  return { fontId, unitsPerEm: upm, glyphForCodePoint, glyph }
+  return {
+    fontId,
+    unitsPerEm: upm,
+    ascender: (font.ascender ?? upm * 0.8) / upm,
+    descender: (font.descender ?? -upm * 0.2) / upm,
+    glyphForCodePoint,
+    glyph
+  }
 }
 
 /**
@@ -69,8 +88,10 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
  * `glyph.path` (font units, y-up), NOT getPath() (which flips to y-down and
  * is baseline-relative, so its outline falls outside [0,1] and never fills).
  */
-function outlineToQuads(glyph: opentype.Glyph): Quad[] {
-  const bb = glyph.getBoundingBox()
+function outlineToQuads(
+  glyph: opentype.Glyph,
+  bb: { x1: number; y1: number; x2: number; y2: number }
+): Quad[] {
   const w = bb.x2 - bb.x1 || 1
   const h = bb.y2 - bb.y1 || 1
   const nx = (v: number) => (v - bb.x1) / w
