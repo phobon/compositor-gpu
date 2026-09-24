@@ -6,7 +6,8 @@ export type {
   Layer,
   Mode,
   Fallback,
-  CompositorStats
+  CompositorStats,
+  FontDescriptor
 } from './types'
 export type {
   BoxRecord,

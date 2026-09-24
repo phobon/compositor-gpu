@@ -59,6 +59,11 @@ export interface GlyphRun {
   kind: 'text'
   id: number
   fontId: number
+  /** First CSS font-family of the run's element. */
+  fontFamily: string
+  /** Numeric font-weight (normal=400, bold=700). */
+  fontWeight: number
+  italic: boolean
   color: RGBA
   glyphs: Glyph[]
   z: number

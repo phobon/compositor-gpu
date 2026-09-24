@@ -1,5 +1,12 @@
 import type { Glyph } from './scene/records'
 
+/** Identifies a registered font face for per-run resolution. */
+export interface FontDescriptor {
+  family?: string
+  weight?: number
+  italic?: boolean
+}
+
 export type Layer = 'boxes' | 'images' | 'text'
 export type Mode = 'overlay' | 'replace'
 export type Fallback = 'passthrough' | 'throw'

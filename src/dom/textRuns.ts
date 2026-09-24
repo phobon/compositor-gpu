@@ -37,6 +37,11 @@ export function readTextNode(
   const s = getComputedStyle(parent)
   const color = parseColor(s.color)
   const fontSize = Number.parseFloat(s.fontSize) || 16
+  const fontFamily = (s.fontFamily.split(',')[0] ?? '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+  const fontWeight = Number.parseInt(s.fontWeight, 10) || 400
+  const italic = s.fontStyle === 'italic' || s.fontStyle.startsWith('oblique')
   const glyphs: Glyph[] = []
 
   const range = document.createRange()
@@ -69,5 +74,15 @@ export function readTextNode(
   }
   range.detach?.()
   if (glyphs.length === 0) return null
-  return { kind: 'text', id: runId, fontId, color, glyphs, z: 0 }
+  return {
+    kind: 'text',
+    id: runId,
+    fontId,
+    fontFamily,
+    fontWeight,
+    italic,
+    color,
+    glyphs,
+    z: 0
+  }
 }

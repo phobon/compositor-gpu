@@ -1,21 +1,35 @@
 import type { Shared } from '../../gpu/frame'
 import type { Scene } from '../../scene/scene'
+import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
 import type { TextBackend } from '../textRasterizer'
-import { type ParsedFont, parseFont } from './font'
-
-type BBox = { x1: number; y1: number; x2: number; y2: number }
+import { parseFont } from './font'
 import { SLUG_WGSL } from './shaders'
 
 const GLYPH_FLOATS = 16 // rect(4)+offset(4)+color(4)+gref(4)
 
+type BBox = { x1: number; y1: number; x2: number; y2: number }
+type Gref = { start: number; count: number; bbox: BBox }
+
+interface FaceEntry {
+  family: string
+  weight: number
+  italic: boolean
+  ascender: number
+  descender: number
+  codeToGref: Map<number, Gref>
+}
+
 /**
  * Slug text backend: atlas-free, outline-based glyph rendering.
  *
- * STATUS: pipeline + instance packing + the CPU font->band pipeline are wired.
- * `loadFontBuffer` builds the band/curve GPU buffers for a set of code points
- * and flips `ready`. Wiring `prepare()` to fetch a FontFace's bytes at runtime,
- * and finishing the analytic-coverage shader, are the remaining v1 tasks.
+ * Holds a registry of faces keyed by (family, weight, italic). Each run is
+ * resolved to its best-matching face at upload time, so a bold heading mirrors
+ * as bold. Bands/curves for every face are concatenated into one pair of
+ * storage buffers; a glyph's `gref` indexes into that global band table.
+ *
+ * Fonts are supplied as bytes (FontFace doesn't expose its parsed bytes). The
+ * WGSL is validated in the playground — WebGPU can't run headless.
  */
 export class SlugText implements TextBackend {
   readonly name = 'slug'
@@ -33,13 +47,11 @@ export class SlugText implements TextBackend {
   private glyphBytes = new ArrayBuffer(0)
   private glyphF32 = new Float32Array(0)
   private glyphU32 = new Uint32Array(0)
-  private codeToGref = new Map<
-    number,
-    { start: number; count: number; bbox: BBox }
-  >()
-  private ascender = 0.8
-  private descender = -0.2
-  private fonts: ParsedFont[] = []
+
+  private faces: FaceEntry[] = []
+  private bandData: number[] = [] // vec4f per band, all faces concatenated
+  private curveData: number[] = [] // 8 floats per curve
+  private resolveCache = new Map<string, FaceEntry | null>()
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
@@ -75,36 +87,29 @@ export class SlugText implements TextBackend {
   }
 
   async prepare(faces: FontFace[]): Promise<void> {
-    // v1 TODO: resolve each FontFace to its source bytes (fetch its URL) and
-    // call loadFontBuffer. FontFace does not expose parsed bytes, so the
-    // compositor is expected to provide font URLs/buffers explicitly for now.
+    // FontFace doesn't expose its parsed bytes; callers use loadFontBuffer.
     if (faces.length === 0) log.info('SlugText.prepare: no fonts provided')
   }
 
   /**
-   * Parse a font and build GPU band/curve buffers for the given code points
-   * (default: printable ASCII). Flips `ready`.
+   * Parse a font and append its glyph band/curve data, tagged with a descriptor
+   * (family/weight/italic) used for per-run resolution. Rebuilds GPU buffers.
    */
   loadFontBuffer(
     buffer: ArrayBuffer,
-    fontId = 0,
+    descriptor: FontDescriptor = {},
     codePoints: number[] = defaultCodePoints()
   ): void {
-    const font = parseFont(buffer, fontId)
-    this.fonts.push(font)
-    this.ascender = font.ascender
-    this.descender = font.descender
-
-    const bandData: number[] = [] // vec4f per band
-    const curveData: number[] = [] // 8 floats per curve (vec4 + vec4)
+    const font = parseFont(buffer, this.faces.length)
+    const codeToGref = new Map<number, Gref>()
 
     for (const cp of codePoints) {
       const gi = font.glyphForCodePoint(cp)
       const gb = font.glyph(gi)
-      const bandStart = bandData.length / 4
-      const curveBase = curveData.length / 8
+      const bandStart = this.bandData.length / 4
+      const curveBase = this.curveData.length / 8
       for (const band of gb.bands) {
-        bandData.push(
+        this.bandData.push(
           band.yMin,
           band.yMax,
           curveBase + band.start,
@@ -112,36 +117,80 @@ export class SlugText implements TextBackend {
         )
       }
       for (const q of gb.curves) {
-        curveData.push(q.x0, q.y0, q.x1, q.y1, q.cx, q.cy, 0, 0)
+        this.curveData.push(q.x0, q.y0, q.x1, q.y1, q.cx, q.cy, 0, 0)
       }
-      this.codeToGref.set(cp, {
+      codeToGref.set(cp, {
         start: bandStart,
         count: gb.bands.length,
         bbox: gb.bbox
       })
     }
 
+    this.faces.push({
+      family: (descriptor.family ?? '').toLowerCase(),
+      weight: descriptor.weight ?? 400,
+      italic: descriptor.italic ?? false,
+      ascender: font.ascender,
+      descender: font.descender,
+      codeToGref
+    })
+    this.resolveCache.clear()
+
     const { device } = this.shared
     this.bandBuf?.destroy()
     this.curveBuf?.destroy()
     this.bandBuf = device.createBuffer({
-      size: Math.max(16, bandData.length * 4),
+      size: Math.max(16, this.bandData.length * 4),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
     this.curveBuf = device.createBuffer({
-      size: Math.max(32, curveData.length * 4),
+      size: Math.max(32, this.curveData.length * 4),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
-    device.queue.writeBuffer(this.bandBuf, 0, new Float32Array(bandData))
-    device.queue.writeBuffer(this.curveBuf, 0, new Float32Array(curveData))
+    device.queue.writeBuffer(this.bandBuf, 0, new Float32Array(this.bandData))
+    device.queue.writeBuffer(this.curveBuf, 0, new Float32Array(this.curveData))
     this.ensureGlyphCapacity(256)
     this.rebuildBindGroup()
     this.ready = true
     log.info(
-      `SlugText: font ${fontId} — ${bandData.length / 4} bands, ${
-        curveData.length / 8
+      `SlugText: +face ${descriptor.family ?? '(any)'} ${
+        descriptor.weight ?? 400
+      }${descriptor.italic ? 'i' : ''} — ${this.faces.length} face(s), ${
+        this.curveData.length / 8
       } curves`
     )
+  }
+
+  /** Best-matching face for a run: family, then italic, then nearest weight. */
+  private resolveFace(
+    family: string,
+    weight: number,
+    italic: boolean
+  ): FaceEntry | null {
+    if (this.faces.length === 0) return null
+    const key = `${family}|${weight}|${italic ? 1 : 0}`
+    const cached = this.resolveCache.get(key)
+    if (cached !== undefined) return cached
+
+    const fam = family.toLowerCase()
+    let pool = this.faces.filter((f) => f.family === fam)
+    if (pool.length === 0) pool = this.faces
+    const italicPool = pool.filter((f) => f.italic === italic)
+    if (italicPool.length > 0) pool = italicPool
+
+    let best = pool[0] ?? null
+    let bestDiff = best
+      ? Math.abs(best.weight - weight)
+      : Number.POSITIVE_INFINITY
+    for (const f of pool) {
+      const d = Math.abs(f.weight - weight)
+      if (d < bestDiff) {
+        best = f
+        bestDiff = d
+      }
+    }
+    this.resolveCache.set(key, best)
+    return best
   }
 
   private ensureGlyphCapacity(n: number): void {
@@ -174,25 +223,26 @@ export class SlugText implements TextBackend {
   upload(scene: Scene): void {
     let total = 0
     for (const run of scene.runs) total += run.glyphs.length
-    this.count = total
+    this.count = 0
     if (total === 0 || !this.ready) return
     this.ensureGlyphCapacity(total)
     const f = this.glyphF32
     const u = this.glyphU32
     let i = 0
     for (const run of scene.runs) {
+      const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
+      if (!face) continue
+      const ascender = face.ascender
+      const descender = face.descender
       for (const g of run.glyphs) {
-        const base = i * GLYPH_FLOATS
-        const gref = this.codeToGref.get(g.glyphId)
+        const gref = face.codeToGref.get(g.glyphId)
         const F = g.fontSize
-        // Baseline within the grapheme's line box, then place the glyph's tight
-        // ink box (bbox, in em) at font-size on that baseline. The curves fill
-        // [0,1] of bbox, so the quad IS the ink box — no stretch.
-        const ascPx = this.ascender * F
-        const descPx = -this.descender * F
+        const ascPx = ascender * F
+        const descPx = -descender * F
         const halfLead = (g.rect.height - (ascPx + descPx)) / 2
         const baseline = g.rect.y + halfLead + ascPx
         const bb = gref?.bbox
+        const base = i * GLYPH_FLOATS
         if (bb) {
           f[base + 0] = g.rect.x + bb.x1 * F
           f[base + 1] = baseline - bb.y2 * F
@@ -219,12 +269,14 @@ export class SlugText implements TextBackend {
         i++
       }
     }
+    this.count = i
+    if (i === 0) return
     this.shared.device.queue.writeBuffer(
       this.glyphBuf as GPUBuffer,
       0,
       this.glyphBytes,
       0,
-      total * GLYPH_FLOATS * 4
+      i * GLYPH_FLOATS * 4
     )
   }
 

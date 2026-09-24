@@ -16,8 +16,9 @@
 - [ ] Resolve FontFace → bytes at runtime in `prepare()`
 - [ ] Real shaped glyph ids (cmap + browser shaping) for ligatures/bidi
 - [ ] On-demand per-glyph band upload with an LRU
-- [ ] Match per-element font-weight/style to a variable-font instance
-      (currently rasterises the font's default master)
+- [x] Match per-element font-weight/style to a registered face (family +
+      nearest-weight + italic resolution; multiple static faces)
+- [ ] Derive faces from a variable font by instancing (avoid shipping N files)
 
 ## Phase 2 — fidelity
 - [ ] Image pass (textures, object-fit, background-image, shared atlas)

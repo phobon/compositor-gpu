@@ -43,16 +43,24 @@ async function boot(): Promise<void> {
     return
   }
 
-  // Feed the Slug text pass a font (Inter, OFL). Boxes render without it.
+  // Register two weights (Inter 400 + 700, OFL). Runs resolve per weight.
   try {
-    const res = await fetch('./font.ttf')
-    if (res.ok) {
-      compositor.text?.loadFontBuffer(await res.arrayBuffer(), 0)
-      $('s-text').textContent = compositor.text?.ready ? 'ready' : 'no font'
-      $('s-text').className = compositor.text?.ready ? 'ok' : 'bad'
-    } else {
-      $('s-text').textContent = 'no font'
+    const faces: Array<[string, number]> = [
+      ['./inter-400.ttf', 400],
+      ['./inter-700.ttf', 700]
+    ]
+    for (const [url, weight] of faces) {
+      const res = await fetch(url)
+      if (res.ok) {
+        compositor.text?.loadFontBuffer(await res.arrayBuffer(), {
+          family: 'Inter Play',
+          weight
+        })
+      }
     }
+    const ok = compositor.text?.ready ?? false
+    $('s-text').textContent = ok ? 'ready' : 'no font'
+    $('s-text').className = ok ? 'ok' : 'bad'
   } catch (err) {
     $('s-text').textContent = 'font error'
     console.error('font load:', err)

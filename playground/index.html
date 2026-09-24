@@ -7,8 +7,13 @@
     <style>
       @font-face {
         font-family: 'Inter Play';
-        src: url('/font.ttf');
+        src: url('/inter-400.ttf');
         font-weight: 400;
+      }
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/inter-700.ttf');
+        font-weight: 700;
       }
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
@@ -22,7 +27,6 @@
 
       /* Only #stage is mirrored onto the GPU. The control panel stays real DOM. */
       #stage { padding: 10vh 6vw 40vh; }
-      #stage, #stage * { font-weight: 400 !important; }
       #stage h1 {
         font-size: clamp(2.5rem, 9vw, 6rem);
         letter-spacing: -0.03em;
