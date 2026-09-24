@@ -51,6 +51,8 @@ export interface CompositorStats {
   boxes: number
   images: number
   glyphs: number
+  /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
+  fallback: number
   /** Layers re-uploaded in the most recent frame (0..3). */
   uploads: number
   /** Draw batches issued in the most recent frame. */

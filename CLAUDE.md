@@ -124,6 +124,17 @@ provenance. Pipeline:
    grapheme's line box — not the line box itself — so outlines aren't stretched.
 4. `shaders.ts` computes signed sub-pixel coverage from the band's curve
    crossings with a 3-tap vertical supersample. No atlas, no resolution ceiling.
+5. **Fallback atlas** (`text/glyphAtlas.ts` + `text/atlasShader.ts`): any
+   grapheme Slug can't draw — emoji/colour glyphs, code points the face lacks
+   (`.notdef`), multi-code-point clusters, or a run whose family has no
+   registered face — is rasterised by Canvas 2D with the element's font stack
+   into a shared `rgba8unorm` atlas and drawn as a textured quad by a second
+   pipeline inside the same pass. Mono glyphs are rasterised white and tinted;
+   emoji keep their colours. Both pipelines share ONE instance index space:
+   every glyph writes a real instance to one buffer and a zero instance to the
+   other, so `draw(first, count)` stays aligned with scene glyph order. The
+   atlas is cleared on `document.fonts` `loadingdone` (the observer also forces
+   a full re-read then). `stats().fallback` counts atlas glyphs per frame.
 
 `textRasterizer.ts` is the seam: any backend (e.g. MSDF) can implement
 `TextBackend`. Fonts are supplied as bytes via `compositor.text.loadFontBuffer()`

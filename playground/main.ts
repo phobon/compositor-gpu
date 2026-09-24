@@ -59,6 +59,7 @@ async function boot(): Promise<void> {
       const s = compositor.stats()
       $('s-boxes').textContent = String(s.boxes)
       $('s-glyphs').textContent = String(s.glyphs)
+      $('s-fallback').textContent = String(s.fallback)
       $('s-images').textContent = String(s.images)
       $('s-uploads').textContent = String(s.uploads)
       $('s-batches').textContent = String(s.batches)

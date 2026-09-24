@@ -109,6 +109,8 @@ export class DomSync {
 
   private onScroll = (): void => this.mark(Dirty.SCROLL)
   private onResize = (): void => this.mark(Dirty.LAYOUT)
+  private onFontsLoaded = (): void => this.mark(Dirty.CONTENT)
+
   private onLoad = (e: Event): void => {
     const t = e.target
     if (t instanceof HTMLImageElement) {
@@ -135,6 +137,9 @@ export class DomSync {
     // <img> load doesn't bubble; capture it to mirror images once decoded.
     this.root.addEventListener('load', this.onLoad, true)
     document.fonts?.ready.then(() => this.mark(Dirty.CONTENT))
+    // Each later font load reflows text and invalidates atlas glyphs drawn
+    // with a fallback face: full re-read.
+    document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
   }
 
   stop(): void {
@@ -145,6 +150,7 @@ export class DomSync {
     this.io.disconnect()
     window.removeEventListener('scroll', this.onScroll)
     window.removeEventListener('resize', this.onResize)
+    document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
     this.root.removeEventListener('load', this.onLoad, true)
   }
 

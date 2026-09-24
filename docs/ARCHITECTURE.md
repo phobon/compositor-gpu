@@ -137,10 +137,19 @@ Slug's patent was dedicated to the public domain (March 2026); reference
 shaders are MIT. We adapt those rather than deriving from scratch. See
 `text/slug/README.md` for the data-layout details and shader provenance.
 
-**Fallback / alternative backend.** `textRasterizer.ts` is an interface. A
-lighter **MSDF** backend (pre-baked atlas, one draw call) can be dropped in for
-constrained targets. Slug is the default because we mirror *arbitrary* live
-text and cannot pre-bake atlases for every font/weight/size on a page.
+**Fallback atlas.** Slug needs outline bytes; the browser doesn't. Graphemes
+Slug can't draw — emoji and other colour glyphs, code points missing from the
+loaded face, multi-code-point clusters, or a run whose family has no registered
+face — are rasterised by Canvas 2D with the run's font stack into a shared
+atlas (`text/glyphAtlas.ts`) and drawn as textured quads by a second pipeline
+in the text pass. The two pipelines share one instance index space so the
+cross-layer draw batches stay valid. The atlas is a real fallback, not the
+default: it's resolution-bound and greyscale-AA, but it makes text visible
+before fonts load and gives emoji the platform's own colour font.
+
+**Alternative backend.** `textRasterizer.ts` is an interface. A lighter
+**MSDF** backend (pre-baked atlas, one draw call) can be dropped in for
+constrained targets.
 
 ### 4.1 Why not just re-shape text ourselves?
 Because HarfBuzz-in-WASM + a layout engine is a multi-month rabbit hole and

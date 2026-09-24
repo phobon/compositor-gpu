@@ -34,7 +34,11 @@
 
 ## Phase 3 — reach & polish
 - [ ] Culling via IntersectionObserver in the draw path
-- [ ] Colour/emoji fonts (COLR/CBDT) fallback
+- [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
+      uncovered code points, multi-code-point clusters and runs with no
+      registered face (text now shows before fonts load)
+- [ ] Atlas paint order within a batch (Slug glyphs draw before atlas glyphs)
+      and Slug-side shaping of combining sequences (currently fall back)
 - [x] Visual-regression harness (`npm run test:visual`: per-section DOM vs GPU
       parity + golden regression, headless WebGPU via SwiftShader fallback)
 - [x] Blend in sRGB space like the browser (found by the harness: linear

@@ -42,7 +42,8 @@ export class Renderer {
       device: this.device,
       format: gpu.viewFormat,
       frameLayout,
-      frameBindGroup
+      frameBindGroup,
+      dpr: 1
     }
   }
 
@@ -66,6 +67,7 @@ export class Renderer {
 
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
     this.writeFrame(ctx, dpr)
+    this.shared.dpr = dpr
     // Upload only the layers that changed since they were last drawn.
     let uploads = 0
     for (const pass of this.passes) {

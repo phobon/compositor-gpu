@@ -41,4 +41,6 @@ export interface Shared {
   format: GPUTextureFormat
   frameLayout: GPUBindGroupLayout
   frameBindGroup: GPUBindGroup
+  /** Device pixel ratio of the current frame (set by Renderer.render). */
+  dpr: number
 }

@@ -87,6 +87,8 @@ export interface Glyph {
   rect: Rect
   /** Index into the font's glyph table (resolved by the text backend). */
   glyphId: number
+  /** The grapheme cluster itself (for the Canvas 2D fallback atlas). */
+  text: string
   fontId: number
   /** Computed font-size in CSS px (for baseline/ink placement). */
   fontSize: number
@@ -101,6 +103,8 @@ export interface GlyphRun {
   fontId: number
   /** First CSS font-family of the run's element. */
   fontFamily: string
+  /** The full computed font-family list, as CSS (for the fallback atlas). */
+  fontStack: string
   /** Numeric font-weight (normal=400, bold=700). */
   fontWeight: number
   italic: boolean

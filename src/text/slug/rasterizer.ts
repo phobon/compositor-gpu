@@ -2,7 +2,9 @@ import type { Shared } from '../../gpu/frame'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
+import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlasShader'
 import { resolveFontBytes } from '../fontSource'
+import { ATLAS_PAD, GlyphAtlas, isColorGrapheme } from '../glyphAtlas'
 import type { TextBackend } from '../textRasterizer'
 import {
   type FontHandle,
@@ -47,7 +49,10 @@ interface FaceEntry {
 export class SlugText implements TextBackend {
   readonly name = 'slug'
   readonly layer = 'text' as const
+  /** True once at least one Slug face is parsed (fallback draws regardless). */
   ready = false
+  /** Glyphs drawn via the Canvas 2D fallback atlas in the last upload. */
+  fallbackCount = 0
 
   private pipeline: GPURenderPipeline
   private layout: GPUBindGroupLayout
@@ -60,6 +65,21 @@ export class SlugText implements TextBackend {
   private glyphBytes = new ArrayBuffer(0)
   private glyphF32 = new Float32Array(0)
   private glyphU32 = new Uint32Array(0)
+
+  // Fallback atlas quads: a second pipeline sharing the glyph index space.
+  // Every glyph writes one instance into each buffer (zero-rect in the one
+  // that doesn't draw it), so draw(first, count) is valid for both.
+  private readonly atlas = new GlyphAtlas()
+  private atlasPipeline: GPURenderPipeline
+  private atlasLayout: GPUBindGroupLayout
+  private readonly atlasSampler: GPUSampler
+  private quadBuf: GPUBuffer | null = null
+  private quadF32 = new Float32Array(0)
+  private atlasBindGroup: GPUBindGroup | null = null
+  private atlasGen = -1
+  private slugLive = 0
+  // face.idx * 2^21 + code point -> glyph index (0 = .notdef).
+  private gidCache = new Map<number, number>()
 
   private faces: FaceEntry[] = []
   private loadedKeys = new Set<string>()
@@ -106,6 +126,46 @@ export class SlugText implements TextBackend {
       vertex: { module, entryPoint: 'vs' },
       fragment: {
         module,
+        entryPoint: 'fs',
+        targets: [
+          {
+            format,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
+            }
+          }
+        ]
+      },
+      primitive: { topology: 'triangle-list' }
+    })
+
+    this.atlasLayout = device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' }
+        },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
+      ]
+    })
+    this.atlasSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge'
+    })
+    const atlasModule = device.createShaderModule({ code: ATLAS_WGSL })
+    reportShaderErrors(atlasModule, 'text-atlas')
+    this.atlasPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({
+        bindGroupLayouts: [frameLayout, this.atlasLayout]
+      }),
+      vertex: { module: atlasModule, entryPoint: 'vs' },
+      fragment: {
+        module: atlasModule,
         entryPoint: 'fs',
         targets: [
           {
@@ -213,11 +273,13 @@ export class SlugText implements TextBackend {
 
     const fam = family.toLowerCase()
     // Prefer a family-matching variable font (exact weight), then a static
-    // face, then any variable font as a last resort.
+    // face; faces registered without a family ('') match any run. A run
+    // whose family has no face returns null and falls back to the atlas.
     const best =
       this.instanceFor(fam, weight, italic) ??
       this.bestStatic(fam, weight, italic) ??
-      this.instanceFor(null, weight, italic)
+      this.instanceFor('', weight, italic) ??
+      this.bestStatic('', weight, italic)
     this.resolveCache.set(key, best)
     return best
   }
@@ -228,9 +290,8 @@ export class SlugText implements TextBackend {
     weight: number,
     italic: boolean
   ): FaceEntry | null {
-    if (this.faces.length === 0) return null
     let pool = this.faces.filter((f) => f.family === fam)
-    if (pool.length === 0) pool = this.faces
+    if (pool.length === 0) return null
     const italicPool = pool.filter((f) => f.italic === italic)
     if (italicPool.length > 0) pool = italicPool
 
@@ -250,16 +311,14 @@ export class SlugText implements TextBackend {
 
   /**
    * Instance a variable source at (clamped) `weight`, caching one face per
-   * distinct weight. `fam === null` matches any source. Returns null if no
-   * variable source qualifies.
+   * distinct weight. Returns null if no variable source of `fam` qualifies.
    */
   private instanceFor(
-    fam: string | null,
+    fam: string,
     weight: number,
     italic: boolean
   ): FaceEntry | null {
-    let pool = this.variableSources
-    if (fam !== null) pool = pool.filter((v) => v.family === fam)
+    const pool = this.variableSources.filter((v) => v.family === fam)
     if (pool.length === 0) return null
     const italicPool = pool.filter((v) => v.italic === italic)
     const src = italicPool[0] ?? pool[0]
@@ -392,16 +451,24 @@ export class SlugText implements TextBackend {
   private ensureGlyphCapacity(n: number): void {
     if (n <= this.glyphCapacity && this.glyphBuf) return
     const cap = Math.max(n, this.glyphCapacity ? this.glyphCapacity * 2 : 256)
+    const device = this.shared.device
     this.glyphBuf?.destroy()
-    this.glyphBuf = this.shared.device.createBuffer({
+    this.glyphBuf = device.createBuffer({
       size: cap * GLYPH_FLOATS * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
     this.glyphBytes = new ArrayBuffer(cap * GLYPH_FLOATS * 4)
     this.glyphF32 = new Float32Array(this.glyphBytes)
     this.glyphU32 = new Uint32Array(this.glyphBytes)
+    this.quadBuf?.destroy()
+    this.quadBuf = device.createBuffer({
+      size: cap * ATLAS_QUAD_FLOATS * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    })
+    this.quadF32 = new Float32Array(cap * ATLAS_QUAD_FLOATS)
     this.glyphCapacity = cap
     this.rebuildBindGroup()
+    this.atlasBindGroup = null
   }
 
   private rebuildBindGroup(): void {
@@ -416,105 +483,235 @@ export class SlugText implements TextBackend {
     })
   }
 
+  /** Rebuild the atlas bind group if the quad buffer or texture changed. */
+  private ensureAtlasBindGroup(): void {
+    const view = this.atlas.view
+    if (!this.quadBuf || !view) return
+    if (this.atlasBindGroup && this.atlasGen === this.atlas.generation) return
+    this.atlasBindGroup = this.shared.device.createBindGroup({
+      layout: this.atlasLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.quadBuf } },
+        { binding: 1, resource: view },
+        { binding: 2, resource: this.atlasSampler }
+      ]
+    })
+    this.atlasGen = this.atlas.generation
+  }
+
+  /** Cached cmap lookup; 0 is .notdef. */
+  private glyphIndex(face: FaceEntry, cp: number): number {
+    const key = face.idx * 0x200000 + cp
+    let gi = this.gidCache.get(key)
+    if (gi === undefined) {
+      gi = face.font.glyphForCodePoint(cp)
+      this.gidCache.set(key, gi)
+    }
+    return gi
+  }
+
   upload(scene: Scene): void {
     let total = 0
     for (const run of scene.runs) total += run.glyphs.length
     this.count = 0
-    if (total === 0 || !this.ready) return
+    this.slugLive = 0
+    this.fallbackCount = 0
+    if (total === 0) return
     this.ensureGlyphCapacity(total)
     this.frameId++
     this.overflowed = false
-    const f = this.glyphF32
-    const u = this.glyphU32
-    let i = 0
-    for (const run of scene.runs) {
-      const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
-      if (!face) {
-        // No resolvable face: emit zero-rect instances so glyph index still
-        // matches scene's cumulative count (Scene.batches indexes by it).
-        for (let k = 0; k < run.glyphs.length; k++) {
-          f.fill(0, i * GLYPH_FLOATS, (i + 1) * GLYPH_FLOATS)
-          i++
-        }
-        continue
-      }
-      const font = face.font
-      const ascPx = font.ascender
-      const descPx = -font.descender
-      const cl = run.clip
-      const clMinX = cl ? cl.x : -1e9
-      const clMinY = cl ? cl.y : -1e9
-      const clMaxX = cl ? cl.x + cl.width : 1e9
-      const clMaxY = cl ? cl.y + cl.height : 1e9
-      for (const g of run.glyphs) {
-        const gi = font.glyphForCodePoint(g.glyphId)
-        const slot = this.ensureResident(face, gi)
-        const base = i * GLYPH_FLOATS
-        const F = g.fontSize
-        const asc = ascPx * F
-        const desc = descPx * F
-        const halfLead = (g.rect.height - (asc + desc)) / 2
-        const baseline = g.rect.y + halfLead + asc
-        const bbox = slot >= 0 ? this.slotBBox[slot] : undefined
-        if (bbox) {
-          f[base + 0] = g.rect.x + bbox.x1 * F
-          f[base + 1] = baseline - bbox.y2 * F
-          f[base + 2] = (bbox.x2 - bbox.x1) * F
-          f[base + 3] = (bbox.y2 - bbox.y1) * F
-        } else {
-          f[base + 0] = g.rect.x
-          f[base + 1] = g.rect.y
-          f[base + 2] = g.rect.width
-          f[base + 3] = g.rect.height
-        }
-        f[base + 4] = g.offset.x
-        f[base + 5] = g.offset.y
-        f[base + 6] = 0
-        f[base + 7] = 0
-        f[base + 8] = g.color.r
-        f[base + 9] = g.color.g
-        f[base + 10] = g.color.b
-        f[base + 11] = g.color.a * run.opacity
-        u[base + 12] = slot >= 0 ? slot * BAND_COUNT : 0
-        u[base + 13] = slot >= 0 ? BAND_COUNT : 0
-        u[base + 14] = 0
-        u[base + 15] = 0
-        f[base + 16] = clMinX
-        f[base + 17] = clMinY
-        f[base + 18] = clMaxX
-        f[base + 19] = clMaxY
-        i++
-      }
-    }
-    this.count = i
+    const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
+    // An atlas grow/clear mid-frame invalidates entries already written this
+    // frame; one re-pack against the fresh atlas fixes that.
+    const epoch = this.atlas.epoch
+    let n = this.fill(scene, dpr)
+    if (this.atlas.epoch !== epoch) n = this.fill(scene, dpr)
+    this.count = n
     if (this.overflowed) {
       log.info(
         `SlugText: glyph cache overflow — >${SLOT_COUNT} distinct glyphs in one frame; raise SLOT_COUNT`
       )
     }
-    if (i === 0) return
-    this.shared.device.queue.writeBuffer(
-      this.glyphBuf as GPUBuffer,
-      0,
-      this.glyphBytes,
-      0,
-      i * GLYPH_FLOATS * 4
-    )
+    if (n === 0) return
+    const queue = this.shared.device.queue
+    if (this.slugLive > 0) {
+      queue.writeBuffer(
+        this.glyphBuf as GPUBuffer,
+        0,
+        this.glyphBytes,
+        0,
+        n * GLYPH_FLOATS * 4
+      )
+    }
+    if (this.fallbackCount > 0) {
+      this.atlas.flush(this.shared.device)
+      this.ensureAtlasBindGroup()
+      queue.writeBuffer(
+        this.quadBuf as GPUBuffer,
+        0,
+        this.quadF32.buffer,
+        0,
+        n * ATLAS_QUAD_FLOATS * 4
+      )
+    }
+  }
+
+  /** Write one Slug instance and one atlas quad per glyph; returns count. */
+  private fill(scene: Scene, dpr: number): number {
+    const f = this.glyphF32
+    const u = this.glyphU32
+    const q = this.quadF32
+    const pad = ATLAS_PAD / dpr
+    this.slugLive = 0
+    this.fallbackCount = 0
+    let i = 0
+    for (const run of scene.runs) {
+      const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
+      const font = face?.font
+      const ascPx = font ? font.ascender : 0
+      const descPx = font ? -font.descender : 0
+      const cl = run.clip
+      const clMinX = cl ? cl.x : -1e9
+      const clMinY = cl ? cl.y : -1e9
+      const clMaxX = cl ? cl.x + cl.width : 1e9
+      const clMaxY = cl ? cl.y + cl.height : 1e9
+      const alpha = run.opacity
+      for (const g of run.glyphs) {
+        const base = i * GLYPH_FLOATS
+        const qb = i * ATLAS_QUAD_FLOATS
+        i++
+        const gi = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
+        if (face && font && gi > 0) {
+          q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
+          const slot = this.ensureResident(face, gi)
+          const F = g.fontSize
+          const asc = ascPx * F
+          const desc = descPx * F
+          const halfLead = (g.rect.height - (asc + desc)) / 2
+          const baseline = g.rect.y + halfLead + asc
+          const bbox = slot >= 0 ? this.slotBBox[slot] : undefined
+          if (bbox) {
+            f[base + 0] = g.rect.x + bbox.x1 * F
+            f[base + 1] = baseline - bbox.y2 * F
+            f[base + 2] = (bbox.x2 - bbox.x1) * F
+            f[base + 3] = (bbox.y2 - bbox.y1) * F
+          } else {
+            f[base + 0] = g.rect.x
+            f[base + 1] = g.rect.y
+            f[base + 2] = g.rect.width
+            f[base + 3] = g.rect.height
+          }
+          f[base + 4] = g.offset.x
+          f[base + 5] = g.offset.y
+          f[base + 6] = 0
+          f[base + 7] = 0
+          f[base + 8] = g.color.r
+          f[base + 9] = g.color.g
+          f[base + 10] = g.color.b
+          f[base + 11] = g.color.a * alpha
+          u[base + 12] = slot >= 0 ? slot * BAND_COUNT : 0
+          u[base + 13] = slot >= 0 ? BAND_COUNT : 0
+          u[base + 14] = 0
+          u[base + 15] = 0
+          f[base + 16] = clMinX
+          f[base + 17] = clMinY
+          f[base + 18] = clMaxX
+          f[base + 19] = clMaxY
+          if (slot >= 0) this.slugLive++
+          continue
+        }
+
+        // Fallback: the browser rasterises the grapheme into the atlas.
+        f.fill(0, base, base + GLYPH_FLOATS)
+        const e = this.atlas.get(
+          g.text,
+          run.fontStack,
+          run.fontWeight,
+          run.italic,
+          Math.max(1, Math.round(g.fontSize * dpr)),
+          g.color
+        )
+        if (!e) {
+          q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
+          continue
+        }
+        // Same line-box centring rule as Slug, with the browser's metrics;
+        // snapped to device px so texels land 1:1 on the target.
+        const asc = e.ascentPx / dpr
+        const desc = e.descentPx / dpr
+        const baseline =
+          Math.round(
+            (g.rect.y + (g.rect.height - (asc + desc)) / 2 + asc) * dpr
+          ) / dpr
+        const penX = Math.round(g.rect.x * dpr) / dpr
+        q[qb + 0] = penX - e.leftPx / dpr - pad + g.offset.x
+        q[qb + 1] = baseline - e.cellAscPx / dpr - pad + g.offset.y
+        q[qb + 2] = e.w / dpr
+        q[qb + 3] = e.h / dpr
+        q[qb + 4] = e.u0
+        q[qb + 5] = e.v0
+        q[qb + 6] = e.u1
+        q[qb + 7] = e.v1
+        q[qb + 8] = g.color.r
+        q[qb + 9] = g.color.g
+        q[qb + 10] = g.color.b
+        q[qb + 11] = g.color.a * alpha
+        q[qb + 12] = e.tint ? 1 : 0
+        q[qb + 13] = 0
+        q[qb + 14] = 0
+        q[qb + 15] = 0
+        q[qb + 16] = clMinX
+        q[qb + 17] = clMinY
+        q[qb + 18] = clMaxX
+        q[qb + 19] = clMaxY
+        this.fallbackCount++
+      }
+    }
+    return i
+  }
+
+  /**
+   * Slug glyph index for a grapheme, or 0 when it must fall back: colour /
+   * emoji, a multi-code-point cluster we can't shape (variation selectors
+   * aside), or a code point the face has no glyph for.
+   */
+  private slugGlyph(face: FaceEntry, text: string, cp: number): number {
+    if (isColorGrapheme(text)) return 0
+    let n = 0
+    for (const ch of text) {
+      const c = ch.codePointAt(0) ?? 0
+      if (!isVariationSelector(c)) n++
+    }
+    if (n > 1) return 0
+    return this.glyphIndex(face, cp)
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
-    if (!this.ready || this.count === 0 || count === 0 || !this.bindGroup)
-      return
-    encoder.setPipeline(this.pipeline)
-    encoder.setBindGroup(1, this.bindGroup)
-    encoder.draw(6, count, 0, first)
+    if (this.count === 0 || count === 0) return
+    if (this.ready && this.slugLive > 0 && this.bindGroup) {
+      encoder.setPipeline(this.pipeline)
+      encoder.setBindGroup(1, this.bindGroup)
+      encoder.draw(6, count, 0, first)
+    }
+    if (this.fallbackCount > 0 && this.atlasBindGroup) {
+      encoder.setPipeline(this.atlasPipeline)
+      encoder.setBindGroup(1, this.atlasBindGroup)
+      encoder.draw(6, count, 0, first)
+    }
   }
 
   destroy(): void {
     this.glyphBuf?.destroy()
+    this.quadBuf?.destroy()
     this.bandBuf.destroy()
     this.curveBuf.destroy()
+    this.atlas.destroy()
   }
+}
+
+/** U+FE00–FE0F and U+E0100–E01EF. */
+function isVariationSelector(cp: number): boolean {
+  return (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)
 }
 
 /** Stable key for a face descriptor: family (ci) + weight + italic. */
