@@ -30,6 +30,7 @@ async function boot(): Promise<void> {
       const s = compositor.stats()
       $('s-boxes').textContent = String(s.boxes)
       $('s-glyphs').textContent = String(s.glyphs)
+      $('s-images').textContent = String(s.images)
       $('s-fps').textContent = s.fps.toFixed(0)
     }
   })
@@ -67,6 +68,8 @@ async function boot(): Promise<void> {
   }
 
   compositor.start()
+  // Images may finish decoding after the first walk; re-read once loaded.
+  window.addEventListener('load', () => compositor.invalidate())
 
   // --- controls ---
   const gpuOnly = $('b-gpuonly')

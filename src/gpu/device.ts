@@ -35,6 +35,9 @@ export async function initGpu(
       device: GPUDevice
     }
     const device = root.device
+    device.addEventListener('uncapturederror', (e) => {
+      log.error('GPU:', (e as GPUUncapturedErrorEvent).error.message)
+    })
     const context = canvas.getContext('webgpu') as GPUCanvasContext | null
     if (!context) {
       log.warn('no webgpu canvas context; passthrough')
