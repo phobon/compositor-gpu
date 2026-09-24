@@ -119,4 +119,5 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let cov = clamp((c0 + c1 + c2) / 3.0, 0.0, 1.0);
   let a = cov * g.color.a;
   return vec4f(g.color.rgb * a, a);
+}
 `
