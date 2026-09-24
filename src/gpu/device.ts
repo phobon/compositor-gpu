@@ -8,6 +8,8 @@ export interface GpuContext {
   canvas: HTMLCanvasElement
   context: GPUCanvasContext
   format: GPUTextureFormat
+  /** sRGB view format the render pass targets, so linear output encodes right. */
+  viewFormat: GPUTextureFormat
 }
 
 export function webgpuAvailable(): boolean {
@@ -40,8 +42,16 @@ export async function initGpu(
       return null
     }
     const format = navigator.gpu.getPreferredCanvasFormat()
-    context.configure({ device, format, alphaMode: 'premultiplied' })
-    return { root, device, canvas, context, format }
+    const viewFormat = (
+      format.endsWith('-srgb') ? format : `${format}-srgb`
+    ) as GPUTextureFormat
+    context.configure({
+      device,
+      format,
+      alphaMode: 'premultiplied',
+      viewFormats: [viewFormat]
+    })
+    return { root, device, canvas, context, format, viewFormat }
   } catch (err) {
     log.error('WebGPU init failed; passthrough', err)
     return null

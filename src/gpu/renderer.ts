@@ -35,7 +35,7 @@ export class Renderer {
     })
     this.shared = {
       device: this.device,
-      format: gpu.format,
+      format: gpu.viewFormat,
       frameLayout,
       frameBindGroup
     }
@@ -65,7 +65,9 @@ export class Renderer {
       scene.dirty = false
     }
     const encoder = this.device.createCommandEncoder()
-    const view = this.gpu.context.getCurrentTexture().createView()
+    const view = this.gpu.context
+      .getCurrentTexture()
+      .createView({ format: this.gpu.viewFormat })
     const rp = encoder.beginRenderPass({
       colorAttachments: [
         {

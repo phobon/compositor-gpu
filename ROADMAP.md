@@ -21,7 +21,8 @@
 - [ ] Derive faces from a variable font by instancing (avoid shipping N files)
 
 ## Phase 2 — fidelity
-- [ ] Image pass (textures, object-fit, background-image, shared atlas)
+- [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
+- [ ] Images: background-image, <canvas>/<video>, shared atlas, mipmaps
 - [ ] Stacking contexts + z-index + opacity groups
 - [ ] `overflow` clipping (scissor / per-instance clip rects)
 - [ ] `replace` mode: hide DOM paint while preserving hit-testing & a11y

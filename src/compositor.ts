@@ -52,7 +52,7 @@ export async function createCompositor(
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
   if (layers.has('boxes')) renderer.addPass(new BoxPass(renderer.shared))
-  if (layers.has('images')) renderer.addPass(new ImagePass())
+  if (layers.has('images')) renderer.addPass(new ImagePass(renderer.shared))
   let text: SlugText | null = null
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)

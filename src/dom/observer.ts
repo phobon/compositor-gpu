@@ -46,6 +46,7 @@ export class DomSync {
 
   private onScroll = (): void => this.mark(Dirty.SCROLL)
   private onResize = (): void => this.mark(Dirty.LAYOUT)
+  private onLoad = (): void => this.mark(Dirty.CONTENT)
 
   start(): void {
     if (this.started) return
@@ -60,6 +61,8 @@ export class DomSync {
     })
     window.addEventListener('scroll', this.onScroll, { passive: true })
     window.addEventListener('resize', this.onResize, { passive: true })
+    // <img> load doesn't bubble; capture it to mirror images once decoded.
+    this.root.addEventListener('load', this.onLoad, true)
     document.fonts?.ready.then(() => this.mark(Dirty.CONTENT))
   }
 
@@ -71,6 +74,7 @@ export class DomSync {
     this.io.disconnect()
     window.removeEventListener('scroll', this.onScroll)
     window.removeEventListener('resize', this.onResize)
+    this.root.removeEventListener('load', this.onLoad, true)
   }
 
   /** Read + clear the pending dirty flags for this frame. */

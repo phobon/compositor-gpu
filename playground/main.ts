@@ -20,7 +20,7 @@ async function boot(): Promise<void> {
 
   const compositor = await createCompositor({
     root: stage,
-    layers: ['boxes', 'text'],
+    layers: ['boxes', 'images', 'text'],
     onGlyph: (g, ctx) => {
       g.offset.y = state.animate
         ? Math.sin(ctx.time / 300 + g.index * 0.5) * 6
