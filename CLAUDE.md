@@ -55,6 +55,20 @@ vertex shader. This is the load-bearing decision: **scrolling writes one uniform
 and re-reads nothing.** Never store viewport-relative coordinates in a record,
 and never make scroll a reason to re-walk the DOM.
 
+Records also carry a **local frame**: `local` (untransformed layout size) and
+`xform` (2×3 affine, local → document). `rect` stays the document-space AABB
+(used by batching overlap tests and the partial-read escalation check);
+shaders position quads with `xform` and evaluate SDFs/UVs in local space, so
+CSS `transform` renders as a true rotated/skewed quad. `dom/transform.ts`
+recovers the local size and translation from the computed matrix chain and
+the measured AABB (an element's linear part is the ancestors' product; the
+translation is solved from `getBoundingClientRect`; near-45° cases fall back
+to `offsetWidth/Height`, glyphs to the font's content height). `matrix3d` is
+flattened to 2D. Running CSS transitions/animations produce no mutation
+records, so `DomSync` tracks them via transition/animation events and the
+frame re-reads their parents' subtrees every frame while they run. Italic
+runs whose face has no italic get a synthetic 14° shear via the same affine.
+
 ### The frame
 `compositor.ts` owns the loop. Per frame: take dirty flags → if
 LAYOUT/STYLE/CONTENT call `SceneReader.fullRead()`, if MUTATION call

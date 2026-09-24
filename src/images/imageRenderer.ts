@@ -3,8 +3,9 @@ import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-// rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + erect(4)
-const FLOATS_PER_IMAGE = 28
+// rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
+// xf1(4)
+const FLOATS_PER_IMAGE = 32
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
 /** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
@@ -16,14 +17,16 @@ const FLAG_UV_FROM_TILE = 2
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
 
+// Local space: the record's untransformed box, origin at its top-left.
 struct Img {
-  rect   : vec4f,   // x,y,w,h document space (quad rect)
+  rect   : vec4f,   // x,y,w,h local space (quad rect)
   uv     : vec4f,   // u0,v0,u1,v1 — used unless FLAG_UV_FROM_TILE is set
   params : vec4f,   // opacity, flags, _, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
-  radius : vec4f,   // tl, tr, br, bl (px) — clips against erect
-  tile   : vec4f,   // originX, originY, w, h (doc space) — fit 'none' only
-  erect  : vec4f,   // element's own border-box rect (doc space)
+  radius : vec4f,   // tl, tr, br, bl (px) — clips against the local box
+  tile   : vec4f,   // originX, originY, w, h (local space) — fit 'none' only
+  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
+  xf1    : vec4f,   // tx, ty (doc space), local box w, h
 };
 @group(1) @binding(0) var<storage, read> imgs : array<Img>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -34,6 +37,7 @@ struct VOut {
   @location(0) uv : vec2f,
   @location(1) @interpolate(flat) idx : u32,
   @location(2) docp : vec2f,
+  @location(3) lp : vec2f,
 };
 
 @vertex
@@ -44,12 +48,15 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let im = imgs[ii];
   let corner = quad[vi];
-  let p = im.rect.xy + corner * im.rect.zw;
+  let lp = im.rect.xy + corner * im.rect.zw;
+  let m = im.xf0;
+  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + im.xf1.xy;
   var out : VOut;
   out.pos = doc_to_clip(p);
   out.uv = mix(im.uv.xy, im.uv.zw, corner);
   out.idx = ii;
   out.docp = p;
+  out.lp = lp;
   return out;
 }
 
@@ -72,7 +79,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let flags = u32(im.params.y);
   var uv = in.uv;
   if ((flags & ${FLAG_UV_FROM_TILE}u) != 0u) {
-    uv = (in.docp - im.tile.xy) / im.tile.zw;
+    uv = (in.lp - im.tile.xy) / im.tile.zw;
     if ((flags & ${FLAG_REPEAT}u) != 0u) {
       uv = fract(uv);
     } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
@@ -80,12 +87,11 @@ fn fs(in : VOut) -> @location(0) vec4f {
     }
   }
 
-  // Rounded clip against the owning element's border box, not the quad —
-  // 'contain' can shrink the quad inside it, but the radius still applies
-  // to the element.
-  let ec = im.erect.xy + im.erect.zw * 0.5;
-  let half = im.erect.zw * 0.5;
-  let d = sd_round_box(in.docp - ec, half, im.radius);
+  // Rounded clip against the record's local box, not the quad — 'contain'
+  // can shrink the quad inside it, but the radius still applies to the
+  // element. Local space, so it rotates/scales with the element.
+  let half = im.xf1.zw * 0.5;
+  let d = sd_round_box(in.lp - half, half, im.radius);
   let aa = max(fwidth(d), 1e-4);
   let cov = 1.0 - smoothstep(-aa, aa, d);
 
@@ -381,10 +387,15 @@ export class ImagePass implements RenderPass {
       d[o + 21] = f.tile.y
       d[o + 22] = f.tile.w
       d[o + 23] = f.tile.h
-      d[o + 24] = rec.rect.x
-      d[o + 25] = rec.rect.y
-      d[o + 26] = rec.rect.width
-      d[o + 27] = rec.rect.height
+      const xf = rec.xform
+      d[o + 24] = xf[0]
+      d[o + 25] = xf[1]
+      d[o + 26] = xf[2]
+      d[o + 27] = xf[3]
+      d[o + 28] = xf[4]
+      d[o + 29] = xf[5]
+      d[o + 30] = rec.local.w
+      d[o + 31] = rec.local.h
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,
@@ -439,7 +450,7 @@ function srcKey(src: CanvasImageSource): string {
 interface Fit {
   rect: { x: number; y: number; w: number; h: number }
   uv: { u0: number; v0: number; u1: number; v1: number }
-  /** Tile origin + size (doc space); only meaningful for fit 'none'. */
+  /** Tile origin + size (local space); only meaningful for fit 'none'. */
   tile: { x: number; y: number; w: number; h: number }
   flags: number
 }
@@ -451,11 +462,16 @@ const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
  * Map object-fit/object-position (or the equivalent background-size /
  * background-position) to a quad rect and either a UV sub-rect (fill,
  * cover, contain — all sample the vertex-interpolated UV) or a tile rect
- * the fragment shader maps doc-space fragment position into (fit 'none':
- * the natural-size image placed by `position`, optionally repeated).
+ * the fragment shader maps the local fragment position into (fit 'none':
+ * the natural-size image placed by `position`, optionally repeated). All
+ * rects are in the record's local space (origin at its local box's
+ * top-left, see ImageRecord.xform).
  */
 function fit(rec: ImageRecord, natW: number, natH: number): Fit {
-  const { x, y, width: w, height: h } = rec.rect
+  const x = 0
+  const y = 0
+  const w = rec.local.w
+  const h = rec.local.h
   const box = { x, y, w, h }
   const [px, py] = rec.position
 

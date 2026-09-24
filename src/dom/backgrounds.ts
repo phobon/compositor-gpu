@@ -1,5 +1,6 @@
 import type { ImageRecord, Rect } from '../scene/records'
 import { mapBackgroundPosition, px, readCorners } from './styles'
+import { type Placement, placementAabb, subPlacement } from './transform'
 
 /**
  * Split a CSS value list on top-level commas (commas inside parentheses,
@@ -93,29 +94,31 @@ export function loadBackground(
 }
 
 /**
- * The padding-box rect (document space) for an element's doc-space border
- * box `rect`, given its computed border widths.
+ * The padding-box placement for an element's border-box placement `place`,
+ * given its computed border widths (inset in the local frame).
  */
-function paddingRect(s: CSSStyleDeclaration, rect: Rect): Rect {
+function paddingPlacement(s: CSSStyleDeclaration, place: Placement): Placement {
   const bl = px(s.borderLeftWidth)
   const bt = px(s.borderTopWidth)
   const br = px(s.borderRightWidth)
   const bb = px(s.borderBottomWidth)
-  return {
-    x: rect.x + bl,
-    y: rect.y + bt,
-    width: Math.max(0, rect.width - bl - br),
-    height: Math.max(0, rect.height - bt - bb)
-  }
+  return subPlacement(
+    place,
+    bl,
+    bt,
+    Math.max(0, place.local.w - bl - br),
+    Math.max(0, place.local.h - bt - bb)
+  )
 }
 
 /**
  * Build an ImageRecord for an element's first `background-image` url layer,
  * or null when there isn't one (none, a gradient, or still loading).
- * `rect` is the element's doc-space border box. The tile/cover/contain
- * area is the padding box (CSS `background-origin: padding-box`, the
- * default), so the record's `rect` is `rect` inset by the border widths.
- * `ImageRecord` has only one `rect`, used for both placement and the
+ * `place` is the element's border-box placement (see transform.ts). The
+ * tile/cover/contain area is the padding box (CSS `background-origin:
+ * padding-box`, the default), so the record's local box is the border box
+ * inset by the border widths (its `rect` is that box's doc-space AABB).
+ * `ImageRecord` has only one local box, used for both placement and the
  * border-radius clip, so the clip ends up applied to the padding box too
  * — a minor approximation (the border ring itself isn't otherwise clipped
  * by the radius here anyway). `onReady` is called once the image finishes
@@ -124,26 +127,33 @@ function paddingRect(s: CSSStyleDeclaration, rect: Rect): Rect {
 export function readBackgroundImage(
   el: Element,
   s: CSSStyleDeclaration,
-  rect: Rect,
   id: number,
   clip: Rect | null,
-  onReady: (url: string) => void
+  onReady: (url: string) => void,
+  place: Placement
 ): ImageRecord | null {
   const url = firstUrlLayer(s.backgroundImage)
   if (!url) return null
   const img = loadBackground(url, onReady)
   if (!img) return null
-  const paintRect = paddingRect(s, rect)
-  if (paintRect.width <= 0 || paintRect.height <= 0) return null
+  const pad = paddingPlacement(s, place)
+  if (pad.local.w <= 0 || pad.local.h <= 0) return null
   return {
     kind: 'image',
     id,
-    rect: paintRect,
+    rect: placementAabb(pad),
+    xform: pad.xform,
+    local: pad.local,
     source: img,
     objectFit: mapBackgroundSize(s.backgroundSize),
     position: mapBackgroundPosition(s.backgroundPosition),
     repeat: mapBackgroundRepeat(s.backgroundRepeat),
-    radius: readCorners(s, rect),
+    radius: readCorners(s, {
+      x: 0,
+      y: 0,
+      width: place.local.w,
+      height: place.local.h
+    }),
     opacity: 1,
     z: 0,
     clip,

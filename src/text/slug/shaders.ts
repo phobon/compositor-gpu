@@ -13,7 +13,7 @@ import { FRAME_WGSL } from '../../gpu/frame'
  * nonzero-winding hard coverage as a placeholder.
  *
  * Bind group 1:
- *   0 glyphs : per-instance {rect, offset, color, gref}
+ *   0 glyphs : per-instance {rect, offset, color, gref, clip, xf0, xf1}
  *   1 bands  : {yMin, yMax, curveStart, curveEnd} per glyph-band
  *   2 curves : {p0.xy, p1.xy, c.xy} quadratic control points
  */
@@ -21,11 +21,13 @@ export const SLUG_WGSL = /* wgsl */ `
 ${FRAME_WGSL}
 
 struct Glyph {
-  rect   : vec4f,   // x,y,w,h document space
-  offset : vec4f,   // xy displacement, z, _
+  rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
+  offset : vec4f,   // xy displacement (doc space), z, _
   color  : vec4f,
   gref   : vec4u,   // bandStart, bandCount, _, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
+  xf1    : vec4f,   // tx, ty (doc space), _, _
 };
 struct Band  { bounds : vec4f, };        // yMin, yMax, curveStart, curveEnd
 struct Curve { p : vec4f, c : vec4f, };  // x0,y0,x1,y1 ; cx,cy,_,_
@@ -49,7 +51,10 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let g = glyphs[ii];
   let corner = uv[vi];
-  let p = g.rect.xy + g.offset.xy + corner * g.rect.zw;
+  let lp = g.rect.xy + corner * g.rect.zw;
+  let m = g.xf0;
+  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
+    g.xf1.xy + g.offset.xy;
   var out : VOut;
   out.pos = doc_to_clip(p);
   out.em = vec2f(corner.x, 1.0 - corner.y);

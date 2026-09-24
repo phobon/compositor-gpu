@@ -34,6 +34,7 @@ const SECTIONS = [
   'gradients',
   'overflow',
   'stacking',
+  'transforms',
   'mutations',
   'canvas'
 ] as const

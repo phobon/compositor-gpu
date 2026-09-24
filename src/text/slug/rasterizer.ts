@@ -14,7 +14,11 @@ import {
 } from './font'
 import { SLUG_WGSL } from './shaders'
 
-const GLYPH_FLOATS = 20 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)
+// rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
+// written through the shared u32 view of the same buffer.
+const GLYPH_FLOATS = 28
+/** tan(14°): the browser's synthetic-oblique shear. */
+const OBLIQUE = Math.tan((14 * Math.PI) / 180)
 const BAND_COUNT = 16 // bands per glyph — must match font.ts bucketing
 const CURVE_FLOATS = 8 // vec4 p + vec4 c
 
@@ -334,7 +338,9 @@ export class SlugText implements TextBackend {
       idx,
       family: src.family,
       weight: w,
-      italic,
+      // The source's slant, not the requested one: an upright source
+      // standing in for italic gets a synthetic oblique (see fill()).
+      italic: src.italic,
       font: makeInstance(src.handle, idx, { wght: w })
     }
     this.faces.push(face)
@@ -576,30 +582,37 @@ export class SlugText implements TextBackend {
       const clMaxX = cl ? cl.x + cl.width : 1e9
       const clMaxY = cl ? cl.y + cl.height : 1e9
       const alpha = run.opacity
+      // Italic requested but the face is upright: synthesise oblique like
+      // the browser does (a shear about the baseline; Slug only — the atlas
+      // rasterises with `italic` in the font string, so Canvas 2D does it).
+      const oblique = face && run.italic && !face.italic ? OBLIQUE : 0
       for (const g of run.glyphs) {
         const base = i * GLYPH_FLOATS
         const qb = i * ATLAS_QUAD_FLOATS
         i++
         const gi = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
+        // Placement runs in the glyph's local line-box frame (origin at its
+        // top-left, size g.local); xform maps it to doc space.
+        const xf = g.xform
         if (face && font && gi > 0) {
           q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
           const slot = this.ensureResident(face, gi)
           const F = g.fontSize
           const asc = ascPx * F
           const desc = descPx * F
-          const halfLead = (g.rect.height - (asc + desc)) / 2
-          const baseline = g.rect.y + halfLead + asc
+          const halfLead = (g.local.h - (asc + desc)) / 2
+          const baseline = halfLead + asc
           const bbox = slot >= 0 ? this.slotBBox[slot] : undefined
           if (bbox) {
-            f[base + 0] = g.rect.x + bbox.x1 * F
+            f[base + 0] = bbox.x1 * F
             f[base + 1] = baseline - bbox.y2 * F
             f[base + 2] = (bbox.x2 - bbox.x1) * F
             f[base + 3] = (bbox.y2 - bbox.y1) * F
           } else {
-            f[base + 0] = g.rect.x
-            f[base + 1] = g.rect.y
-            f[base + 2] = g.rect.width
-            f[base + 3] = g.rect.height
+            f[base + 0] = 0
+            f[base + 1] = 0
+            f[base + 2] = g.local.w
+            f[base + 3] = g.local.h
           }
           f[base + 4] = g.offset.x
           f[base + 5] = g.offset.y
@@ -617,6 +630,17 @@ export class SlugText implements TextBackend {
           f[base + 17] = clMinY
           f[base + 18] = clMaxX
           f[base + 19] = clMaxY
+          // xform · shear, the shear [1, 0, -k, 1] taken about local y =
+          // baseline: x' = x + k (baseline - y).
+          const kb = oblique * baseline
+          f[base + 20] = xf[0]
+          f[base + 21] = xf[1]
+          f[base + 22] = xf[2] - oblique * xf[0]
+          f[base + 23] = xf[3] - oblique * xf[1]
+          f[base + 24] = xf[4] + xf[0] * kb
+          f[base + 25] = xf[5] + xf[1] * kb
+          f[base + 26] = 0
+          f[base + 27] = 0
           if (slot >= 0) this.slugLive++
           continue
         }
@@ -635,17 +659,21 @@ export class SlugText implements TextBackend {
           q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
           continue
         }
-        // Same line-box centring rule as Slug, with the browser's metrics;
-        // snapped to device px so texels land 1:1 on the target.
+        // Same line-box centring rule as Slug, with the browser's metrics,
+        // in the local frame. Untransformed glyphs are snapped to device px
+        // so texels land 1:1 on the target; transformed ones can't be.
         const asc = e.ascentPx / dpr
         const desc = e.descentPx / dpr
-        const baseline =
-          Math.round(
-            (g.rect.y + (g.rect.height - (asc + desc)) / 2 + asc) * dpr
-          ) / dpr
-        const penX = Math.round(g.rect.x * dpr) / dpr
-        q[qb + 0] = penX - e.leftPx / dpr - pad + g.offset.x
-        q[qb + 1] = baseline - e.cellAscPx / dpr - pad + g.offset.y
+        let baseline = (g.local.h - (asc + desc)) / 2 + asc
+        let penX = 0
+        const tx = xf[4]
+        const ty = xf[5]
+        if (xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1) {
+          baseline = Math.round((ty + baseline) * dpr) / dpr - ty
+          penX = Math.round(tx * dpr) / dpr - tx
+        }
+        q[qb + 0] = penX - e.leftPx / dpr - pad
+        q[qb + 1] = baseline - e.cellAscPx / dpr - pad
         q[qb + 2] = e.w / dpr
         q[qb + 3] = e.h / dpr
         q[qb + 4] = e.u0
@@ -664,6 +692,14 @@ export class SlugText implements TextBackend {
         q[qb + 17] = clMinY
         q[qb + 18] = clMaxX
         q[qb + 19] = clMaxY
+        q[qb + 20] = xf[0]
+        q[qb + 21] = xf[1]
+        q[qb + 22] = xf[2]
+        q[qb + 23] = xf[3]
+        q[qb + 24] = tx + g.offset.x
+        q[qb + 25] = ty + g.offset.y
+        q[qb + 26] = 0
+        q[qb + 27] = 0
         this.fallbackCount++
       }
     }

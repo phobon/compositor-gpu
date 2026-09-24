@@ -2,7 +2,7 @@ import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 32 // 8 * vec4f
+const FLOATS_PER_BOX = 36 // 9 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
@@ -11,7 +11,8 @@ const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
 
 struct Box {
-  rect   : vec4f,   // x, y, w, h  (document space, CSS px)
+  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
+  xf1    : vec4f,   // tx, ty (doc space), w, h (local size, CSS px)
   radius : vec4f,   // tl, tr, br, bl
   fill   : vec4f,   // sRGB rgba
   border : vec4f,   // sRGB rgba
@@ -40,11 +41,16 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let b = boxes[ii];
   let corner = uv[vi];
-  let p = b.rect.xy + corner * b.rect.zw;
+  let size = b.xf1.zw;
+  let lp = corner * size;
+  let m = b.xf0;
+  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + b.xf1.xy;
   var out : VOut;
   out.pos = doc_to_clip(p);
-  out.half = b.rect.zw * 0.5;
-  out.local = (corner - vec2f(0.5)) * b.rect.zw;
+  out.half = size * 0.5;
+  // Centred local coords: the SDF and gradients run in the untransformed
+  // box, and fwidth() picks up the transform's scale/rotation for AA.
+  out.local = lp - size * 0.5;
   out.idx = ii;
   out.docp = p;
   return out;
@@ -109,7 +115,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   var bga = b.fill.a;
   if (b.grad.x > 0.5) {
     // Gradient box = padding box, centred like the border box.
-    let size = max(b.rect.zw - vec2f(2.0 * bw), vec2f(0.0));
+    let size = max(b.xf1.zw - vec2f(2.0 * bw), vec2f(0.0));
     var t = 0.0;
     if (b.grad.x < 1.5) {
       let ang = b.grad.y;
@@ -243,10 +249,15 @@ export class BoxPass implements RenderPass {
     let o = 0
     let so = 0
     for (const b of boxes) {
-      d[o++] = b.rect.x
-      d[o++] = b.rect.y
-      d[o++] = b.rect.width
-      d[o++] = b.rect.height
+      const xf = b.xform
+      d[o++] = xf[0]
+      d[o++] = xf[1]
+      d[o++] = xf[2]
+      d[o++] = xf[3]
+      d[o++] = xf[4]
+      d[o++] = xf[5]
+      d[o++] = b.local.w
+      d[o++] = b.local.h
       d[o++] = b.radius[0]
       d[o++] = b.radius[1]
       d[o++] = b.radius[2]

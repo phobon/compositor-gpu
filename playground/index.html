@@ -178,6 +178,87 @@
         background: #2a2a32;
       }
 
+      /* Transforms: 2D affine transforms render as transformed quads. */
+      .xfrow { padding: 1.5rem 0.5rem 1rem; gap: 36px; align-items: center; }
+      .xfrow figure { width: 160px; }
+      .xf-card {
+        transform: rotate(-8deg);
+        background: #1e293b;
+        border: 2px solid #38bdf8;
+        border-radius: 16px;
+        padding: 18px 14px;
+        font-size: 15px;
+        color: #e0f2fe;
+      }
+      .xf-card.spin { animation: xf-spin 4s linear infinite; }
+      .imgrow img.xf-img { transform: rotate(12deg) scale(0.9); }
+      .xf-skew {
+        height: 110px;
+        transform: skewX(-15deg);
+        border-radius: 10px;
+        background: linear-gradient(135deg, #f97316, #db2777 60%, #7c3aed);
+      }
+      .xf-outer {
+        transform: rotate(6deg);
+        background: #14532d;
+        border: 1px solid #4ade80;
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .xf-inner {
+        transform: translate(10px, 6px) rotate(-6deg);
+        background: #fef3c7;
+        color: #78350f;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 14px;
+      }
+      .xf-45 {
+        width: 96px;
+        margin: 24px auto;
+        transform: rotate(45deg);
+        background: #3f1d5c;
+        border: 1px solid #c084fc;
+        border-radius: 6px;
+        padding: 8px 6px;
+        font-size: 13px;
+        text-align: center;
+        color: #f3e8ff;
+      }
+      .xf-spinner {
+        width: 110px;
+        height: 110px;
+        margin: 0 auto;
+        border-radius: 18px;
+        background: linear-gradient(90deg, #0ea5e9, #22c55e);
+        border: 3px solid #f2f2f2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        color: #0b0b0c;
+      }
+      /* main.ts adds .live or .vr. The animation only starts then, so under
+         ?vr it is created already paused, at a fixed non-trivial angle. */
+      body.live .xf-spinner { animation: xf-spin 4s linear infinite; }
+      body.vr .xf-spinner {
+        animation: xf-spin 4s linear -0.5s infinite paused;
+      }
+      @keyframes xf-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .xfdemo button {
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        border: 1px solid #33333a;
+        background: #22222a;
+        color: #f2f2f2;
+        font: inherit;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+
       /* GPU-only A/B is driven by compositor.setSourceHidden() (replace mode):
          the DOM stays selectable and accessible while the GPU layer stands in
          for its paint. Anything that vanishes wasn't mirrored onto the GPU. */
@@ -299,6 +380,22 @@
           </div>
         </div>
         <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
+      </section>
+
+      <section data-vr="transforms" class="xfdemo">
+        <h2>Transforms</h2>
+        <div class="imgrow xfrow">
+          <figure><div class="xf-card" id="xf-card">Rotated card, −8°</div></figure>
+          <figure><img class="cover xf-img" src="./test.png" alt="" /></figure>
+          <figure><div class="xf-skew"></div></figure>
+          <figure>
+            <div class="xf-outer"><div class="xf-inner">Nested: 6° then −6°</div></div>
+          </figure>
+          <figure><div class="xf-45">Forty-five</div></figure>
+          <figure><div class="xf-spinner">spin</div></figure>
+        </div>
+        <button id="b-spin">Spin card</button>
+        <p class="hint">Rotate, scale, skew and nested transforms draw as transformed quads; CSS animations are re-read every frame while they run.</p>
       </section>
 
       <section data-vr="mutations">

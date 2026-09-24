@@ -1,5 +1,6 @@
 import type {
   BoxRecord,
+  Glyph,
   GlyphRun,
   ImageRecord,
   Rect,
@@ -21,7 +22,18 @@ import {
   readOpacity,
   toDocRect
 } from './styles'
-import { readTextNode } from './textRuns'
+import { contentHeight, readTextNode } from './textRuns'
+import {
+  type Mat2,
+  type Placement,
+  affine,
+  composeLinear,
+  parseTransform,
+  rectPlacement,
+  solveLocalSize,
+  solveTranslation,
+  solveWidthGivenHeight
+} from './transform'
 
 // The reader: the only place DOM layout and computed style are read.
 //
@@ -31,6 +43,14 @@ import { readTextNode } from './textRuns'
 // have changed and splices them in. Either way the scene is then rebuilt
 // from the tree on the CPU (flatten → assignPaintOrder → sort), with no DOM
 // access.
+//
+// Transforms: every element carries the accumulated linear part of its
+// ancestors' and its own computed `transform` (`ElNode.lin`, null for an
+// identity chain). The measured rects are AABBs of the transformed boxes;
+// under a non-identity chain the reader recovers each record's local
+// (untransformed) size and full affine from its AABB (see transform.ts).
+// Clip rects of transformed overflow ancestors stay AABBs — over-inclusive
+// for rotated clippers, exact for scale/translate.
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
 
@@ -64,6 +84,8 @@ export interface ElNode {
   fragmented: boolean
   /** Computed `float` is not none. */
   float: boolean
+  /** Accumulated linear transform (ancestors · own); null = identity. */
+  lin: Mat2 | null
 }
 
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
@@ -279,7 +301,8 @@ export class SceneReader {
         p,
         p ? p.childClip : null,
         p ? p.opacity : 1,
-        p === null
+        p === null,
+        p ? p.lin : null
       )
       if (
         !fresh ||
@@ -306,7 +329,7 @@ export class SceneReader {
   }
 
   private readAll(): void {
-    this.tree = this.readNode(this.root, null, null, 1, true)
+    this.tree = this.readNode(this.root, null, null, 1, true, null)
     this.rebuildScene()
   }
 
@@ -323,19 +346,24 @@ export class SceneReader {
     parent: ElNode | null,
     clip: Rect | null,
     parentOpacity: number,
-    isRoot: boolean
+    isRoot: boolean,
+    parentLin: Mat2 | null
   ): ElNode | null {
     if (SKIP_TAGS.has(el.tagName)) return null
     this.readElements++
     const { scene, layers } = this
     const s = getComputedStyle(el)
     const rect = toDocRect(el.getBoundingClientRect())
+    const lin = composeLinear(parentLin, parseTransform(s.transform))
+    const place = lin
+      ? transformedPlacement(el, lin, rect)
+      : rectPlacement(rect)
     const opacity = parentOpacity * (isRoot ? 1 : readOpacity(s))
     const isContext = !isRoot && createsStackingContext(s)
 
     let own = NO_RECORDS
     if (layers.has('boxes')) {
-      const box = readBox(s, rect, scene.allocId())
+      const box = readBox(s, rect, scene.allocId(), place)
       if (box) {
         box.clip = clip
         box.opacity = opacity
@@ -348,15 +376,20 @@ export class SceneReader {
         el.tagName === 'CANVAS' ||
         el.tagName === 'VIDEO')
     ) {
-      const rec = readImageRecord(el, s, rect, scene.allocId(), clip)
+      const rec = readImageRecord(el, s, rect, scene.allocId(), clip, place)
       if (rec) {
         rec.opacity = opacity
         own = own.length ? [...own, rec] : [rec]
       }
     }
     if (layers.has('images') && s.backgroundImage !== 'none') {
-      const bg = readBackgroundImage(el, s, rect, scene.allocId(), clip, () =>
-        this.onAsset(el)
+      const bg = readBackgroundImage(
+        el,
+        s,
+        scene.allocId(),
+        clip,
+        () => this.onAsset(el),
+        place
       )
       if (bg) {
         bg.opacity = opacity
@@ -382,7 +415,8 @@ export class SceneReader {
       childClip,
       opacity,
       fragmented: display === 'inline' || display === 'contents',
-      float: s.float !== 'none'
+      float: s.float !== 'none',
+      lin
     }
     this.nodes.set(el, node)
 
@@ -393,7 +427,8 @@ export class SceneReader {
           node,
           childClip,
           opacity,
-          false
+          false,
+          lin
         )
         if (kid) node.kids.push(kid)
       } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
@@ -405,6 +440,7 @@ export class SceneReader {
           0
         )
         if (run) {
+          if (lin) transformGlyphs(run.glyphs, lin, s)
           run.clip = childClip
           run.opacity = opacity
           node.kids.push(run)
@@ -412,5 +448,53 @@ export class SceneReader {
       }
     }
     return node
+  }
+}
+
+/**
+ * Local box of an element under a non-identity linear chain `lin`, from
+ * its measured AABB `rect`. The size comes from the 2×2 AABB solve; when
+ * that is ill-conditioned (near 45°) or fails, from the integer layout
+ * size `offsetWidth/offsetHeight` (the AABB for non-HTML elements).
+ */
+function transformedPlacement(el: Element, lin: Mat2, rect: Rect): Placement {
+  let size = solveLocalSize(lin, rect.width, rect.height)
+  if (!size) {
+    const h = el as Partial<HTMLElement>
+    size =
+      typeof h.offsetWidth === 'number' && typeof h.offsetHeight === 'number'
+        ? [h.offsetWidth, h.offsetHeight]
+        : [rect.width, rect.height]
+  }
+  const [w, hh] = size
+  const [tx, ty] = solveTranslation(lin, w, hh, rect.x, rect.y)
+  return { xform: affine(lin, tx, ty), local: { w, h: hh } }
+}
+
+/**
+ * Re-derive each glyph's local line box and affine under `lin` (the text
+ * node's parent element's chain). Glyph rects are AABBs too: the size comes
+ * from the same 2×2 solve; when ill-conditioned, h is the font's content
+ * area height (what an untransformed grapheme Range reports — see
+ * textRuns.contentHeight) and w is solved from one AABB equation.
+ */
+function transformGlyphs(
+  glyphs: Glyph[],
+  lin: Mat2,
+  s: CSSStyleDeclaration
+): void {
+  let fallbackH = -1
+  for (const g of glyphs) {
+    const r = g.rect
+    let size = solveLocalSize(lin, r.width, r.height)
+    if (!size) {
+      if (fallbackH < 0) fallbackH = contentHeight(s)
+      const w = solveWidthGivenHeight(lin, fallbackH, r.width, r.height)
+      size = [w ?? r.width, fallbackH]
+    }
+    const [w, h] = size
+    const [tx, ty] = solveTranslation(lin, w, h, r.x, r.y)
+    g.xform = affine(lin, tx, ty)
+    g.local = { w, h }
   }
 }

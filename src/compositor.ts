@@ -85,8 +85,18 @@ export async function createCompositor(
 
   const frame = (time: number, dt: number): void => {
     const dirty = sync.take()
-    const flags = dirty.flags | pendingReadFlags
+    let flags = dirty.flags | pendingReadFlags
     pendingReadFlags = Dirty.NONE
+    // Running CSS transitions/animations fire no mutation records: re-read
+    // their scopes every frame while any run (dirty.scopes is ours until
+    // the next take()).
+    let cssAnimating = false
+    const scopes = dirty.scopes as Set<Element>
+    for (const el of sync.animatingScopes()) {
+      scopes.add(el)
+      cssAnimating = true
+    }
+    if (cssAnimating) flags |= Dirty.MUTATION
 
     if (flags & Dirty.LAYOUT) resizeCanvas()
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
@@ -120,13 +130,13 @@ export async function createCompositor(
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
     // re-requests one once the viewport has a size.
     if (canvas.width === 0 || canvas.height === 0) {
-      if (animating || scene.hasDynamic) scheduler.request()
+      if (animating || scene.hasDynamic || cssAnimating) scheduler.request()
       return
     }
 
     if (dt > 0) fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
     renderer.render(scene, ctx, dpr)
-    if (animating || scene.hasDynamic) scheduler.request()
+    if (animating || scene.hasDynamic || cssAnimating) scheduler.request()
   }
 
   const scheduler = new FrameScheduler(frame)

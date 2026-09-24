@@ -21,6 +21,35 @@ export interface DirtyState {
 
 const STYLESHEET = 'style, link[rel~="stylesheet"]'
 
+const ANIM_START = ['transitionrun', 'transitionstart', 'animationstart']
+const TRANSITION_END = ['transitionend', 'transitioncancel']
+const ANIMATION_END = ['animationend', 'animationcancel']
+
+/** Does `el` still have an unfinished (running or paused) CSS transition
+ * or animation of the given kind? `getAnimations()` includes finished
+ * animations that are still filling, so check playState. Without the Web
+ * Animations API, assume nothing is left. */
+function hasPending(el: Element, kind: 'transition' | 'animation'): boolean {
+  if (typeof el.getAnimations !== 'function') return false
+  for (const a of el.getAnimations()) {
+    if (a.playState === 'finished' || a.playState === 'idle') continue
+    const isTransition =
+      typeof CSSTransition !== 'undefined' && a instanceof CSSTransition
+    if (isTransition === (kind === 'transition')) return true
+  }
+  return false
+}
+
+/** Is any of `el`'s animations actually advancing (not paused)? True
+ * without the Web Animations API, to stay on the safe side. */
+function isAdvancing(el: Element): boolean {
+  if (typeof el.getAnimations !== 'function') return true
+  for (const a of el.getAnimations()) {
+    if (a.playState === 'running') return true
+  }
+  return false
+}
+
 /** Could adding/removing this node change which stylesheets apply? */
 function carriesStylesheet(n: Node): boolean {
   if (n.nodeType !== Node.ELEMENT_NODE) return false
@@ -40,6 +69,11 @@ function carriesStylesheet(n: Node): boolean {
  * to the image itself. Anything touching a stylesheet, an attribute on the
  * root, and every non-mutation source (resize, fonts, other loads) is a
  * full read.
+ *
+ * CSS transitions and animations change computed style without producing
+ * mutation records. Their targets are tracked from the animation events
+ * (captured on the root) in `animating`; while any run, the frame re-reads
+ * `animatingScopes()` every frame.
  */
 export class DomSync {
   private dirty: number = Dirty.ALL
@@ -49,6 +83,7 @@ export class DomSync {
   private mo: MutationObserver
   private io: IntersectionObserver
   private started = false
+  private animating = new Set<Element>()
 
   constructor(
     private readonly root: HTMLElement,
@@ -121,9 +156,75 @@ export class DomSync {
     }
   }
 
+  private onAnimStart = (e: Event): void => {
+    const t = e.target
+    if (!(t instanceof Element)) return
+    const had = this.animating.size
+    this.animating.add(t)
+    if (had === 0) this.mark(Dirty.MUTATION)
+  }
+
+  private onTransitionEnd = (e: Event): void => {
+    const t = e.target
+    if (!(t instanceof Element) || !this.animating.has(t)) return
+    // Another transition on the same element may still be running.
+    if (hasPending(t, 'transition')) return
+    this.settle(t)
+  }
+
+  private onAnimationEnd = (e: Event): void => {
+    const t = e.target
+    if (!(t instanceof Element) || !this.animating.has(t)) return
+    // An element can run several animations; keep it until all are done.
+    if (hasPending(t, 'animation')) return
+    this.settle(t)
+  }
+
+  /** Stop tracking `t`, with one final re-read of its end state. */
+  private settle(t: Element): void {
+    this.animating.delete(t)
+    const p = t.parentElement
+    if (p) this.scopes.add(p)
+    this.mark(p ? Dirty.MUTATION : Dirty.STYLE)
+  }
+
+  /**
+   * Re-read scopes for running transitions/animations: each target's
+   * parent (the attribute-scope rule — the target's own margin box may
+   * change), or the target itself at the root. Targets whose animations
+   * are all paused stay tracked but yield nothing (a paused animation's
+   * resumption is a style/class mutation, which requests a frame).
+   */
+  *animatingScopes(): Iterable<Element> {
+    for (const el of this.animating) {
+      if (!el.isConnected) {
+        this.animating.delete(el)
+        continue
+      }
+      if (isAdvancing(el)) yield el.parentElement ?? el
+    }
+  }
+
   start(): void {
     if (this.started) return
     this.started = true
+    for (const type of ANIM_START) {
+      this.root.addEventListener(type, this.onAnimStart, true)
+    }
+    for (const type of TRANSITION_END) {
+      this.root.addEventListener(type, this.onTransitionEnd, true)
+    }
+    for (const type of ANIMATION_END) {
+      this.root.addEventListener(type, this.onAnimationEnd, true)
+    }
+    // Transitions/animations already running (started before start(), so
+    // their start events were missed).
+    if (typeof this.root.getAnimations === 'function') {
+      for (const a of this.root.getAnimations({ subtree: true })) {
+        const t = (a.effect as KeyframeEffect | null)?.target
+        if (t) this.animating.add(t)
+      }
+    }
     this.ro.observe(this.root)
     this.mo.observe(this.root, {
       subtree: true,
@@ -152,6 +253,16 @@ export class DomSync {
     window.removeEventListener('resize', this.onResize)
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
     this.root.removeEventListener('load', this.onLoad, true)
+    for (const type of ANIM_START) {
+      this.root.removeEventListener(type, this.onAnimStart, true)
+    }
+    for (const type of TRANSITION_END) {
+      this.root.removeEventListener(type, this.onTransitionEnd, true)
+    }
+    for (const type of ANIMATION_END) {
+      this.root.removeEventListener(type, this.onAnimationEnd, true)
+    }
+    this.animating.clear()
   }
 
   /** Read + clear the pending dirty flags and scopes for this frame. */

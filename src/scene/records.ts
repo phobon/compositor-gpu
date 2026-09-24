@@ -1,6 +1,16 @@
 // Plain data records describing what to paint, in DOCUMENT space (CSS px from
 // the top-left of the document). No GPU types leak into this file.
 
+import type { Affine } from '../dom/transform'
+
+export type { Affine }
+
+/** Untransformed (layout) size of a record's box, in CSS px. */
+export interface LocalSize {
+  w: number
+  h: number
+}
+
 export interface Rect {
   x: number
   y: number
@@ -41,7 +51,13 @@ export interface Gradient {
 export interface BoxRecord {
   kind: 'box'
   id: number
+  /** Doc-space AABB (the transformed box's bounds when transformed). */
   rect: Rect
+  /** Maps local box coords (origin top-left, size `local`) to doc space.
+   * Untransformed: [1, 0, 0, 1, rect.x, rect.y]. */
+  xform: Affine
+  /** Untransformed size; equals the rect size when untransformed. */
+  local: LocalSize
   radius: Corners
   fill: RGBA
   /** First background-image layer when it is a gradient; drawn over fill. */
@@ -58,7 +74,13 @@ export interface BoxRecord {
 export interface ImageRecord {
   kind: 'image'
   id: number
+  /** Doc-space AABB (the transformed box's bounds when transformed). */
   rect: Rect
+  /** Maps local box coords (origin top-left, size `local`) to doc space.
+   * Untransformed: [1, 0, 0, 1, rect.x, rect.y]. */
+  xform: Affine
+  /** Untransformed size; equals the rect size when untransformed. */
+  local: LocalSize
   source: CanvasImageSource
   /** 'none' = natural size (background-size: auto), placed by `position`. */
   objectFit: 'fill' | 'contain' | 'cover' | 'none'
@@ -84,7 +106,13 @@ export interface ImageRecord {
 export interface Glyph {
   /** Stable index within the run — handy for staggered effects. */
   index: number
+  /** Doc-space AABB of the grapheme's line box. */
   rect: Rect
+  /** Maps local line-box coords (origin top-left, size `local`) to doc space.
+   * Untransformed: [1, 0, 0, 1, rect.x, rect.y]. */
+  xform: Affine
+  /** Untransformed size; equals the rect size when untransformed. */
+  local: LocalSize
   /** Index into the font's glyph table (resolved by the text backend). */
   glyphId: number
   /** The grapheme cluster itself (for the Canvas 2D fallback atlas). */

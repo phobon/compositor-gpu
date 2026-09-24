@@ -17,6 +17,10 @@ window.addEventListener('error', (e) => {
 // no glyph animation, live canvas frozen after one frame.
 const vrMode = new URLSearchParams(location.search).has('vr')
 const state = { animate: !vrMode }
+// Starts the CSS spinner animation; `vr` creates it already paused, so its
+// angle is deterministic (see `body.vr` in index.html). Set before the
+// compositor's first read.
+document.body.classList.add(vrMode ? 'vr' : 'live')
 
 function raf(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
@@ -161,6 +165,12 @@ async function boot(): Promise<void> {
 
   $('b-class').addEventListener('click', () => {
     mCard?.classList.toggle('hot')
+  })
+
+  // A live CSS animation: no mutation records while it runs, so this
+  // checks the compositor's transition/animation tracking.
+  $('b-spin').addEventListener('click', () => {
+    $('xf-card').classList.toggle('spin')
   })
 
   $('b-add').addEventListener('click', () => {

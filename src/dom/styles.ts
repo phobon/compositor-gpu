@@ -7,6 +7,7 @@ import type {
 } from '../scene/records'
 import { parseColor } from '../util/color'
 import { firstBackgroundLayer, parseGradient } from './gradient'
+import type { Placement } from './transform'
 
 /** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
 export function toDocRect(r: DOMRect): Rect {
@@ -105,14 +106,17 @@ export function readOpacity(s: CSSStyleDeclaration): number {
 /**
  * Build a BoxRecord for an element's background + border, or null when it
  * paints nothing we care about. Radii/border are read from computed style;
- * `rect` is the element's doc-space border box, read once by the caller.
+ * `rect` is the element's doc-space border box (its AABB when transformed),
+ * read once by the caller; `place` is its local box (see transform.ts) —
+ * radii and gradients resolve against the local (untransformed) size.
  * `opacity` and `z` are placeholders the reader overwrites (effective
  * opacity and global paint order aren't known until the stacking pass).
  */
 export function readBox(
   s: CSSStyleDeclaration,
   rect: Rect,
-  id: number
+  id: number,
+  place: Placement
 ): BoxRecord | null {
   if (s.visibility === 'hidden' || s.display === 'none') return null
 
@@ -127,6 +131,9 @@ export function readBox(
   // image records, handled elsewhere). Resolved against the padding box
   // (background-origin: padding-box), inset by the same uniform border width
   // the shader uses, so the two agree.
+  const lw = place.local.w
+  const lh = place.local.h
+  const localRect = { x: 0, y: 0, width: lw, height: lh }
   let gradient: Gradient | null = null
   const bgi = s.backgroundImage
   if (bgi && bgi !== 'none') {
@@ -134,10 +141,10 @@ export function readBox(
     if (layer && !layer.startsWith('url(')) {
       const inset = hasBorder ? borderWidth : 0
       gradient = parseGradient(layer, {
-        x: rect.x + inset,
-        y: rect.y + inset,
-        width: Math.max(0, rect.width - 2 * inset),
-        height: Math.max(0, rect.height - 2 * inset)
+        x: inset,
+        y: inset,
+        width: Math.max(0, lw - 2 * inset),
+        height: Math.max(0, lh - 2 * inset)
       })
     }
   }
@@ -147,7 +154,9 @@ export function readBox(
     kind: 'box',
     id,
     rect,
-    radius: readCorners(s, rect),
+    xform: place.xform,
+    local: place.local,
+    radius: readCorners(s, localRect),
     fill,
     gradient,
     border: hasBorder ? { width: borderWidth, color: borderColor } : null,
@@ -183,7 +192,7 @@ export function clipRectFor(s: CSSStyleDeclaration, r: Rect): Rect | null {
  * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
  * null when it isn't ready to sample. Canvas and video are marked dynamic so
  * their textures re-upload every frame. `rect` is the element's doc-space
- * border box. `opacity` and `z` are placeholders the reader overwrites, as
+ * border box (AABB) and `place` its local box. `opacity` and `z` are placeholders the reader overwrites, as
  * in readBox.
  */
 export function readImageRecord(
@@ -191,7 +200,8 @@ export function readImageRecord(
   s: CSSStyleDeclaration,
   rect: Rect,
   id: number,
-  clip: Rect | null
+  clip: Rect | null,
+  place: Placement
 ): ImageRecord | null {
   let source: CanvasImageSource
   let dynamic = false
@@ -218,11 +228,18 @@ export function readImageRecord(
     kind: 'image',
     id,
     rect,
+    xform: place.xform,
+    local: place.local,
     source,
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
     position: mapBackgroundPosition(s.objectPosition || '50% 50%', [0.5, 0.5]),
     repeat: false,
-    radius: readCorners(s, rect),
+    radius: readCorners(s, {
+      x: 0,
+      y: 0,
+      width: place.local.w,
+      height: place.local.h
+    }),
     opacity: 1,
     z: 0,
     clip,

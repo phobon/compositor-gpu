@@ -60,9 +60,13 @@ export function readTextNode(
     range.setEnd(node, offset + len)
     const r = range.getBoundingClientRect()
     if (r.width > 0 && r.height > 0) {
+      const rect = toDocRect(r)
       glyphs.push({
         index,
-        rect: toDocRect(r),
+        rect,
+        // Untransformed; the reader re-derives these under a transform.
+        xform: [1, 0, 0, 1, rect.x, rect.y],
+        local: { w: rect.width, h: rect.height },
         glyphId: cell.codePointAt(0) ?? 0,
         text: cell,
         fontId,
@@ -89,4 +93,37 @@ export function readTextNode(
     opacity: 1,
     z: 0
   }
+}
+
+const contentHeights = new Map<string, number>()
+let measureCtx: CanvasRenderingContext2D | null | undefined
+
+/**
+ * Height of an untransformed grapheme's Range rect for this style: the
+ * primary font's content area (fontBoundingBoxAscent + Descent), which is
+ * independent of `line-height`. Measured with Canvas 2D (no layout read),
+ * cached per font; `fontSize * 1.2` when Canvas 2D is unavailable. Only
+ * used where a transform makes the AABB solve ill-conditioned.
+ */
+export function contentHeight(s: CSSStyleDeclaration): number {
+  const fontSize = Number.parseFloat(s.fontSize) || 16
+  const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
+  const hit = contentHeights.get(font)
+  if (hit !== undefined) return hit
+  if (measureCtx === undefined) {
+    measureCtx = document.createElement('canvas').getContext('2d')
+    // A web font finishing its load changes the metrics for the same key.
+    document.fonts?.addEventListener('loadingdone', () =>
+      contentHeights.clear()
+    )
+  }
+  let h = fontSize * 1.2
+  if (measureCtx) {
+    measureCtx.font = font
+    const m = measureCtx.measureText('x')
+    const fh = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
+    if (Number.isFinite(fh) && fh > 0) h = fh
+  }
+  contentHeights.set(font, h)
+  return h
 }

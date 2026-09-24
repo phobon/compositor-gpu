@@ -46,7 +46,10 @@
 - [ ] `::marker` / `::before` / `::after` pseudo-elements (list bullets are
       currently missing from the mirror)
 - [ ] Optional WebGL2 backend behind the renderer interface
-- [ ] Transforms / perspective on boxes (text already supports it via Slug)
+- [x] 2D transforms on boxes, images and text (per-instance affine; nested
+      transforms; synthetic oblique) + CSS transition/animation tracking
+- [ ] Perspective / 3D transforms (matrix3d is flattened); individual
+      `rotate`/`scale`/`translate` properties; rotated overflow clips (AABB now)
 
 ## Non-goals (for now)
 Video textures, CSS filters/blend modes, print, nested independent scrollers.

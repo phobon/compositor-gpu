@@ -1,7 +1,8 @@
 import { FRAME_WGSL } from '../gpu/frame'
 
-/** Floats per atlas quad: rect(4) + uv(4) + color(4) + params(4) + clip(4). */
-export const ATLAS_QUAD_FLOATS = 20
+/** Floats per atlas quad: rect(4) + uv(4) + color(4) + params(4) + clip(4)
+ * + xf0(4) + xf1(4). */
+export const ATLAS_QUAD_FLOATS = 28
 
 /**
  * Textured quads for fallback glyphs sampled from the Canvas 2D glyph atlas
@@ -18,11 +19,13 @@ export const ATLAS_WGSL = /* wgsl */ `
 ${FRAME_WGSL}
 
 struct Quad {
-  rect   : vec4f,   // x,y,w,h document space (offset already applied)
+  rect   : vec4f,   // x,y,w,h in the glyph's local line-box frame
   uv     : vec4f,   // u0,v0,u1,v1
   color  : vec4f,   // sRGB straight alpha; a = glyph alpha * run opacity
   params : vec4f,   // tint (1 = mono coverage), _, _, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
+  xf1    : vec4f,   // tx, ty (doc space, offset applied), _, _
 };
 @group(1) @binding(0) var<storage, read> quads : array<Quad>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -43,7 +46,9 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let q = quads[ii];
   let corner = quad[vi];
-  let p = q.rect.xy + corner * q.rect.zw;
+  let lp = q.rect.xy + corner * q.rect.zw;
+  let m = q.xf0;
+  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + q.xf1.xy;
   var out : VOut;
   out.pos = doc_to_clip(p);
   out.uv = mix(q.uv.xy, q.uv.zw, corner);
