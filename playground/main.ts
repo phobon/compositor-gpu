@@ -21,6 +21,7 @@ async function boot(): Promise<void> {
   const compositor = await createCompositor({
     root: stage,
     layers: ['boxes', 'images', 'text'],
+    fonts: 'auto',
     onGlyph: (g, ctx) => {
       g.offset.y = state.animate
         ? Math.sin(ctx.time / 300 + g.index * 0.5) * 6
@@ -32,6 +33,9 @@ async function boot(): Promise<void> {
       $('s-glyphs').textContent = String(s.glyphs)
       $('s-images').textContent = String(s.images)
       $('s-fps').textContent = s.fps.toFixed(0)
+      const ready = compositor.text?.ready ?? false
+      $('s-text').textContent = ready ? 'ready' : 'loading'
+      $('s-text').className = ready ? 'ok' : ''
     }
   })
 
@@ -44,29 +48,8 @@ async function boot(): Promise<void> {
     return
   }
 
-  // Register two weights (Inter 400 + 700, OFL). Runs resolve per weight.
-  try {
-    const faces: Array<[string, number]> = [
-      ['./inter-400.ttf', 400],
-      ['./inter-700.ttf', 700]
-    ]
-    for (const [url, weight] of faces) {
-      const res = await fetch(url)
-      if (res.ok) {
-        compositor.text?.loadFontBuffer(await res.arrayBuffer(), {
-          family: 'Inter Play',
-          weight
-        })
-      }
-    }
-    const ok = compositor.text?.ready ?? false
-    $('s-text').textContent = ok ? 'ready' : 'no font'
-    $('s-text').className = ok ? 'ok' : 'bad'
-  } catch (err) {
-    $('s-text').textContent = 'font error'
-    console.error('font load:', err)
-  }
-
+  // Fonts are discovered from the page's @font-face rules by fonts:'auto'
+  // above, fetched and parsed at runtime — no manual loadFontBuffer needed.
   compositor.start()
   // Images may finish decoding after the first walk; re-read once loaded.
   window.addEventListener('load', () => compositor.invalidate())

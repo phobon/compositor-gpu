@@ -2,6 +2,7 @@ import type { Shared } from '../../gpu/frame'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
+import { resolveFontBytes } from '../fontSource'
 import type { TextBackend } from '../textRasterizer'
 import { parseFont } from './font'
 import { SLUG_WGSL } from './shaders'
@@ -52,6 +53,7 @@ export class SlugText implements TextBackend {
   private bandData: number[] = [] // vec4f per band, all faces concatenated
   private curveData: number[] = [] // 8 floats per curve
   private resolveCache = new Map<string, FaceEntry | null>()
+  private loadedKeys = new Set<string>()
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
@@ -86,9 +88,30 @@ export class SlugText implements TextBackend {
     })
   }
 
+  /**
+   * Resolve each FontFace to its bytes (via the page's @font-face src URLs) and
+   * register it. Idempotent: faces already loaded here or via loadFontBuffer are
+   * skipped, so it is safe to call again as document.fonts grows.
+   */
   async prepare(faces: FontFace[]): Promise<void> {
-    // FontFace doesn't expose its parsed bytes; callers use loadFontBuffer.
-    if (faces.length === 0) log.info('SlugText.prepare: no fonts provided')
+    if (faces.length === 0) {
+      log.info('SlugText.prepare: no fonts provided')
+      return
+    }
+    const resolved = await resolveFontBytes(faces)
+    for (const { buffer, descriptor } of resolved) {
+      const key = faceKey(descriptor)
+      if (this.loadedKeys.has(key)) continue
+      try {
+        this.loadFontBuffer(buffer, descriptor)
+      } catch (err) {
+        log.info(
+          `SlugText: could not parse ${descriptor.family ?? '(any)'} — ${
+            (err as Error).message
+          }`
+        )
+      }
+    }
   }
 
   /**
@@ -152,6 +175,13 @@ export class SlugText implements TextBackend {
     this.ensureGlyphCapacity(256)
     this.rebuildBindGroup()
     this.ready = true
+    this.loadedKeys.add(
+      faceKey({
+        family: descriptor.family,
+        weight: descriptor.weight ?? 400,
+        italic: descriptor.italic ?? false
+      })
+    )
     log.info(
       `SlugText: +face ${descriptor.family ?? '(any)'} ${
         descriptor.weight ?? 400
@@ -298,4 +328,15 @@ function defaultCodePoints(): number[] {
   const cps: number[] = []
   for (let c = 0x20; c <= 0x7e; c++) cps.push(c)
   return cps
+}
+
+/** Stable key for a face descriptor: family (ci) + weight + italic. */
+function faceKey(d: {
+  family?: string
+  weight?: number
+  italic?: boolean
+}): string {
+  return `${(d.family ?? '').toLowerCase()}|${d.weight ?? 400}|${
+    d.italic ? 1 : 0
+  }`
 }

@@ -57,9 +57,6 @@ export async function createCompositor(
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)
     renderer.addPass(text)
-    if (options.fonts && options.fonts !== 'auto') {
-      void text.prepare(options.fonts)
-    }
   }
   gpu.device.popErrorScope().then((e) => {
     if (e) log.error('GPU validation error during setup:', e.message)
@@ -111,6 +108,24 @@ export async function createCompositor(
 
   const scheduler = new FrameScheduler(frame)
   const sync = new DomSync(root, () => scheduler.request())
+
+  if (text) {
+    // 'auto' (and, for convenience, the default) discovers the document's
+    // registered faces; an explicit list resolves just those. Either way the
+    // bytes are fetched at runtime, then a re-read re-uploads the glyphs.
+    const faces =
+      options.fonts && options.fonts !== 'auto'
+        ? options.fonts
+        : options.fonts === 'auto'
+          ? Array.from(document.fonts)
+          : []
+    if (faces.length > 0) {
+      void text.prepare(faces).then(() => {
+        pendingReadFlags |= Dirty.STYLE
+        scheduler.request()
+      })
+    }
+  }
   const onResize = (): void => {
     pendingReadFlags |= Dirty.LAYOUT
     scheduler.request()
