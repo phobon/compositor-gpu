@@ -11,11 +11,11 @@
 - [x] Playground + `/duo` integration harness
 
 ## Phase 1 — text that renders
-- [ ] Validate the Slug shader in-browser; fix winding sign + band selection
+- [x] Validate the Slug shader in-browser; fix winding sign + band selection
 - [x] Analytic anti-aliasing (signed sub-pixel coverage + 3-tap vertical AA)
-- [ ] Resolve FontFace → bytes at runtime in `prepare()`
+- [x] Resolve FontFace → bytes at runtime in `prepare()`
 - [ ] Real shaped glyph ids (cmap + browser shaping) for ligatures/bidi
-- [ ] On-demand per-glyph band upload with an LRU
+- [x] On-demand per-glyph band upload with an LRU
 - [x] Match per-element font-weight/style to a registered face (family +
       nearest-weight + italic resolution; multiple static faces)
 - [ ] Derive faces from a variable font by instancing (avoid shipping N files)

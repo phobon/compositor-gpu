@@ -65,31 +65,63 @@ fn dy_at(q : Curve, t : f32) -> f32 {
   return 2.0 * (mt * (q.c.y - q.p.y) + t * (q.p.w - q.c.y));
 }
 
-// Signed sub-pixel coverage of one crossing: +/-1 far to the right of the
-// pixel, ramping through 0.5 as the crossing passes the pixel centre. invPx
-// converts em-space x distance into pixels (1 / em-per-pixel).
-fn crossing_cov(p : vec2f, q : Curve, t : f32, invPx : f32) -> f32 {
-  if (t < 0.0 || t > 1.0) { return 0.0; }
-  let x = bezier_x(q, t);
-  let s = select(-1.0, 1.0, dy_at(q, t) > 0.0);
+// Signed sub-pixel coverage of one crossing at parameter t with sign s: +/-1
+// far to the right of the pixel, ramping through 0.5 as the crossing passes the
+// pixel centre. invPx converts em-space x distance into pixels (1 / em/px).
+fn crossing_at(p : vec2f, q : Curve, t : f32, s : f32, invPx : f32) -> f32 {
+  let x = bezier_x(q, clamp(t, 0.0, 1.0));
   return s * clamp((x - p.x) * invPx + 0.5, 0.0, 1.0);
 }
 
-// Signed coverage contributed by a curve's crossings of the ray at p.y.
+// Signed coverage from one curve's crossings of the horizontal ray at p.y.
+//
+// Robust at shared vertices: a 1-D quadratic Bezier stays within the range of
+// its three y control points, so classifying by the strict sign (y > 0) of the
+// endpoints tells the crossing count exactly. A vertex lying on the ray has
+// y == 0, counted as "below" for BOTH curves that share it, so the crossing is
+// attributed to exactly one of them — never doubled, never dropped, with no
+// dependence on the root landing at t = 0 or 1.
 fn ray_coverage(p : vec2f, q : Curve, invPx : f32) -> f32 {
   let y0 = q.p.y - p.y;
   let yc = q.c.y - p.y;
   let y1 = q.p.w - p.y;
+  let a0 = y0 > 0.0;
+  let a1 = y1 > 0.0;
+  let ac = yc > 0.0;
+  if (a0 == a1 && a1 == ac) { return 0.0; } // whole curve on one side
+
   let a = y0 - 2.0 * yc + y1;
   let b = y0 - yc;
+  var t0 : f32;
+  var t1 : f32;
   if (abs(a) < 1e-6) {
-    return crossing_cov(p, q, y0 / (y0 - y1), invPx);
+    let t = y0 / (2.0 * b);
+    t0 = t;
+    t1 = t;
+  } else {
+    let s = sqrt(max(b * b - a * y0, 0.0));
+    t0 = (b - s) / a;
+    t1 = (b + s) / a;
   }
-  let d = b * b - a * y0;
-  if (d < 0.0) { return 0.0; }
-  let s = sqrt(d);
-  return crossing_cov(p, q, (b - s) / a, invPx)
-       + crossing_cov(p, q, (b + s) / a, invPx);
+
+  if (a0 != a1) {
+    // Endpoints straddle the ray: exactly one crossing. Pick the in-range root
+    // and take the sign from the endpoints (up if the curve ends above).
+    let t = select(t1, t0, t0 >= 0.0 && t0 <= 1.0);
+    let s = select(-1.0, 1.0, a1);
+    return crossing_at(p, q, t, s, invPx);
+  }
+
+  // Endpoints on the same side but the control point is across: two crossings
+  // (they cancel in winding, but both contribute sub-pixel edge coverage).
+  var cov = 0.0;
+  if (t0 >= 0.0 && t0 <= 1.0) {
+    cov += crossing_at(p, q, t0, select(-1.0, 1.0, dy_at(q, t0) > 0.0), invPx);
+  }
+  if (t1 >= 0.0 && t1 <= 1.0) {
+    cov += crossing_at(p, q, t1, select(-1.0, 1.0, dy_at(q, t1) > 0.0), invPx);
+  }
+  return cov;
 }
 
 // Summed signed coverage across the band containing em.y.
@@ -113,9 +145,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let invPx = 1.0 / max(fwidth(in.em.x), 1e-5);
   let pxH = max(fwidth(in.em.y), 1e-5);
   // 3-tap vertical supersample for anti-aliasing of near-horizontal edges.
-  let c0 = abs(coverage_row(vec2f(in.em.x, in.em.y - 0.36 * pxH), g.gref, invPx));
-  let c1 = abs(coverage_row(in.em, g.gref, invPx));
-  let c2 = abs(coverage_row(vec2f(in.em.x, in.em.y + 0.36 * pxH), g.gref, invPx));
+  let ey = in.em.y;
+  let c0 = abs(coverage_row(vec2f(in.em.x, ey - 0.36 * pxH), g.gref, invPx));
+  let c1 = abs(coverage_row(vec2f(in.em.x, ey), g.gref, invPx));
+  let c2 = abs(coverage_row(vec2f(in.em.x, ey + 0.36 * pxH), g.gref, invPx));
   let cov = clamp((c0 + c1 + c2) / 3.0, 0.0, 1.0);
   let a = cov * g.color.a;
   return vec4f(g.color.rgb * a, a);

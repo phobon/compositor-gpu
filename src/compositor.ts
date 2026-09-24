@@ -101,6 +101,14 @@ export async function createCompositor(
     }
     options.onFrame?.(ctx)
 
+    // The swapchain texture can't be created at 0x0 (e.g. before the canvas
+    // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
+    // re-requests one once the viewport has a size.
+    if (canvas.width === 0 || canvas.height === 0) {
+      if (animating) scheduler.request()
+      return
+    }
+
     if (dt > 0) fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
     renderer.render(scene, ctx, dpr)
     if (animating) scheduler.request()
