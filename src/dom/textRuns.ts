@@ -102,6 +102,13 @@ export interface FontMetrics {
   descent: number
 }
 
+/** The computed-style fields that select a font (a style, or a synthetic
+ * one built from a GlyphRun). */
+export type FontStyleLike = Pick<
+  CSSStyleDeclaration,
+  'fontSize' | 'fontStyle' | 'fontWeight' | 'fontFamily'
+>
+
 const fontMetricsCache = new Map<string, FontMetrics>()
 let measureCtx: CanvasRenderingContext2D | null | undefined
 
@@ -110,7 +117,7 @@ let measureCtx: CanvasRenderingContext2D | null | undefined
  * `line-height`. Measured with Canvas 2D (no layout read), cached per font;
  * falls back to a 0.8/0.2 fontSize split when Canvas 2D is unavailable.
  */
-export function fontMetrics(s: CSSStyleDeclaration): FontMetrics {
+export function fontMetrics(s: FontStyleLike): FontMetrics {
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
   const hit = fontMetricsCache.get(font)

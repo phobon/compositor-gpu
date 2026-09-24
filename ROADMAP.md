@@ -50,8 +50,12 @@
       parity + golden regression, headless WebGPU via SwiftShader fallback)
 - [x] Blend in sRGB space like the browser (found by the harness: linear
       blending made every translucent overlay too light)
-- [ ] `::marker` / `::before` / `::after` pseudo-elements (list bullets are
-      currently missing from the mirror)
+- [x] `::marker` / `::before` / `::after` pseudo-elements (synthesised from
+      computed pseudo styles + measured text: bullets as Chrome-sized shapes,
+      numbered/custom markers, string/attr() content as inline, block or
+      absolutely positioned boxes)
+- [ ] Pseudo content gaps: `counter()`, quotes, `url()` images,
+      `list-style-image`, multi-line pseudo text, pseudo `transform`
 - [ ] Optional WebGL2 backend behind the renderer interface
 - [x] 2D transforms on boxes, images and text (per-instance affine; nested
       transforms; synthetic oblique) + CSS transition/animation tracking

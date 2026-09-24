@@ -39,6 +39,7 @@ const SECTIONS = [
   'opacity',
   'transforms',
   'mutations',
+  'pseudo',
   'canvas'
 ] as const
 

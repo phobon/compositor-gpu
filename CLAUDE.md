@@ -115,6 +115,12 @@ Conventions each pass must follow:
   element's `own` records before its background box. The box shader draws a
   `shadow` record as a blurred rounded rect (Wallace's analytic method) masked
   outside the element's border box.
+- **Pseudo-elements** (`dom/pseudo.ts`): browsers expose pseudo STYLE but no
+  geometry, so `::marker`/`::before`/`::after` are synthesised — Chrome does
+  report px `width/height/left/top` for block and positioned pseudos, which
+  are used when present; text is measured with Canvas 2D and anchored to the
+  element's first/last glyph line. They become BoxRecords/GlyphRuns in
+  `node.kids` (marker, ::before, kids, ::after) in the element's local frame.
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
   list carries `push`/`pop` markers at its cuts; `Renderer` renders the range

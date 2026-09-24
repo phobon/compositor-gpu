@@ -22,6 +22,15 @@ import {
   propagateDecorations
 } from './decorations'
 import {
+  type GlyphRef,
+  type OrdinalCache,
+  type PseudoHost,
+  type PseudoOut,
+  paddingPlacement,
+  readBeforeAfter,
+  readMarker
+} from './pseudo'
+import {
   clipRectFor,
   readBox,
   readImageRecord,
@@ -72,8 +81,9 @@ export interface ElNode {
   kind: 'element'
   el: Element
   parent: ElNode | null
-  /** Child elements and direct text-node runs, in document order. */
-  kids: (ElNode | GlyphRun)[]
+  /** Child elements, direct text-node runs and pseudo-element records
+   * (`::marker`, `::before` first, `::after` last), in paint order. */
+  kids: ElKid[]
   /** Border-box rect (doc space). Read for every element: it is the
    * escalation check for a partial read. */
   rect: Rect
@@ -99,7 +109,14 @@ export interface ElNode {
    * propagated from ancestors, reset at an out-of-flow/atomic-inline
    * boundary — see decorations.ts). Null when nothing decorates here. */
   decor: Decoration[] | null
+  /** Padding box of the containing block for absolutely positioned
+   * content inside this element (its own when positioned/transformed). */
+  cb: Placement
+  /** A synthetic node wrapping a positioned pseudo-element's records. */
+  pseudo?: boolean
 }
+
+export type ElKid = ElNode | GlyphRun | BoxRecord
 
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
   if (!a) return b
@@ -178,6 +195,9 @@ export function flatten(
     for (const kid of node.kids) {
       if (kid.kind === 'element') {
         visit(kid, c)
+      } else if (kid.kind === 'box') {
+        c.items.push(kid)
+        sink?.(kid)
       } else {
         // Decoration lines paint under the glyphs they decorate.
         if (kid.decorations) {
@@ -260,6 +280,8 @@ export function selectBoundaries<E extends Linked<E>>(
 export class SceneReader {
   private tree: ElNode | null = null
   private nodes = new WeakMap<Element, ElNode>()
+  /** List-item ordinals, per list, for the current read (see pseudo.ts). */
+  private ordinals: OrdinalCache = new Map()
   /** Elements visited (DOM-read) by the most recent read, incl. any work
    * discarded by an escalation. */
   readElements = 0
@@ -278,6 +300,7 @@ export class SceneReader {
   /** Re-read the whole root subtree and rebuild the scene. */
   fullRead(): void {
     this.readElements = 0
+    this.ordinals.clear()
     this.readAll()
   }
 
@@ -299,6 +322,7 @@ export class SceneReader {
    */
   partialRead(scopes: ReadonlySet<Element>): void {
     this.readElements = 0
+    this.ordinals.clear()
     const tree = this.tree
     if (!tree) {
       this.readAll()
@@ -327,7 +351,8 @@ export class SceneReader {
         p ? p.childClip : null,
         p === null,
         p ? p.lin : null,
-        p ? p.decor : null
+        p ? p.decor : null,
+        p ? p.cb : null
       )
       if (
         !fresh ||
@@ -354,7 +379,7 @@ export class SceneReader {
   }
 
   private readAll(): void {
-    this.tree = this.readNode(this.root, null, null, true, null, null)
+    this.tree = this.readNode(this.root, null, null, true, null, null, null)
     this.rebuildScene()
   }
 
@@ -372,7 +397,8 @@ export class SceneReader {
     clip: Rect | null,
     isRoot: boolean,
     parentLin: Mat2 | null,
-    parentDecor: Decoration[] | null
+    parentDecor: Decoration[] | null,
+    parentCb: Placement | null
   ): ElNode | null {
     if (SKIP_TAGS.has(el.tagName)) return null
     this.readElements++
@@ -432,6 +458,10 @@ export class SceneReader {
     const ownClip = clipRectFor(s, rect)
     const childClip = ownClip ? intersect(clip, ownClip) : clip
     const display = s.display
+    const cb =
+      parentCb === null || s.position !== 'static' || s.transform !== 'none'
+        ? paddingPlacement(s, place)
+        : parentCb
 
     const node: ElNode = {
       kind: 'element',
@@ -447,7 +477,8 @@ export class SceneReader {
       fragmented: display === 'inline' || display === 'contents',
       float: s.float !== 'none',
       lin,
-      decor
+      decor,
+      cb
     }
     this.nodes.set(el, node)
 
@@ -459,7 +490,8 @@ export class SceneReader {
           childClip,
           false,
           lin,
-          decor
+          decor,
+          cb
         )
         if (kid) node.kids.push(kid)
       } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
@@ -482,8 +514,109 @@ export class SceneReader {
         }
       }
     }
+    if (layers.has('boxes') || layers.has('text')) {
+      this.readPseudos(node, s, place, display)
+    }
     return node
   }
+
+  /**
+   * Splice `node`'s pseudo-elements into its kids (after they are read:
+   * placement needs their glyphs): `::marker` then `::before` first,
+   * `::after` last.
+   */
+  private readPseudos(
+    node: ElNode,
+    s: CSSStyleDeclaration,
+    place: Placement,
+    display: string
+  ): void {
+    const { scene, layers } = this
+    const host: PseudoHost = {
+      el: node.el,
+      s,
+      place,
+      clip: node.childClip,
+      cb: node.cb,
+      boxes: layers.has('boxes'),
+      text: layers.has('text'),
+      alloc: () => scene.allocId()
+    }
+    const head: ElKid[] = []
+    if (display === 'list-item') {
+      const marker = readMarker(host, firstGlyph(node.kids), this.ordinals)
+      if (marker) head.push(...this.pseudoKids(node, marker))
+    }
+    const before = readBeforeAfter(host, '::before', firstGlyph(node.kids))
+    if (before) head.push(...this.pseudoKids(node, before))
+    const after = readBeforeAfter(host, '::after', lastGlyph(node.kids))
+    if (head.length) node.kids.unshift(...head)
+    if (after) node.kids.push(...this.pseudoKids(node, after))
+  }
+
+  /** A pseudo's records as kids; a positioned one (a stacking context)
+   * is wrapped in a synthetic context node. */
+  private pseudoKids(node: ElNode, out: PseudoOut): ElKid[] {
+    const ctx = out.context
+    if (!ctx) return out.items
+    const own: OwnRecord[] = []
+    const kids: ElKid[] = []
+    for (const r of out.items) {
+      if (r.kind === 'box' && kids.length === 0) own.push(r)
+      else kids.push(r)
+    }
+    return [
+      {
+        kind: 'element',
+        el: node.el,
+        parent: node,
+        kids,
+        rect: ctx.rect,
+        own,
+        isContext: true,
+        ctxZ: ctx.z,
+        childClip: node.childClip,
+        alpha: ctx.alpha,
+        fragmented: false,
+        float: false,
+        lin: node.lin,
+        decor: null,
+        cb: node.cb,
+        pseudo: true
+      }
+    ]
+  }
+}
+
+/** First glyph in document order under `kids` (skipping positioned
+ * pseudo-elements), with its run. */
+function firstGlyph(kids: readonly ElKid[]): GlyphRef | null {
+  for (const kid of kids) {
+    if (kid.kind === 'text') {
+      const g = kid.glyphs[0]
+      if (g) return { g, run: kid }
+    } else if (kid.kind === 'element' && !kid.pseudo) {
+      const r = firstGlyph(kid.kids)
+      if (r) return r
+    }
+  }
+  return null
+}
+
+/** Last glyph in document order under `kids` (see firstGlyph). */
+function lastGlyph(kids: readonly ElKid[]): GlyphRef | null {
+  for (let i = kids.length - 1; i >= 0; i--) {
+    const kid = kids[i]
+    if (!kid) continue
+    if (kid.kind === 'text') {
+      const g = kid.glyphs[kid.glyphs.length - 1]
+      if (g) return { g, run: kid }
+    } else if (kid.kind === 'element' && !kid.pseudo) {
+      const r = lastGlyph(kid.kids)
+      if (r) return r
+    }
+  }
+  return null
 }
 
 /**
