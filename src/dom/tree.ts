@@ -8,6 +8,7 @@ import type {
 } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import {
+  type OpacityGroup,
   type StackingContext,
   assignPaintOrder,
   contextZIndex,
@@ -16,10 +17,16 @@ import {
 import type { Layer } from '../types'
 import { readBackgroundImage } from './backgrounds'
 import {
+  type Decoration,
+  buildDecorationBoxes,
+  propagateDecorations
+} from './decorations'
+import {
   clipRectFor,
   readBox,
   readImageRecord,
   readOpacity,
+  readShadows,
   toDocRect
 } from './styles'
 import { contentHeight, readTextNode } from './textRuns'
@@ -77,8 +84,10 @@ export interface ElNode {
   ctxZ: number
   /** Clip applied to the element's content (children + text). */
   childClip: Rect | null
-  /** Effective opacity (own × ancestors; the root's own is ignored). */
-  opacity: number
+  /** Own opacity (1 for the root, whose own is ignored). An element with
+   * alpha < 1 is a context and becomes an opacity group; its records keep
+   * opacity 1 and the group applies alpha once. */
+  alpha: number
   /** `display: inline | contents`: the box is fragmented (or absent), so
    * its bounding rect doesn't bound its effect on layout outside it. */
   fragmented: boolean
@@ -86,6 +95,10 @@ export interface ElNode {
   float: boolean
   /** Accumulated linear transform (ancestors · own); null = identity. */
   lin: Mat2 | null
+  /** text-decoration entries to thread into children's text (own +
+   * propagated from ancestors, reset at an out-of-flow/atomic-inline
+   * boundary — see decorations.ts). Null when nothing decorates here. */
+  decor: Decoration[] | null
 }
 
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
@@ -140,16 +153,22 @@ function sameFloats(a: ElNode, b: ElNode): boolean {
  * Build the stacking-context tree from an element tree, exactly as a DOM
  * walk would: a context-creating element's own records land first in a new
  * context (see stacking.ts), otherwise in the current one; kids follow in
- * document order. `sink` sees every record once. CPU only.
+ * document order. `sink` sees every record once. Returns the opacity
+ * groups (see stacking.ts). CPU only.
  */
 export function flatten(
   root: ElNode,
   sink?: (record: SceneRecord) => void
-): StackingContext {
+): OpacityGroup[] {
   const visit = (node: ElNode, ctx: StackingContext): void => {
     let c = ctx
     if (node.isContext) {
-      c = { z: node.ctxZ, items: [], ownCount: node.own.length }
+      c = {
+        z: node.ctxZ,
+        items: [],
+        ownCount: node.own.length,
+        alpha: node.alpha
+      }
       ctx.items.push(c)
     }
     for (const r of node.own) {
@@ -160,6 +179,13 @@ export function flatten(
       if (kid.kind === 'element') {
         visit(kid, c)
       } else {
+        // Decoration lines paint under the glyphs they decorate.
+        if (kid.decorations) {
+          for (const d of kid.decorations) {
+            c.items.push(d)
+            sink?.(d)
+          }
+        }
         c.items.push(kid)
         sink?.(kid)
       }
@@ -167,8 +193,7 @@ export function flatten(
   }
   const rootCtx: StackingContext = { z: 0, items: [], ownCount: 0 }
   visit(root, rootCtx)
-  assignPaintOrder(rootCtx)
-  return rootCtx
+  return assignPaintOrder(rootCtx)
 }
 
 interface Linked<E> {
@@ -300,9 +325,9 @@ export class SceneReader {
         b,
         p,
         p ? p.childClip : null,
-        p ? p.opacity : 1,
         p === null,
-        p ? p.lin : null
+        p ? p.lin : null,
+        p ? p.decor : null
       )
       if (
         !fresh ||
@@ -329,14 +354,14 @@ export class SceneReader {
   }
 
   private readAll(): void {
-    this.tree = this.readNode(this.root, null, null, 1, true, null)
+    this.tree = this.readNode(this.root, null, null, true, null, null)
     this.rebuildScene()
   }
 
   private rebuildScene(): void {
     const scene = this.scene
     scene.clear()
-    if (this.tree) flatten(this.tree, (r) => scene.add(r))
+    if (this.tree) scene.groups = flatten(this.tree, (r) => scene.add(r))
     scene.sort()
   }
 
@@ -345,9 +370,9 @@ export class SceneReader {
     el: Element,
     parent: ElNode | null,
     clip: Rect | null,
-    parentOpacity: number,
     isRoot: boolean,
-    parentLin: Mat2 | null
+    parentLin: Mat2 | null,
+    parentDecor: Decoration[] | null
   ): ElNode | null {
     if (SKIP_TAGS.has(el.tagName)) return null
     this.readElements++
@@ -358,16 +383,23 @@ export class SceneReader {
     const place = lin
       ? transformedPlacement(el, lin, rect)
       : rectPlacement(rect)
-    const opacity = parentOpacity * (isRoot ? 1 : readOpacity(s))
     const isContext = !isRoot && createsStackingContext(s)
+    const alpha = isContext ? Math.max(0, readOpacity(s)) : 1
+    const decor = layers.has('text')
+      ? propagateDecorations(el, s, parentDecor)
+      : null
 
     let own = NO_RECORDS
     if (layers.has('boxes')) {
+      // Outer shadows paint under the element's own background.
+      const shadows = readShadows(s, rect, place, () => scene.allocId())
+      for (const sh of shadows) sh.clip = clip
       const box = readBox(s, rect, scene.allocId(), place)
       if (box) {
         box.clip = clip
-        box.opacity = opacity
-        own = [box]
+        own = [...shadows, box]
+      } else if (shadows.length) {
+        own = shadows
       }
     }
     if (
@@ -378,7 +410,6 @@ export class SceneReader {
     ) {
       const rec = readImageRecord(el, s, rect, scene.allocId(), clip, place)
       if (rec) {
-        rec.opacity = opacity
         own = own.length ? [...own, rec] : [rec]
       }
     }
@@ -392,7 +423,6 @@ export class SceneReader {
         place
       )
       if (bg) {
-        bg.opacity = opacity
         own = own.length ? [...own, bg] : [bg]
       }
     }
@@ -413,10 +443,11 @@ export class SceneReader {
       isContext,
       ctxZ: isContext ? contextZIndex(s) : 0,
       childClip,
-      opacity,
+      alpha,
       fragmented: display === 'inline' || display === 'contents',
       float: s.float !== 'none',
-      lin
+      lin,
+      decor
     }
     this.nodes.set(el, node)
 
@@ -426,9 +457,9 @@ export class SceneReader {
           child as Element,
           node,
           childClip,
-          opacity,
           false,
-          lin
+          lin,
+          decor
         )
         if (kid) node.kids.push(kid)
       } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
@@ -442,7 +473,11 @@ export class SceneReader {
         if (run) {
           if (lin) transformGlyphs(run.glyphs, lin, s)
           run.clip = childClip
-          run.opacity = opacity
+          if (decor?.length) {
+            run.decorations = buildDecorationBoxes(run, decor, childClip, () =>
+              scene.allocId()
+            )
+          }
           node.kids.push(run)
         }
       }

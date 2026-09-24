@@ -184,9 +184,12 @@ rects is the whole trick behind "perfectly replicating the HTML text."
   separate pipelines, `scene/batches.ts` merges the three lists into
   cross-layer draw batches: layers are only split where a later record
   actually overlaps an earlier one, so a flat page stays at ~3 draw calls and a
-  z-indexed overlay costs a couple more. Opacity is propagated as a per-record
-  multiplier (own × ancestors); isolated offscreen opacity groups and blend
-  modes are follow-ups. `overflow: hidden` is a per-instance clip rect.
+  z-indexed overlay costs a couple more. An `opacity < 1` context is an
+  isolated group: the batch list carries push/pop markers, the renderer draws
+  the range into a pooled offscreen texture and composites it back once with
+  the group alpha (`gpu/composite.ts`), so overlapping children don't
+  double-blend. Blend modes and filters are follow-ups. `overflow: hidden` is a
+  per-instance clip rect.
 
 ---
 

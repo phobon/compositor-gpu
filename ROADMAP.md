@@ -25,14 +25,21 @@
 - [x] Images: `<canvas>`/`<video>` sources (dynamic textures, live re-upload)
 - [x] Images: background-image url() (size/position/repeat, rounded clip, async load → scoped re-read), linear/radial gradients in the box pass, mipmaps for static textures
 - [ ] Images: shared texture atlas (one bind group for many small images); repeating/conic gradients; gradient background-size/position
-- [x] Stacking contexts + z-index + opacity (Appendix E paint order, cross-layer draw batches; opacity is propagated per record — isolated offscreen groups are a follow-up)
-- [ ] Opacity groups: render opacity<1 subtrees offscreen and composite once (overlap inside a group currently double-blends)
+- [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
+- [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
+- [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
 - [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
 - [x] Per-layer dirty tracking (upload only changed layers; `uploads` stat)
 - [x] Sub-tree reconciliation: mutations re-read only their boundary subtree; escalates to a full read when the boundary's rect changes (persistent element tree, CPU-only re-flatten)
 
 ## Phase 3 — reach & polish
+- [x] `text-decoration` underline / overline / line-through (per line fragment,
+      propagated to inline descendants, transform-aware; solid style only)
+- [ ] `text-decoration-skip-ink`, dotted/dashed/wavy/double decoration styles
+- [x] Outer `box-shadow` (analytic Gaussian rounded rect, multi-layer, spread,
+      masked outside the border box)
+- [ ] Inset `box-shadow`; `text-shadow`
 - [ ] Culling via IntersectionObserver in the draw path
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no

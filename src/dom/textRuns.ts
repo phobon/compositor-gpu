@@ -95,35 +95,57 @@ export function readTextNode(
   }
 }
 
-const contentHeights = new Map<string, number>()
+export interface FontMetrics {
+  /** fontBoundingBoxAscent + fontBoundingBoxDescent. */
+  height: number
+  ascent: number
+  descent: number
+}
+
+const fontMetricsCache = new Map<string, FontMetrics>()
 let measureCtx: CanvasRenderingContext2D | null | undefined
 
 /**
- * Height of an untransformed grapheme's Range rect for this style: the
- * primary font's content area (fontBoundingBoxAscent + Descent), which is
- * independent of `line-height`. Measured with Canvas 2D (no layout read),
- * cached per font; `fontSize * 1.2` when Canvas 2D is unavailable. Only
- * used where a transform makes the AABB solve ill-conditioned.
+ * A style's primary font metrics (ascent/descent/height), independent of
+ * `line-height`. Measured with Canvas 2D (no layout read), cached per font;
+ * falls back to a 0.8/0.2 fontSize split when Canvas 2D is unavailable.
  */
-export function contentHeight(s: CSSStyleDeclaration): number {
+export function fontMetrics(s: CSSStyleDeclaration): FontMetrics {
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
-  const hit = contentHeights.get(font)
+  const hit = fontMetricsCache.get(font)
   if (hit !== undefined) return hit
   if (measureCtx === undefined) {
     measureCtx = document.createElement('canvas').getContext('2d')
     // A web font finishing its load changes the metrics for the same key.
     document.fonts?.addEventListener('loadingdone', () =>
-      contentHeights.clear()
+      fontMetricsCache.clear()
     )
   }
-  let h = fontSize * 1.2
+  let ascent = fontSize * 0.8
+  let descent = fontSize * 0.2
   if (measureCtx) {
     measureCtx.font = font
     const m = measureCtx.measureText('x')
-    const fh = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
-    if (Number.isFinite(fh) && fh > 0) h = fh
+    if (
+      Number.isFinite(m.fontBoundingBoxAscent) &&
+      Number.isFinite(m.fontBoundingBoxDescent) &&
+      m.fontBoundingBoxAscent + m.fontBoundingBoxDescent > 0
+    ) {
+      ascent = m.fontBoundingBoxAscent
+      descent = m.fontBoundingBoxDescent
+    }
   }
-  contentHeights.set(font, h)
-  return h
+  const out: FontMetrics = { height: ascent + descent, ascent, descent }
+  fontMetricsCache.set(font, out)
+  return out
+}
+
+/**
+ * Height of an untransformed grapheme's Range rect for this style: the
+ * primary font's content area, which is independent of `line-height`. Only
+ * used where a transform makes the AABB solve ill-conditioned.
+ */
+export function contentHeight(s: CSSStyleDeclaration): number {
+  return fontMetrics(s).height
 }

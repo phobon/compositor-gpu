@@ -108,6 +108,19 @@ Conventions each pass must follow:
 - Paint order is `record.z`, a unique integer assigned by
   `scene/stacking.ts` from a simplified CSS stacking-context tree; passes
   never sort or reorder.
+- **Decorations and shadows are BoxRecords.** `dom/decorations.ts` turns
+  `text-decoration` into one box per line fragment on `run.decorations`
+  (flatten emits them just before the run); `readShadows` in `dom/styles.ts`
+  turns outer `box-shadow` layers into boxes with `shadow` set, pushed into an
+  element's `own` records before its background box. The box shader draws a
+  `shadow` record as a blurred rounded rect (Wallace's analytic method) masked
+  outside the element's border box.
+- **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
+  (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
+  list carries `push`/`pop` markers at its cuts; `Renderer` renders the range
+  into a pooled offscreen texture (own Frame uniform: viewport = texture size,
+  scroll = group origin) and `gpu/composite.ts` draws it back once with the
+  group alpha. Records therefore carry `opacity = 1`; passes stay unaware.
 - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
   bind group; `writeBuffer` only the used prefix.
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is

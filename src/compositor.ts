@@ -197,6 +197,7 @@ export async function createCompositor(
       fallback: text?.fallbackCount ?? 0,
       uploads: renderer.lastUploads,
       batches: renderer.lastBatches,
+      groups: renderer.lastGroups,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
       fps
@@ -246,6 +247,7 @@ function inert(): Compositor & { text: null } {
       fallback: 0,
       uploads: 0,
       batches: 0,
+      groups: 0,
       readElements: 0,
       partialReads: 0,
       fps: 0

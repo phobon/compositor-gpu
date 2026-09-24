@@ -7,7 +7,7 @@ import type {
 } from '../scene/records'
 import { parseColor } from '../util/color'
 import { firstBackgroundLayer, parseGradient } from './gradient'
-import type { Placement } from './transform'
+import { type Placement, placementAabb, subPlacement } from './transform'
 
 /** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
 export function toDocRect(r: DOMRect): Rect {
@@ -97,7 +97,7 @@ export function mapBackgroundPosition(
   return [x, y]
 }
 
-/** Own (not effective/ancestor-multiplied) opacity, defaulting to 1. */
+/** The element's own computed opacity, defaulting to 1. */
 export function readOpacity(s: CSSStyleDeclaration): number {
   const n = Number.parseFloat(s.opacity)
   return Number.isFinite(n) ? n : 1
@@ -109,8 +109,8 @@ export function readOpacity(s: CSSStyleDeclaration): number {
  * `rect` is the element's doc-space border box (its AABB when transformed),
  * read once by the caller; `place` is its local box (see transform.ts) —
  * radii and gradients resolve against the local (untransformed) size.
- * `opacity` and `z` are placeholders the reader overwrites (effective
- * opacity and global paint order aren't known until the stacking pass).
+ * `opacity` is 1 (element opacity is applied by its opacity group, see
+ * stacking.ts); `z` is a placeholder the stacking pass overwrites.
  */
 export function readBox(
   s: CSSStyleDeclaration,
@@ -192,7 +192,7 @@ export function clipRectFor(s: CSSStyleDeclaration, r: Rect): Rect | null {
  * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
  * null when it isn't ready to sample. Canvas and video are marked dynamic so
  * their textures re-upload every frame. `rect` is the element's doc-space
- * border box (AABB) and `place` its local box. `opacity` and `z` are placeholders the reader overwrites, as
+ * border box (AABB) and `place` its local box. `opacity` and `z` are as
  * in readBox.
  */
 export function readImageRecord(
@@ -245,4 +245,137 @@ export function readImageRecord(
     clip,
     dynamic
   }
+}
+
+/**
+ * Padding (local px) a shadow record adds around its shadow box so the
+ * Gaussian has room: 3σ with σ = blur / 2 (CSS: the blur radius is 2σ).
+ * The box pass reads the same function when packing the instance.
+ */
+export function shadowPad(blur: number): number {
+  return Math.ceil(1.5 * Math.max(0, blur))
+}
+
+/** Split on commas / whitespace outside parentheses. */
+function splitOutside(value: string, sep: RegExp): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of value) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    if (depth === 0 && sep.test(ch)) {
+      if (cur.trim()) out.push(cur.trim())
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out
+}
+
+const LENGTH = /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i
+
+interface ShadowLayer {
+  color: string
+  ox: number
+  oy: number
+  blur: number
+  spread: number
+}
+
+/** One computed `box-shadow` layer, or null for inset / unparsable ones. */
+function parseShadowLayer(layer: string): ShadowLayer | null {
+  const lens: number[] = []
+  let color = ''
+  for (const tok of splitOutside(layer, /\s/)) {
+    if (tok === 'inset') return null
+    if (LENGTH.test(tok)) lens.push(Number.parseFloat(tok))
+    else color = tok
+  }
+  if (lens.length < 2) return null
+  return {
+    color,
+    ox: lens[0] ?? 0,
+    oy: lens[1] ?? 0,
+    blur: Math.max(0, lens[2] ?? 0),
+    spread: lens[3] ?? 0
+  }
+}
+
+/** CSS corner clamp (see readCorners) for an arbitrary w × h box. */
+function clampCorners(r: Corners, w: number, h: number): Corners {
+  const [tl, tr, br, bl] = r
+  const ratio = (sum: number, dim: number) => (sum > 0 ? dim / sum : 1)
+  const f = Math.min(
+    1,
+    ratio(tl + tr, w),
+    ratio(bl + br, w),
+    ratio(tl + bl, h),
+    ratio(tr + br, h)
+  )
+  return [tl * f, tr * f, br * f, bl * f]
+}
+
+/**
+ * One BoxRecord per outer `box-shadow` layer, in paint order (CSS paints
+ * the last layer bottom-most, so the list is reversed). Inset layers are
+ * skipped. Each record's local box is the shadow box (border box offset by
+ * (ox, oy), grown by `spread`) padded by `shadowPad(blur)` on every side;
+ * `radius` is the shadow box's radii (`r + spread` for r > 0 — the CSS
+ * small-radius attenuation is ignored), `shadow.inner` the element's
+ * border box in the record's local frame. `rect`/`place` are the
+ * element's doc-space border box and placement; `alloc` hands out ids.
+ */
+export function readShadows(
+  s: CSSStyleDeclaration,
+  rect: Rect,
+  place: Placement,
+  alloc: () => number
+): BoxRecord[] {
+  const value = s.boxShadow
+  if (!value || value === 'none') return []
+  if (s.visibility === 'hidden' || s.display === 'none') return []
+  if (rect.width <= 0 || rect.height <= 0) return []
+  const { w, h } = place.local
+  const radius = readCorners(s, { x: 0, y: 0, width: w, height: h })
+  const out: BoxRecord[] = []
+  const layers = splitOutside(value, /,/)
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const layer = parseShadowLayer(layers[i] ?? '')
+    if (!layer) continue
+    const color = parseColor(layer.color || s.color)
+    if (color.a <= 0.001) continue
+    const { ox, oy, blur, spread } = layer
+    const sw = w + 2 * spread
+    const sh = h + 2 * spread
+    if (sw <= 0 || sh <= 0) continue
+    const pad = shadowPad(blur)
+    const x0 = ox - spread - pad
+    const y0 = oy - spread - pad
+    const sp = subPlacement(place, x0, y0, sw + 2 * pad, sh + 2 * pad)
+    const grown = radius.map((r) =>
+      r > 0 ? Math.max(0, r + spread) : 0
+    ) as Corners
+    out.push({
+      kind: 'box',
+      id: alloc(),
+      rect: placementAabb(sp),
+      xform: sp.xform,
+      local: sp.local,
+      radius: clampCorners(grown, sw, sh),
+      fill: color,
+      gradient: null,
+      border: null,
+      shadow: {
+        color,
+        blur,
+        inner: { x: -x0, y: -y0, w, h, radius }
+      },
+      opacity: 1,
+      z: 0
+    })
+  }
+  return out
 }

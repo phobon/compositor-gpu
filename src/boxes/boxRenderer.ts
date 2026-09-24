@@ -1,8 +1,9 @@
+import { shadowPad } from '../dom/styles'
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 36 // 9 * vec4f
+const FLOATS_PER_BOX = 48 // 12 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
@@ -20,6 +21,9 @@ struct Box {
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
+  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, _
+  sh1    : vec4f,   // shadow: inner (element) box x, y, w, h (local px)
+  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 // Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
@@ -65,6 +69,51 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
 }
 
+// erf approximation (Abramowitz & Stegun 7.1.27, max error 5e-4).
+fn erf2(x : vec2f) -> vec2f {
+  let s = sign(x);
+  let a = abs(x);
+  var t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+  t = t * t;
+  return s - s / (t * t);
+}
+
+fn gaussian(x : f32, sigma : f32) -> f32 {
+  return exp(-(x * x) / (2.0 * sigma * sigma)) / (2.5066283 * sigma);
+}
+
+// Blurred coverage of one row (height offset y from the centre) of a
+// rounded box, integrated exactly along x (Evan Wallace, "Fast Rounded
+// Rectangle Shadows").
+fn shadow_x(x : f32, y : f32, sigma : f32, corner : f32, h : vec2f) -> f32 {
+  let delta = min(h.y - corner - abs(y), 0.0);
+  let curved = h.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+  let i = 0.5 + 0.5 * erf2((x + vec2f(-curved, curved)) * (0.70710678 / sigma));
+  return i.y - i.x;
+}
+
+// Gaussian-blurred coverage of the rounded box (centre-relative p, half
+// size h, per-corner radii r4) — numerical integration along y over +-3σ.
+fn shadow_cov(p : vec2f, h : vec2f, r4 : vec4f, sigma : f32) -> f32 {
+  let low = p.y - h.y;
+  let high = p.y + h.y;
+  let start = clamp(-3.0 * sigma, low, high);
+  let end = clamp(3.0 * sigma, low, high);
+  let n = 8.0;
+  let st = (end - start) / n;
+  var y = start + st * 0.5;
+  var v = 0.0;
+  for (var i = 0; i < 8; i = i + 1) {
+    let row = p.y - y;
+    let top = select(r4.x, r4.y, p.x > 0.0);
+    let bot = select(r4.w, r4.z, p.x > 0.0);
+    let corner = min(select(top, bot, row > 0.0), min(h.x, h.y));
+    v = v + shadow_x(p.x, row, sigma, corner, h) * gaussian(y, sigma) * st;
+    y = y + st;
+  }
+  return v;
+}
+
 // Interpolate two sRGB straight-alpha stops in premultiplied sRGB (the CSS
 // default), returning sRGB straight alpha.
 fn mix_stops(c0 : vec4f, c1 : vec4f, f : f32) -> vec4f {
@@ -101,10 +150,29 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let cl = b.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
-  let d = sd_round_box(in.local, in.half, b.radius);
+  // Shadow records' quads are padded by sh0.y; pad = 0 for plain boxes.
+  let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
   let aa = max(fwidth(d), 1e-4);
   let bw = b.params.x;
   let opacity = b.params.y;
+
+  // Derivatives must sit in uniform control flow: take the inner mask's
+  // before branching.
+  let ip = in.local + in.half - (b.sh1.xy + b.sh1.zw * 0.5);
+  let di = sd_round_box(ip, b.sh1.zw * 0.5, b.shr);
+  let aai = max(fwidth(di), 1e-4);
+  if (b.sh0.z > 0.5) {
+    let sigma = b.sh0.x;
+    var cov = 1.0 - smoothstep(-aa, aa, d);
+    if (sigma > 0.05) {
+      cov = shadow_cov(in.local, in.half - vec2f(b.sh0.y), b.radius, sigma);
+    }
+    // Fully opaque from the border-box edge outward, so the element's own
+    // AA edge pixel composites over full shadow (no background seam).
+    let innerMask = smoothstep(-aai, aai, di + aai);
+    let sa = b.fill.a * clamp(cov, 0.0, 1.0) * innerMask;
+    return vec4f(b.fill.rgb * sa, sa) * opacity;
+  }
 
   let outerCov = 1.0 - smoothstep(-aa, aa, d);
   let fillCov  = 1.0 - smoothstep(-aa, aa, d + bw);
@@ -301,6 +369,23 @@ export class BoxPass implements RenderPass {
         }
       } else {
         for (let k = 0; k < 8; k++) d[o++] = 0
+      }
+      const sh = b.shadow
+      if (sh) {
+        d[o++] = sh.blur * 0.5
+        d[o++] = shadowPad(sh.blur)
+        d[o++] = 1
+        d[o++] = 0
+        d[o++] = sh.inner.x
+        d[o++] = sh.inner.y
+        d[o++] = sh.inner.w
+        d[o++] = sh.inner.h
+        d[o++] = sh.inner.radius[0]
+        d[o++] = sh.inner.radius[1]
+        d[o++] = sh.inner.radius[2]
+        d[o++] = sh.inner.radius[3]
+      } else {
+        for (let k = 0; k < 12; k++) d[o++] = 0
       }
     }
     this.shared.device.queue.writeBuffer(

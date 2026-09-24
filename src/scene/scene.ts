@@ -1,6 +1,7 @@
 import type { Layer } from '../types'
 import { type DrawBatch, buildBatches, unionRect } from './batches'
 import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
+import type { OpacityGroup } from './stacking'
 
 /**
  * Holds the current set of records and tracks which changed since last frame.
@@ -13,6 +14,9 @@ export class Scene {
   boxes: BoxRecord[] = []
   images: ImageRecord[] = []
   runs: GlyphRun[] = []
+  /** Opacity groups, sorted by `first` (see stacking.ts). Set by the
+   * reader before sort(). */
+  groups: OpacityGroup[] = []
 
   private _batches: DrawBatch[] = []
   /** Cross-layer draw batches for the current paint order; see sort(). */
@@ -35,6 +39,7 @@ export class Scene {
     this.boxes = []
     this.images = []
     this.runs = []
+    this.groups = []
     this.markAllDirty()
     this.hasDynamic = false
   }
@@ -81,7 +86,13 @@ export class Scene {
     const runRects = this.runs.map((r) =>
       unionRect(r.glyphs.map((g) => g.rect))
     )
-    this._batches = buildBatches(this.boxes, this.images, this.runs, runRects)
+    this._batches = buildBatches(
+      this.boxes,
+      this.images,
+      this.runs,
+      runRects,
+      this.groups
+    )
   }
 
   glyphCount(): number {

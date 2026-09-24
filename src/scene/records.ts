@@ -63,7 +63,22 @@ export interface BoxRecord {
   /** First background-image layer when it is a gradient; drawn over fill. */
   gradient?: Gradient | null
   border: { width: number; color: RGBA } | null
-  /** Effective opacity: own opacity × every ancestor's (see stacking.ts). */
+  /**
+   * Outer box-shadow: when set, the box pass draws this record as a blurred
+   * rounded rect of `fill` (the shadow colour) — `rect`/`local`/`radius`
+   * describe the SHADOW's box (element box offset + spread) padded by
+   * `shadowPad(blur)` on every side so the blur has room; `border` is
+   * ignored. `blur` is the CSS blur radius in px; `inner` is the element's
+   * own rounded box in the padded local frame, masked out (CSS clips outer
+   * shadows to outside the border box).
+   */
+  shadow?: {
+    color: RGBA
+    blur: number
+    inner: { x: number; y: number; w: number; h: number; radius: Corners }
+  } | null
+  /** Multiplier applied by the pass. The reader writes 1: an element's
+   * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number
   /** Global paint order (integer; back-to-front across all layers). */
   z: number
@@ -92,7 +107,8 @@ export interface ImageRecord {
   repeat: boolean
   /** Border radii of the owning element, used to clip the quad. */
   radius: Corners
-  /** Effective opacity (own × ancestors). */
+  /** Multiplier applied by the pass. The reader writes 1: an element's
+   * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number
   /** Global paint order (integer; back-to-front across all layers). */
   z: number
@@ -138,10 +154,17 @@ export interface GlyphRun {
   italic: boolean
   color: RGBA
   glyphs: Glyph[]
-  /** Effective opacity of the run's element (own × ancestors). */
+  /** Multiplier applied by the pass. The reader writes 1: an element's
+   * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number
   /** Global paint order (integer; back-to-front across all layers). */
   z: number
+  /**
+   * text-decoration lines (underline / overline / line-through) for this
+   * run, one BoxRecord per line fragment, painted immediately BEFORE the
+   * run's glyphs (flatten emits them first). Filled by the reader.
+   */
+  decorations?: BoxRecord[]
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
 }

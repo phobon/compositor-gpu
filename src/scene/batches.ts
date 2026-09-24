@@ -1,11 +1,23 @@
 import type { Layer } from '../types'
 import type { BoxRecord, GlyphRun, ImageRecord, Rect } from './records'
+import type { OpacityGroup } from './stacking'
 
-/** One draw call: instances [first, first + count) of `layer`, in scene order. */
-export interface DrawBatch {
-  layer: Layer
-  first: number
-  count: number
+/**
+ * One entry of the renderer's command list, walked in order:
+ * - draw: instances [first, first + count) of `layer`, in scene order.
+ * - push / pop: begin / end opacity group `group` (index into
+ *   Scene.groups). Pushes and pops nest properly.
+ */
+export type DrawBatch =
+  | { kind?: 'draw'; layer: Layer; first: number; count: number }
+  | { kind: 'push'; group: number }
+  | { kind: 'pop'; group: number }
+
+interface GroupEvent {
+  z: number
+  kind: 'push' | 'pop'
+  group: number
+  depth: number
 }
 
 /** Bounds-hit on a batch this big is treated as an overlap (conservative). */
@@ -110,12 +122,17 @@ export function unionRect(rects: Rect[]): Rect {
  *   `lastL` → append to `lastL` (paints slightly earlier than its z, but
  *   nothing it would have occluded — or been occluded by — changes).
  * - else → start a new batch.
+ *
+ * Each opacity group's `first` and `last` are hard cuts: when one is
+ * crossed a push/pop marker is emitted and no later record merges into a
+ * batch before it. `groups` must be sorted by `first` (Scene.groups).
  */
 export function buildBatches(
   boxes: BoxRecord[],
   images: ImageRecord[],
   runs: GlyphRun[],
-  runRects: Rect[]
+  runRects: Rect[],
+  groups: readonly OpacityGroup[] = []
 ): DrawBatch[] {
   const entries: Entry[] = []
   for (let i = 0; i < boxes.length; i++) {
@@ -150,23 +167,46 @@ export function buildBatches(
   }
   entries.sort((a, b) => a.z - b.z)
 
-  const batches: Accum[] = []
-  const lastIndexForLayer: Partial<Record<Layer, number>> = {}
+  // At equal z: pops before pushes; outer pushes before inner, inner pops
+  // before outer.
+  const events: GroupEvent[] = []
+  for (let g = 0; g < groups.length; g++) {
+    const grp = groups[g]
+    if (!grp) continue
+    events.push({ z: grp.first, kind: 'push', group: g, depth: grp.depth })
+    events.push({ z: grp.last, kind: 'pop', group: g, depth: grp.depth })
+  }
+  events.sort((a, b) => {
+    if (a.z !== b.z) return a.z - b.z
+    if (a.kind !== b.kind) return a.kind === 'pop' ? -1 : 1
+    return a.kind === 'push' ? a.depth - b.depth : b.depth - a.depth
+  })
+
+  const batches: (Accum | GroupEvent)[] = []
+  let lastIndexForLayer: Partial<Record<Layer, number>> = {}
+  let ev = 0
+  const emitEventsUpTo = (z: number): void => {
+    for (let next = events[ev]; next && next.z <= z; next = events[++ev]) {
+      batches.push(next)
+      lastIndexForLayer = {}
+    }
+  }
 
   for (const e of entries) {
+    emitEventsUpTo(e.z)
     const tail = batches[batches.length - 1]
-    if (tail && tail.layer === e.layer) {
+    if (tail && 'layer' in tail && tail.layer === e.layer) {
       extend(tail, e)
       continue
     }
     const lastLIdx = lastIndexForLayer[e.layer]
     if (lastLIdx !== undefined) {
       const lastL = batches[lastLIdx]
-      if (lastL) {
+      if (lastL && 'layer' in lastL) {
         let blocked = false
         for (let i = lastLIdx + 1; i < batches.length; i++) {
           const later = batches[i]
-          if (later && accumOverlaps(later, e.rect)) {
+          if (later && 'layer' in later && accumOverlaps(later, e.rect)) {
             blocked = true
             break
           }
@@ -181,9 +221,12 @@ export function buildBatches(
     lastIndexForLayer[e.layer] = batches.length - 1
   }
 
-  return batches.map((b) => ({
-    layer: b.layer,
-    first: b.first,
-    count: b.count
-  }))
+  emitEventsUpTo(Number.POSITIVE_INFINITY)
+
+  return batches.map(
+    (b): DrawBatch =>
+      'layer' in b
+        ? { layer: b.layer, first: b.first, count: b.count }
+        : { kind: b.kind, group: b.group }
+  )
 }

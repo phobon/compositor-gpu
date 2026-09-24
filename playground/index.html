@@ -41,6 +41,14 @@
         border: 1px solid #33333a;
         max-width: 42ch;
       }
+      .shadowpanel {
+        display: flex; flex-wrap: wrap; gap: 36px; margin-top: 1.5rem;
+        padding: 36px; border-radius: 18px; background: #2a2a35;
+      }
+      .shtile {
+        width: 120px; height: 90px; border-radius: 12px; background: #3a3a48;
+        padding: 10px; font-size: 13px; color: #d6d6e0;
+      }
       .imgrow { display: flex; gap: 16px; margin-top: 2.5rem; flex-wrap: wrap; }
       .imgrow figure { margin: 0; }
       .imgrow img {
@@ -144,6 +152,64 @@
         background: #22c55e;
         border-radius: 4px;
         margin-bottom: 4px;
+      }
+      /* Opacity groups: the subtree is flattened, then faded once. */
+      .opdemo { display: flex; gap: 24px; align-items: flex-start; }
+      .op-card {
+        position: relative;
+        width: 200px;
+        padding: 16px;
+        background: #f59e0b;
+        border: 3px solid #fef3c7;
+        border-radius: 12px;
+        opacity: 0.5;
+        font-weight: 700;
+        font-size: 18px;
+        color: #111827;
+      }
+      .op-card .op-chip {
+        position: absolute;
+        left: 60px;
+        top: 12px;
+        width: 70px;
+        height: 36px;
+        background: #2563eb;
+        border-radius: 6px;
+        z-index: 1;
+      }
+      .op-outer {
+        width: 180px;
+        padding: 14px;
+        background: #0f766e;
+        border-radius: 12px;
+        opacity: 0.6;
+        font-size: 14px;
+        color: #ecfeff;
+      }
+      .op-inner {
+        margin-top: 8px;
+        padding: 12px;
+        background: #f43f5e;
+        border: 2px solid #fff;
+        border-radius: 8px;
+        opacity: 0.5;
+        font-weight: 700;
+        color: #fff;
+      }
+      .op-imgbg {
+        width: 170px;
+        height: 130px;
+        padding: 15px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #22c55e, #3b82f6 55%, #a855f7);
+      }
+      .op-imgbg img {
+        display: block;
+        width: 140px;
+        height: 100px;
+        object-fit: cover;
+        border-radius: 16px;
+        opacity: 0.4;
       }
       .hint {
         font-size: 14px;
@@ -305,6 +371,21 @@
         </p>
       </section>
 
+      <section data-vr="decorations">
+        <h2>Text decoration lines</h2>
+        <p>
+          A <a href="#" style="color: #8ab4ff;">plain underlined link</a>, and
+          an <a href="#" style="color: #8ab4ff;">underlined link with
+          <strong>bold text inside</strong></a> — the underline propagates
+          into the nested element.
+        </p>
+        <p>
+          <s>Struck-through text</s> ·
+          <span style="text-decoration: overline;">Overline span</span> ·
+          <span style="text-decoration: underline; text-decoration-color: #f472b6; text-decoration-thickness: 3px;">Custom pink underline</span>
+        </p>
+      </section>
+
       <section data-vr="emoji">
         <h2>Emoji &amp; fallback glyphs</h2>
         <p>Ship it 🚀 — 👩‍🚀 flags 🇦🇺, kanji 漢字, math ∑∫, arrows → ←</p>
@@ -318,6 +399,17 @@
         <div class="card">
           Backgrounds, borders and radii mirror as instanced rounded rects. Hit
           <b>GPU-only</b> to hide the DOM paint and see just the GPU layer.
+        </div>
+      </section>
+
+      <section data-vr="shadows">
+        <h2>Box shadows</h2>
+        <div class="shadowpanel">
+          <div class="shtile" style="box-shadow: 0 8px 24px rgba(0,0,0,.6)"></div>
+          <div class="shtile" style="box-shadow: 0 0 0 4px #6a5cff, 0 12px 32px rgba(106,92,255,.5)"></div>
+          <div class="shtile" style="border-radius: 24px; box-shadow: 0 2px 6px rgba(0,0,0,.5)"></div>
+          <div class="shtile" style="background: rgba(255,255,255,.08); box-shadow: 0 10px 20px rgba(0,0,0,.7)"></div>
+          <div class="shtile" style="box-shadow: 6px 6px 0 3px #ec4899"></div>
         </div>
       </section>
 
@@ -382,10 +474,26 @@
         <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
       </section>
 
+      <section data-vr="opacity">
+        <h2>Opacity groups</h2>
+        <div class="opdemo">
+          <div class="op-card">
+            <div class="op-chip"></div>
+            Bold text over a chip
+          </div>
+          <div class="op-outer">
+            Outer at 0.6
+            <div class="op-inner">Inner at 0.5</div>
+          </div>
+          <div class="op-imgbg"><img src="./test.png" alt="" /></div>
+        </div>
+        <p class="hint">Each opacity &lt; 1 element is flattened and faded once: no background bleeds through its text or children.</p>
+      </section>
+
       <section data-vr="transforms" class="xfdemo">
         <h2>Transforms</h2>
         <div class="imgrow xfrow">
-          <figure><div class="xf-card" id="xf-card">Rotated card, −8°</div></figure>
+          <figure><div class="xf-card" id="xf-card">Rotated card, −8° — <a href="#" style="color: #8ab4ff;">a link</a></div></figure>
           <figure><img class="cover xf-img" src="./test.png" alt="" /></figure>
           <figure><div class="xf-skew"></div></figure>
           <figure>
@@ -437,6 +545,7 @@
       <div class="row"><span>images</span><b id="s-images">0</b></div>
       <div class="row"><span>uploads</span><b id="s-uploads">0</b></div>
       <div class="row"><span>batches</span><b id="s-batches">0</b></div>
+      <div class="row"><span>groups</span><b id="s-groups">0</b></div>
       <div class="row"><span>read</span><b id="s-read">0</b></div>
       <div class="row"><span>partial</span><b id="s-partial">0</b></div>
       <div class="row"><span>text</span><b id="s-text">…</b></div>
