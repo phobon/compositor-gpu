@@ -1,5 +1,12 @@
-import type { BoxRecord, Corners, ImageRecord, Rect } from '../scene/records'
+import type {
+  BoxRecord,
+  Corners,
+  Gradient,
+  ImageRecord,
+  Rect
+} from '../scene/records'
 import { parseColor } from '../util/color'
+import { firstBackgroundLayer, parseGradient } from './gradient'
 
 /** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
 export function toDocRect(r: DOMRect): Rect {
@@ -16,7 +23,7 @@ function px(v: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-function readCorners(s: CSSStyleDeclaration): Corners {
+export function readCorners(s: CSSStyleDeclaration): Corners {
   return [
     px(s.borderTopLeftRadius),
     px(s.borderTopRightRadius),
@@ -50,8 +57,27 @@ export function readBox(
   const borderColor = parseColor(s.borderTopColor)
   const hasFill = fill.a > 0.001
   const hasBorder = borderWidth > 0 && borderColor.a > 0.001
-  if (!hasFill && !hasBorder) return null
   if (rect.width <= 0 || rect.height <= 0) return null
+
+  // First background-image layer, when it is a gradient (url() layers are
+  // image records, handled elsewhere). Resolved against the padding box
+  // (background-origin: padding-box), inset by the same uniform border width
+  // the shader uses, so the two agree.
+  let gradient: Gradient | null = null
+  const bgi = s.backgroundImage
+  if (bgi && bgi !== 'none') {
+    const layer = firstBackgroundLayer(bgi)
+    if (layer && !layer.startsWith('url(')) {
+      const inset = hasBorder ? borderWidth : 0
+      gradient = parseGradient(layer, {
+        x: rect.x + inset,
+        y: rect.y + inset,
+        width: Math.max(0, rect.width - 2 * inset),
+        height: Math.max(0, rect.height - 2 * inset)
+      })
+    }
+  }
+  if (!hasFill && !hasBorder && !gradient) return null
 
   return {
     kind: 'box',
@@ -59,6 +85,7 @@ export function readBox(
     rect,
     radius: readCorners(s),
     fill,
+    gradient,
     border: hasBorder ? { width: borderWidth, color: borderColor } : null,
     opacity: 1,
     z: 0
@@ -129,6 +156,9 @@ export function readImageRecord(
     rect,
     source,
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
+    position: [0.5, 0.5],
+    repeat: false,
+    radius: readCorners(s),
     opacity: 1,
     z: 0,
     clip,

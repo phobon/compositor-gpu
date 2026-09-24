@@ -3,17 +3,27 @@ import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_IMAGE = 16 // rect(4) + uv(4) + params(4) + clip(4)
+// rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + erect(4)
+const FLOATS_PER_IMAGE = 28
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
+
+/** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
+const FLAG_REPEAT = 1
+/** params.y bit 1: sample via `tile` (fit 'none') instead of the
+ * vertex-interpolated `uv` (fill/cover/contain). */
+const FLAG_UV_FROM_TILE = 2
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
 
 struct Img {
-  rect   : vec4f,   // x,y,w,h document space
-  uv     : vec4f,   // u0,v0,u1,v1
-  params : vec4f,   // opacity, _, _, _
+  rect   : vec4f,   // x,y,w,h document space (quad rect)
+  uv     : vec4f,   // u0,v0,u1,v1 — used unless FLAG_UV_FROM_TILE is set
+  params : vec4f,   // opacity, flags, _, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  radius : vec4f,   // tl, tr, br, bl (px) — clips against erect
+  tile   : vec4f,   // originX, originY, w, h (doc space) — fit 'none' only
+  erect  : vec4f,   // element's own border-box rect (doc space)
 };
 @group(1) @binding(0) var<storage, read> imgs : array<Img>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -43,15 +53,74 @@ fn vs(@builtin(vertex_index) vi : u32,
   return out;
 }
 
+// Signed distance to a rounded box with per-corner radius.
+fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
+  let top = select(r4.x, r4.y, p.x > 0.0);      // tl / tr
+  let bot = select(r4.w, r4.z, p.x > 0.0);      // bl / br
+  let r = select(top, bot, p.y > 0.0);
+  let q = abs(p) - b + vec2f(r);
+  return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
+}
+
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let im = imgs[in.idx];
   let cl = im.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
-  let c = textureSample(tex, samp, in.uv);
-  let o = im.params.x;
+
+  let flags = u32(im.params.y);
+  var uv = in.uv;
+  if ((flags & ${FLAG_UV_FROM_TILE}u) != 0u) {
+    uv = (in.docp - im.tile.xy) / im.tile.zw;
+    if ((flags & ${FLAG_REPEAT}u) != 0u) {
+      uv = fract(uv);
+    } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+      discard;
+    }
+  }
+
+  // Rounded clip against the owning element's border box, not the quad —
+  // 'contain' can shrink the quad inside it, but the radius still applies
+  // to the element.
+  let ec = im.erect.xy + im.erect.zw * 0.5;
+  let half = im.erect.zw * 0.5;
+  let d = sd_round_box(in.docp - ec, half, im.radius);
+  let aa = max(fwidth(d), 1e-4);
+  let cov = 1.0 - smoothstep(-aa, aa, d);
+
+  let c = textureSample(tex, samp, uv);
+  let o = im.params.x * cov;
   return vec4f(c.rgb * c.a * o, c.a * o); // premultiplied
+}
+`
+
+const BLIT_SHADER = /* wgsl */ `
+struct VOut {
+  @builtin(position) pos : vec4f,
+  @location(0) uv : vec2f,
+};
+
+@vertex
+fn vs_blit(@builtin(vertex_index) vi : u32) -> VOut {
+  // Fullscreen triangle: NDC positions that overshoot the viewport, with UV
+  // derived from the same positions (flipping y: NDC is y-up, textures are
+  // y-down).
+  var pos = array<vec2f, 3>(
+    vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  var out : VOut;
+  let p = pos[vi];
+  out.pos = vec4f(p, 0.0, 1.0);
+  out.uv = vec2f(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+  return out;
+}
+
+@group(0) @binding(0) var srcTex : texture_2d<f32>;
+@group(0) @binding(1) var srcSamp : sampler;
+
+@fragment
+fn fs_blit(in : VOut) -> @location(0) vec4f {
+  return textureSample(srcTex, srcSamp, in.uv);
 }
 `
 
@@ -64,10 +133,12 @@ interface Cached {
 }
 
 /**
- * Textured-quad pass for <img>. One texture per source (cached), one instance
- * per on-screen image; object-fit maps to the quad rect (contain) and/or UV
- * sub-rect (cover). Distinct textures mean one draw per image (draw(6,1,0,i)),
- * each with its own bind group over the shared instance buffer.
+ * Textured-quad pass for <img> and (via `dom/backgrounds.ts`)
+ * `background-image` url layers. One texture per source (cached), one
+ * instance per on-screen image; object-fit/position maps to the quad rect
+ * and/or UV sub-rect, and the element's border radius clips the fragment.
+ * Distinct textures mean one draw per image (draw(6,1,0,i)), each with its
+ * own bind group over the shared instance buffer.
  */
 export class ImagePass implements RenderPass {
   readonly layer = 'images' as const
@@ -81,8 +152,14 @@ export class ImagePass implements RenderPass {
   /** Aligned with scene.images: null where the texture isn't ready yet. */
   private draws: (GPUBindGroup | null)[] = []
 
+  // Lazily-built mip-generation pipeline, shared across every non-dynamic
+  // texture (they're all the same fixed format).
+  private blitPipeline: GPURenderPipeline | null = null
+  private blitLayout: GPUBindGroupLayout | null = null
+  private blitSampler: GPUSampler | null = null
+
   constructor(private readonly shared: Shared) {
-    const { device, format, frameLayout } = shared
+    const { device, frameLayout } = shared
     this.group1Layout = device.createBindGroupLayout({
       entries: [
         {
@@ -97,6 +174,7 @@ export class ImagePass implements RenderPass {
     this.sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
+      mipmapFilter: 'linear',
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     })
@@ -112,7 +190,7 @@ export class ImagePass implements RenderPass {
         entryPoint: 'fs',
         targets: [
           {
-            format,
+            format: shared.format,
             blend: {
               color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
               alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
@@ -136,6 +214,78 @@ export class ImagePass implements RenderPass {
     this.capacity = cap
   }
 
+  private ensureBlitPipeline(): void {
+    if (this.blitPipeline) return
+    const { device } = this.shared
+    this.blitLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
+      ]
+    })
+    const module = device.createShaderModule({ code: BLIT_SHADER })
+    reportShaderErrors(module, 'image-blit')
+    this.blitPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({
+        bindGroupLayouts: [this.blitLayout]
+      }),
+      vertex: { module, entryPoint: 'vs_blit' },
+      fragment: {
+        module,
+        entryPoint: 'fs_blit',
+        targets: [{ format: 'rgba8unorm-srgb' }]
+      },
+      primitive: { topology: 'triangle-list' }
+    })
+    this.blitSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear'
+    })
+  }
+
+  /** Downsample level 0 into every level of `texture`, one render pass
+   * each, via a fullscreen-triangle blit. */
+  private generateMips(texture: GPUTexture, mipLevelCount: number): void {
+    this.ensureBlitPipeline()
+    const pipeline = this.blitPipeline as GPURenderPipeline
+    const layout = this.blitLayout as GPUBindGroupLayout
+    const sampler = this.blitSampler as GPUSampler
+    const { device } = this.shared
+    const encoder = device.createCommandEncoder()
+    for (let level = 1; level < mipLevelCount; level++) {
+      const srcView = texture.createView({
+        baseMipLevel: level - 1,
+        mipLevelCount: 1
+      })
+      const dstView = texture.createView({
+        baseMipLevel: level,
+        mipLevelCount: 1
+      })
+      const bindGroup = device.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: srcView },
+          { binding: 1, resource: sampler }
+        ]
+      })
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: dstView,
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 }
+          }
+        ]
+      })
+      pass.setPipeline(pipeline)
+      pass.setBindGroup(0, bindGroup)
+      pass.draw(3)
+      pass.end()
+    }
+    device.queue.submit([encoder.finish()])
+  }
+
   private textureFor(rec: ImageRecord): Cached | null {
     const src = rec.source
     const [w, h] = naturalSize(src)
@@ -156,9 +306,15 @@ export class ImagePass implements RenderPass {
     }
     cached?.texture.destroy()
 
+    // Dynamic sources re-copy every frame, so a mip chain would just be
+    // stale most of the time; only static sources get one.
+    const mipLevelCount = rec.dynamic
+      ? 1
+      : 1 + Math.floor(Math.log2(Math.max(w, h)))
     const texture = device.createTexture({
       size: [w, h],
       format: 'rgba8unorm-srgb',
+      mipLevelCount,
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
@@ -169,6 +325,7 @@ export class ImagePass implements RenderPass {
       { texture },
       [w, h]
     )
+    if (mipLevelCount > 1) this.generateMips(texture, mipLevelCount)
     const entry: Cached = {
       view: texture.createView(),
       texture,
@@ -198,17 +355,17 @@ export class ImagePass implements RenderPass {
         continue
       }
       const [nw, nh] = naturalSize(rec.source)
-      const { rect, uv } = fit(rec, nw, nh)
-      d[o + 0] = rect.x
-      d[o + 1] = rect.y
-      d[o + 2] = rect.w
-      d[o + 3] = rect.h
-      d[o + 4] = uv.u0
-      d[o + 5] = uv.v0
-      d[o + 6] = uv.u1
-      d[o + 7] = uv.v1
+      const f = fit(rec, nw, nh)
+      d[o + 0] = f.rect.x
+      d[o + 1] = f.rect.y
+      d[o + 2] = f.rect.w
+      d[o + 3] = f.rect.h
+      d[o + 4] = f.uv.u0
+      d[o + 5] = f.uv.v0
+      d[o + 6] = f.uv.u1
+      d[o + 7] = f.uv.v1
       d[o + 8] = rec.opacity
-      d[o + 9] = 0
+      d[o + 9] = f.flags
       d[o + 10] = 0
       d[o + 11] = 0
       const c = rec.clip
@@ -216,6 +373,18 @@ export class ImagePass implements RenderPass {
       d[o + 13] = c ? c.y : -1e9
       d[o + 14] = c ? c.x + c.width : 1e9
       d[o + 15] = c ? c.y + c.height : 1e9
+      d[o + 16] = rec.radius[0]
+      d[o + 17] = rec.radius[1]
+      d[o + 18] = rec.radius[2]
+      d[o + 19] = rec.radius[3]
+      d[o + 20] = f.tile.x
+      d[o + 21] = f.tile.y
+      d[o + 22] = f.tile.w
+      d[o + 23] = f.tile.h
+      d[o + 24] = rec.rect.x
+      d[o + 25] = rec.rect.y
+      d[o + 26] = rec.rect.width
+      d[o + 27] = rec.rect.height
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,
@@ -270,33 +439,83 @@ function srcKey(src: CanvasImageSource): string {
 interface Fit {
   rect: { x: number; y: number; w: number; h: number }
   uv: { u0: number; v0: number; u1: number; v1: number }
+  /** Tile origin + size (doc space); only meaningful for fit 'none'. */
+  tile: { x: number; y: number; w: number; h: number }
+  flags: number
 }
 
-/** Map object-fit to a quad rect (contain letterbox) and/or UV crop (cover). */
+const FULL_UV = { u0: 0, v0: 0, u1: 1, v1: 1 }
+const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
+
+/**
+ * Map object-fit/object-position (or the equivalent background-size /
+ * background-position) to a quad rect and either a UV sub-rect (fill,
+ * cover, contain — all sample the vertex-interpolated UV) or a tile rect
+ * the fragment shader maps doc-space fragment position into (fit 'none':
+ * the natural-size image placed by `position`, optionally repeated).
+ */
 function fit(rec: ImageRecord, natW: number, natH: number): Fit {
   const { x, y, width: w, height: h } = rec.rect
-  const full = { u0: 0, v0: 0, u1: 1, v1: 1 }
   const box = { x, y, w, h }
-  if (natW === 0 || natH === 0 || rec.objectFit === 'fill') {
-    return { rect: box, uv: full }
+  const [px, py] = rec.position
+
+  if (natW === 0 || natH === 0) {
+    return { rect: box, uv: FULL_UV, tile: NO_TILE, flags: 0 }
   }
+
+  if (rec.objectFit === 'none') {
+    const tile = {
+      x: x + (w - natW) * px,
+      y: y + (h - natH) * py,
+      w: natW,
+      h: natH
+    }
+    const flags = FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
+    return { rect: box, uv: FULL_UV, tile, flags }
+  }
+
+  if (rec.objectFit === 'fill') {
+    return { rect: box, uv: FULL_UV, tile: NO_TILE, flags: 0 }
+  }
+
   const boxAspect = w / h
   const imgAspect = natW / natH
   if (rec.objectFit === 'cover') {
     if (imgAspect > boxAspect) {
       const frac = boxAspect / imgAspect
-      const u0 = (1 - frac) / 2
-      return { rect: box, uv: { u0, v0: 0, u1: 1 - u0, v1: 1 } }
+      const u0 = (1 - frac) * px
+      return {
+        rect: box,
+        uv: { u0, v0: 0, u1: u0 + frac, v1: 1 },
+        tile: NO_TILE,
+        flags: 0
+      }
     }
     const frac = imgAspect / boxAspect
-    const v0 = (1 - frac) / 2
-    return { rect: box, uv: { u0: 0, v0, u1: 1, v1: 1 - v0 } }
+    const v0 = (1 - frac) * py
+    return {
+      rect: box,
+      uv: { u0: 0, v0, u1: 1, v1: v0 + frac },
+      tile: NO_TILE,
+      flags: 0
+    }
   }
-  // contain: fit inside, letterbox by shrinking the quad
+
+  // contain: fit inside, letterbox by shrinking the quad, offset by position
   if (imgAspect > boxAspect) {
     const dh = w / imgAspect
-    return { rect: { x, y: y + (h - dh) / 2, w, h: dh }, uv: full }
+    return {
+      rect: { x, y: y + (h - dh) * py, w, h: dh },
+      uv: FULL_UV,
+      tile: NO_TILE,
+      flags: 0
+    }
   }
   const dw = h * imgAspect
-  return { rect: { x: x + (w - dw) / 2, y, w: dw, h }, uv: full }
+  return {
+    rect: { x: x + (w - dw) * px, y, w: dw, h },
+    uv: FULL_UV,
+    tile: NO_TILE,
+    flags: 0
+  }
 }

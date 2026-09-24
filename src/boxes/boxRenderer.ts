@@ -2,8 +2,10 @@ import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 24 // 6 * vec4f
+const FLOATS_PER_BOX = 32 // 8 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
+const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
+const BYTES_PER_STOP = FLOATS_PER_STOP * 4
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
@@ -15,8 +17,12 @@ struct Box {
   border : vec4f,   // linear rgba
   params : vec4f,   // borderWidth, opacity, z, _
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
+  gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
+// Two entries per stop: linear straight-alpha rgba, then (pos, 0, 0, 0).
+@group(1) @binding(1) var<storage, read> stops : array<vec4f>;
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -53,6 +59,50 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
 }
 
+fn srgb_to_linear(c : vec3f) -> vec3f {
+  let x = max(c, vec3f(0.0));
+  return select(pow((x + vec3f(0.055)) / 1.055, vec3f(2.4)),
+                x / 12.92,
+                x <= vec3f(0.04045));
+}
+
+fn linear_to_srgb(c : vec3f) -> vec3f {
+  let x = max(c, vec3f(0.0));
+  return select(1.055 * pow(x, vec3f(1.0 / 2.4)) - vec3f(0.055),
+                x * 12.92,
+                x <= vec3f(0.0031308));
+}
+
+// Interpolate two linear straight-alpha stops in premultiplied sRGB (the CSS
+// default), returning linear straight alpha.
+fn mix_stops(c0 : vec4f, c1 : vec4f, f : f32) -> vec4f {
+  let p0 = linear_to_srgb(c0.rgb) * c0.a;
+  let p1 = linear_to_srgb(c1.rgb) * c1.a;
+  let a = mix(c0.a, c1.a, f);
+  let s = mix(p0, p1, f) / max(a, 1e-6);
+  return vec4f(srgb_to_linear(s), a);
+}
+
+// Colour at gradient-line position t. Stops are sorted by position (CSS
+// fix-up); t outside [first, last] takes the end colour.
+fn gradient_at(t : f32, start : u32, count : u32) -> vec4f {
+  if (count == 0u) { return vec4f(0.0); }
+  var c0 = stops[start * 2u];
+  var p0 = stops[start * 2u + 1u].x;
+  if (t <= p0) { return c0; }
+  for (var i = 1u; i < count; i = i + 1u) {
+    let c1 = stops[(start + i) * 2u];
+    let p1 = stops[(start + i) * 2u + 1u].x;
+    if (t <= p1) {
+      let f = select(0.0, (t - p0) / (p1 - p0), p1 > p0);
+      return mix_stops(c0, c1, f);
+    }
+    c0 = c1;
+    p0 = p1;
+  }
+  return c0;
+}
+
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let b = boxes[in.idx];
@@ -68,9 +118,30 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let fillCov  = 1.0 - smoothstep(-aa, aa, d + bw);
   let borderCov = clamp(outerCov - fillCov, 0.0, 1.0);
 
-  let rgb = (b.fill.rgb * b.fill.a * fillCov +
+  // Background: gradient over fill, source-over, kept premultiplied.
+  var bgp = b.fill.rgb * b.fill.a;
+  var bga = b.fill.a;
+  if (b.grad.x > 0.5) {
+    // Gradient box = padding box, centred like the border box.
+    let size = max(b.rect.zw - vec2f(2.0 * bw), vec2f(0.0));
+    var t = 0.0;
+    if (b.grad.x < 1.5) {
+      let ang = b.grad.y;
+      let dir = vec2f(sin(ang), -cos(ang));
+      let len = abs(size.x * sin(ang)) + abs(size.y * cos(ang));
+      t = dot(in.local, dir) / max(len, 1e-4) + 0.5;
+    } else {
+      let c = (b.gradc.xy - vec2f(0.5)) * size;
+      t = length((in.local - c) / max(b.gradc.zw, vec2f(1e-4)));
+    }
+    let g = gradient_at(t, u32(b.grad.z), u32(b.grad.w));
+    bgp = g.rgb * g.a + bgp * (1.0 - g.a);
+    bga = g.a + bga * (1.0 - g.a);
+  }
+
+  let rgb = (bgp * fillCov +
              b.border.rgb * b.border.a * borderCov) * opacity;
-  let a = (b.fill.a * fillCov + b.border.a * borderCov) * opacity;
+  let a = (bga * fillCov + b.border.a * borderCov) * opacity;
   return vec4f(rgb, a); // premultiplied
 }
 `
@@ -88,6 +159,9 @@ export class BoxPass implements RenderPass {
   private capacity = 0
   private count = 0
   private data = new Float32Array(0)
+  private stopBuffer: GPUBuffer | null = null
+  private stopCapacity = 0
+  private stopData = new Float32Array(0)
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
@@ -96,6 +170,11 @@ export class BoxPass implements RenderPass {
         {
           binding: 0,
           visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' }
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
           buffer: { type: 'read-only-storage' }
         }
       ]
@@ -124,29 +203,59 @@ export class BoxPass implements RenderPass {
     })
   }
 
-  private ensureCapacity(n: number): void {
-    if (n <= this.capacity) return
+  /** Grow the instance buffer; returns true when it was recreated. */
+  private ensureCapacity(n: number): boolean {
+    if (n <= this.capacity) return false
     const cap = Math.max(n, this.capacity ? this.capacity * 2 : 64)
     this.buffer?.destroy()
     this.buffer = this.shared.device.createBuffer({
       size: cap * BYTES_PER_BOX,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
-    this.bindGroup = this.shared.device.createBindGroup({
-      layout: this.group1Layout,
-      entries: [{ binding: 0, resource: { buffer: this.buffer } }]
-    })
     this.data = new Float32Array(cap * FLOATS_PER_BOX)
     this.capacity = cap
+    return true
+  }
+
+  /**
+   * Grow the stop buffer; returns true when it was recreated. Always holds
+   * at least one stop so the bind group is valid with no gradients.
+   */
+  private ensureStopCapacity(n: number): boolean {
+    const need = Math.max(n, 1)
+    if (need <= this.stopCapacity) return false
+    const cap = Math.max(need, this.stopCapacity ? this.stopCapacity * 2 : 16)
+    this.stopBuffer?.destroy()
+    this.stopBuffer = this.shared.device.createBuffer({
+      size: cap * BYTES_PER_STOP,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    })
+    this.stopData = new Float32Array(cap * FLOATS_PER_STOP)
+    this.stopCapacity = cap
+    return true
   }
 
   upload(scene: Scene): void {
     const boxes = scene.boxes
     this.count = boxes.length
     if (this.count === 0) return
-    this.ensureCapacity(this.count)
+    let stopCount = 0
+    for (const b of boxes) stopCount += b.gradient?.stops.length ?? 0
+    const grewBoxes = this.ensureCapacity(this.count)
+    const grewStops = this.ensureStopCapacity(stopCount)
+    if (grewBoxes || grewStops || !this.bindGroup) {
+      this.bindGroup = this.shared.device.createBindGroup({
+        layout: this.group1Layout,
+        entries: [
+          { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
+          { binding: 1, resource: { buffer: this.stopBuffer as GPUBuffer } }
+        ]
+      })
+    }
     const d = this.data
+    const sd = this.stopData
     let o = 0
+    let so = 0
     for (const b of boxes) {
       d[o++] = b.rect.x
       d[o++] = b.rect.y
@@ -173,6 +282,29 @@ export class BoxPass implements RenderPass {
       d[o++] = c ? c.y : -1e9
       d[o++] = c ? c.x + c.width : 1e9
       d[o++] = c ? c.y + c.height : 1e9
+      const g = b.gradient
+      if (g && g.stops.length >= 2) {
+        d[o++] = g.kind === 'linear' ? 1 : 2
+        d[o++] = g.angle
+        d[o++] = so / FLOATS_PER_STOP
+        d[o++] = g.stops.length
+        d[o++] = g.center[0]
+        d[o++] = g.center[1]
+        d[o++] = g.radii[0]
+        d[o++] = g.radii[1]
+        for (const st of g.stops) {
+          sd[so++] = st.color.r
+          sd[so++] = st.color.g
+          sd[so++] = st.color.b
+          sd[so++] = st.color.a
+          sd[so++] = st.pos
+          sd[so++] = 0
+          sd[so++] = 0
+          sd[so++] = 0
+        }
+      } else {
+        for (let k = 0; k < 8; k++) d[o++] = 0
+      }
     }
     this.shared.device.queue.writeBuffer(
       this.buffer as GPUBuffer,
@@ -181,6 +313,15 @@ export class BoxPass implements RenderPass {
       0,
       this.count * FLOATS_PER_BOX
     )
+    if (so > 0) {
+      this.shared.device.queue.writeBuffer(
+        this.stopBuffer as GPUBuffer,
+        0,
+        sd,
+        0,
+        so
+      )
+    }
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
@@ -192,5 +333,6 @@ export class BoxPass implements RenderPass {
 
   destroy(): void {
     this.buffer?.destroy()
+    this.stopBuffer?.destroy()
   }
 }

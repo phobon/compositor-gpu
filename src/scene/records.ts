@@ -19,12 +19,33 @@ export interface RGBA {
 /** Corner radii in px: [topLeft, topRight, bottomRight, bottomLeft]. */
 export type Corners = [number, number, number, number]
 
+export interface GradientStop {
+  /** Linear RGBA (parseColor output). */
+  color: RGBA
+  /** Position along the gradient line / radius, 0..1 (after CSS fix-up). */
+  pos: number
+}
+
+/** A resolved CSS gradient (angles/corners already resolved against rect). */
+export interface Gradient {
+  kind: 'linear' | 'radial'
+  /** linear: CSS angle in radians (0 = to top, clockwise). */
+  angle: number
+  /** radial: centre as a fraction of the box (0..1). */
+  center: [number, number]
+  /** radial: radii in px. */
+  radii: [number, number]
+  stops: GradientStop[]
+}
+
 export interface BoxRecord {
   kind: 'box'
   id: number
   rect: Rect
   radius: Corners
   fill: RGBA
+  /** First background-image layer when it is a gradient; drawn over fill. */
+  gradient?: Gradient | null
   border: { width: number; color: RGBA } | null
   /** Effective opacity: own opacity × every ancestor's (see stacking.ts). */
   opacity: number
@@ -39,7 +60,16 @@ export interface ImageRecord {
   id: number
   rect: Rect
   source: CanvasImageSource
-  objectFit: 'fill' | 'contain' | 'cover'
+  /** 'none' = natural size (background-size: auto), placed by `position`. */
+  objectFit: 'fill' | 'contain' | 'cover' | 'none'
+  /** object-position / background-position as fractions of the free space
+   * (CSS percentage semantics). <img> defaults to [0.5, 0.5], backgrounds
+   * to [0, 0]. */
+  position: [number, number]
+  /** Tile the image (background-repeat: repeat) — only with fit 'none'. */
+  repeat: boolean
+  /** Border radii of the owning element, used to clip the quad. */
+  radius: Corners
   /** Effective opacity (own × ancestors). */
   opacity: number
   /** Global paint order (integer; back-to-front across all layers). */

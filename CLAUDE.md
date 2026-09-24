@@ -27,8 +27,9 @@ external. `@/*` aliases `src/*` in both tsconfig and vite.
 `ROADMAP.md` is the live checklist and `docs/ARCHITECTURE.md` is the spec — the
 spec describes the target, not all of which is built. Currently real: the box
 pass (a complete DOM→GPU vertical slice) and the Slug text pass (font pipeline +
-WGSL, rendering but still being tuned). `ImagePass` is a deliberate no-op
-scaffold. Read `ROADMAP.md` before assuming a feature is missing by accident.
+WGSL, rendering but still being tuned). `ImagePass` renders `<img>`, `<canvas>`,
+`<video>` and `background-image url()` with mipmaps and rounded clipping;
+gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is missing by accident.
 
 ## Architecture
 
@@ -54,6 +55,10 @@ the mutated element's border-box rect changed (siblings could move); inline and
 `getBoundingClientRect` / `getClientRects` from a pass, a shader upload, or
 anything downstream of the reader** — per-glyph rects are already a
 forced-reflow hazard.
+
+Backgrounds (gradients and images) are read in `dom/gradient.ts` and
+`dom/backgrounds.ts`; they resolve colours and image URLs from the computed
+style and paint as part of the box pass.
 
 Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
 `upload()` runs only when its layer is dirty. `onGlyph` dirties the text layer

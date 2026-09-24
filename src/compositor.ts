@@ -67,7 +67,12 @@ export async function createCompositor(
   })
 
   const scene = new Scene()
-  const reader = new SceneReader(root, scene, layers)
+  // `sync` is declared after `reader` (it needs `scheduler`, declared after
+  // `reader` too), so this closes over the `sync` binding lazily — it's
+  // only invoked once an asset load fires, well after `sync` exists.
+  const reader = new SceneReader(root, scene, layers, (el) =>
+    sync.invalidateScope(el)
+  )
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0

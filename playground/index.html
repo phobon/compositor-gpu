@@ -234,6 +234,35 @@
         <figure><img class="contain" src="./test.png" alt="" /><figcaption>contain</figcaption></figure>
       </div>
 
+      <h2>Gradients &amp; backgrounds</h2>
+      <div class="imgrow">
+        <figure style="width: 150px;">
+          <div style="width: 150px; height: 100px; border-radius: 14px; background: linear-gradient(to top right, #6a5cff, #06b6d4);"></div>
+          <figcaption>to top right</figcaption>
+        </figure>
+        <figure style="width: 150px;">
+          <div style="width: 150px; height: 100px; border-radius: 14px; background-color: #22222a; background: linear-gradient(90deg, #ec4899, transparent);"></div>
+          <figcaption>→ transparent</figcaption>
+        </figure>
+        <figure style="width: 150px;">
+          <div style="width: 150px; height: 100px; border-radius: 14px; background: radial-gradient(circle at 30% 70%, #fbbf24, #7f1d1d 70%);"></div>
+          <figcaption>radial</figcaption>
+        </figure>
+        <figure style="width: 150px;">
+          <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) center / cover no-repeat; border: 1px solid #2a2a30;"></div>
+          <figcaption>cover, rounded</figcaption>
+        </figure>
+        <figure style="width: 150px;">
+          <div style="width: 150px; height: 100px; border-radius: 14px; background: url(./test.png) 0 0 / auto repeat; border: 1px solid #2a2a30;"></div>
+          <figcaption>tiled</figcaption>
+        </figure>
+        <figure style="width: 150px;">
+          <img src="./test.png" style="width: 150px; height: 150px; border-radius: 50%; object-fit: cover; object-position: 100% 50%; display: block; border: 1px solid #2a2a30;" alt="" />
+          <figcaption>object-position, circle</figcaption>
+        </figure>
+      </div>
+      <p class="hint">Gradients and background images render in the GPU layer; compare against the DOM with GPU-only toggle.</p>
+
       <h2>Overflow clips</h2>
       <div class="clipbox">
         <div class="clipbig">overflow</div>

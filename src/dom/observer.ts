@@ -98,6 +98,15 @@ export class DomSync {
     this.onInvalidate()
   }
 
+  /** Scope a re-read to `el`'s subtree (e.g. a background-image finished
+   * loading). Goes through the same partial-read path as a mutation; the
+   * rect-change check in SceneReader.partialRead escalates to a full read
+   * if needed. */
+  invalidateScope(el: Element): void {
+    this.scopes.add(el)
+    this.mark(Dirty.MUTATION)
+  }
+
   private onScroll = (): void => this.mark(Dirty.SCROLL)
   private onResize = (): void => this.mark(Dirty.LAYOUT)
   private onLoad = (e: Event): void => {

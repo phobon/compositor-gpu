@@ -13,6 +13,7 @@ import {
   createsStackingContext
 } from '../scene/stacking'
 import type { Layer } from '../types'
+import { readBackgroundImage } from './backgrounds'
 import {
   clipRectFor,
   readBox,
@@ -221,7 +222,10 @@ export class SceneReader {
   constructor(
     private readonly root: Element,
     private readonly scene: Scene,
-    private readonly layers: ReadonlySet<Layer>
+    private readonly layers: ReadonlySet<Layer>,
+    /** Called when a lazily-loaded asset (a background-image) for `el`
+     * finishes loading, so its subtree can be re-read and re-painted. */
+    private readonly onAsset: (el: Element) => void
   ) {}
 
   /** Re-read the whole root subtree and rebuild the scene. */
@@ -348,6 +352,15 @@ export class SceneReader {
       if (rec) {
         rec.opacity = opacity
         own = own.length ? [...own, rec] : [rec]
+      }
+    }
+    if (layers.has('images') && s.backgroundImage !== 'none') {
+      const bg = readBackgroundImage(el, s, rect, scene.allocId(), clip, () =>
+        this.onAsset(el)
+      )
+      if (bg) {
+        bg.opacity = opacity
+        own = own.length ? [...own, bg] : [bg]
       }
     }
 

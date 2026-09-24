@@ -23,7 +23,8 @@
 ## Phase 2 — fidelity
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
 - [x] Images: `<canvas>`/`<video>` sources (dynamic textures, live re-upload)
-- [ ] Images: background-image + CSS gradients, shared atlas, mipmaps
+- [x] Images: background-image url() (size/position/repeat, rounded clip, async load → scoped re-read), linear/radial gradients in the box pass, mipmaps for static textures
+- [ ] Images: shared texture atlas (one bind group for many small images); repeating/conic gradients; gradient background-size/position
 - [x] Stacking contexts + z-index + opacity (Appendix E paint order, cross-layer draw batches; opacity is propagated per record — isolated offscreen groups are a follow-up)
 - [ ] Opacity groups: render opacity<1 subtrees offscreen and composite once (overlap inside a group currently double-blends)
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)

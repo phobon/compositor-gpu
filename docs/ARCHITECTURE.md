@@ -91,6 +91,8 @@ invalidations, updates buffers, and draws.
 | `gpu/renderer.ts` | Frame orchestration: begins a render pass, runs each enabled pass, submits. Holds shared uniforms (viewport, scroll, time). |
 | `dom/tree.ts` | Persistent element tree reader: fullRead() walks the DOM and rebuilds the tree; partialRead(scopes) re-reads only the subtrees a mutation could have changed. Escalates to a full read when a mutated element's border-box rect changes (siblings could move). |
 | `dom/styles.ts` | Reads `getComputedStyle` and normalises the subset we paint (background, border-radius, colour, opacity, transform, clip, z-order). |
+| `dom/gradient.ts` | Reads CSS `linear-gradient` and `radial-gradient`, interpolates in premultiplied sRGB. |
+| `dom/backgrounds.ts` | Reads `background-image: url()`, `background-size` / `background-position`; handles async loading with scoped re-read. |
 | `dom/textRuns.ts` | Extracts per-glyph geometry from text nodes using `Range.getClientRects()` / segmentation, mapped to font + colour. The heart of text fidelity. |
 | `dom/observer.ts` | Resize/Mutation/Intersection observers + scroll + `document.fonts.ready`; coalesces into invalidation flags. |
 | `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`) in document space. No GPU types here. |
@@ -162,9 +164,10 @@ rects is the whole trick behind "perfectly replicating the HTML text."
   quads (SDF rounded-box in the fragment shader). Per-instance: rect, radius,
   fill, border width/colour, opacity. This is the smallest end-to-end proof of
   the sync loop and lands first.
-- **Images.** `<img>`, `<canvas>`, and `background-image` become textured
-  quads. Images upload once to a texture (or a shared atlas for many small
-  ones); `object-fit` maps to UV. Video is out of scope for v1.
+- **Images.** `<img>`, `<canvas>`, `<video>`, and `background-image` become
+  textured quads. Images upload once to a texture; `object-fit` maps to UV;
+  `background-image: url()` supports `background-size` (cover/contain/auto) and
+  `background-position`. A shared atlas for many small images is a follow-up.
 - **Stacking.** The walker builds a simplified CSS stacking-context tree
   (`scene/stacking.ts`: positioned+z-index, fixed/sticky, opacity<1,
   transform, isolation, filter, blend mode) and flattens it per Appendix E
