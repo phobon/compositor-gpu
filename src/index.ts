@@ -5,7 +5,8 @@ export type {
   FrameContext,
   Layer,
   Mode,
-  Fallback
+  Fallback,
+  CompositorStats
 } from './types'
 export type {
   BoxRecord,

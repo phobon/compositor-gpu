@@ -68,11 +68,29 @@ compositor.text?.loadFontBuffer(bytes, 0)
 
 ```bash
 npm install
-npm run dev        # playground at / (a plain HTML page)
+npm run dev        # playground on a local vite server (opens automatically)
 npm run typecheck  # tsc --noEmit
 npm run build      # library build -> dist/
 npm run lint       # biome
 ```
+
+### Playground
+
+`npm run dev` serves `playground/` — a plain HTML page mirrored onto the GPU. A
+control panel (top-right) shows live state: WebGPU on/off, box + glyph counts,
+whether the font parsed, and fps. Three toggles:
+
+- **GPU-only** — hides the DOM's own paint so you see *only* the GPU layer.
+  Anything that vanishes wasn't mirrored. This is the box pass's A/B proof.
+- **Animate letters** — drives every glyph's offset independently.
+- **GPU layer on/off** — start/stop the compositor.
+
+Shader-compile and GPU-validation errors are surfaced both in the console and in
+the panel's red log area. Requires a WebGPU-capable browser (Chrome/Edge, or
+Safari 18+).
+
+The bundled `playground/font.ttf` is **Inter** (SIL Open Font License) — used to
+feed real outlines to the Slug text pass.
 
 ## Licence
 

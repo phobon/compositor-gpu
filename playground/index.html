@@ -5,46 +5,109 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>compositor-gpu playground</title>
     <style>
-      :root { color-scheme: light dark; }
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: -apple-system, system-ui, sans-serif;
-        line-height: 1.5;
-        padding: 8vh 6vw;
+        font-family: 'Inter Test', -apple-system, system-ui, sans-serif;
         background: #0b0b0c;
         color: #f2f2f2;
+        -webkit-font-smoothing: antialiased;
       }
-      h1 { font-size: clamp(2rem, 8vw, 5rem); margin: 0 0 0.3em; letter-spacing: -0.02em; }
-      p { max-width: 40ch; font-size: 1.25rem; }
+
+      /* Only #stage is mirrored onto the GPU. The control panel stays real DOM. */
+      #stage { padding: 10vh 6vw 40vh; }
+      #stage h1 {
+        font-size: clamp(2.5rem, 9vw, 6rem);
+        letter-spacing: -0.03em;
+        margin: 0 0 0.2em;
+        line-height: 1.02;
+      }
+      #stage h2 { font-size: 2rem; margin: 2.5rem 0 0.5rem; letter-spacing: -0.02em; }
+      #stage p { max-width: 42ch; font-size: 1.25rem; line-height: 1.5; }
       .card {
         margin-top: 2rem;
-        padding: 1.5rem;
-        border-radius: 20px;
+        padding: 1.5rem 1.75rem;
+        border-radius: 22px;
         background: #17171a;
-        border: 1px solid #2a2a30;
-        max-width: 40ch;
+        border: 1px solid #33333a;
+        max-width: 42ch;
       }
       .pill {
         display: inline-block;
-        padding: 0.4rem 0.9rem;
+        padding: 0.35rem 0.9rem;
         border-radius: 999px;
         background: #3b82f6;
-        color: white;
+        color: #fff;
         font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      /* GPU-only A/B: make the DOM paint invisible so ONLY the GPU layer shows.
+         Layout is untouched, so anything that vanishes wasn't mirrored. */
+      #stage.gpu-only :is(h1, h2, p, span, .card) { color: transparent !important; }
+      #stage.gpu-only :is(.card, .pill) { background: transparent !important; border-color: transparent !important; }
+
+      /* Control panel — real DOM, sits above the GPU canvas. */
+      #panel {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 2147483647;
+        width: 230px;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(20, 20, 24, 0.86);
+        backdrop-filter: blur(10px);
+        border: 1px solid #2a2a30;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: #8a8a94; }
+      #panel .row { display: flex; justify-content: space-between; }
+      #panel .row b { color: #f2f2f2; font-weight: 600; }
+      #panel .ok { color: #4ade80; }
+      #panel .bad { color: #f87171; }
+      #panel button {
+        display: block; width: 100%; margin-top: 6px; padding: 7px;
+        border-radius: 8px; border: 1px solid #33333a; background: #22222a;
+        color: #f2f2f2; font: inherit; cursor: pointer;
+      }
+      #panel button[aria-pressed='true'] { background: #3b82f6; border-color: #3b82f6; }
+      #log {
+        margin-top: 10px; max-height: 120px; overflow: auto;
+        font-size: 11px; color: #f87171; white-space: pre-wrap; word-break: break-word;
       }
     </style>
   </head>
   <body>
-    <h1>Every letter can move.</h1>
-    <p>
-      This is a real DOM. <span class="pill">Selectable</span>, accessible, and
-      laid out by the browser — then mirrored onto the GPU and painted with the
-      Slug algorithm.
-    </p>
-    <div class="card">
-      Boxes, borders and radii are mirrored as instanced rounded rects. Scroll,
-      resize, and watch it stay in step.
+    <div id="stage">
+      <h1>Every letter can move.</h1>
+      <p>
+        This is a real DOM — <span class="pill">selectable</span>, accessible,
+        laid out by the browser — then mirrored onto the GPU and painted with
+        the Slug algorithm.
+      </p>
+      <h2>Boxes track layout</h2>
+      <div class="card">
+        Backgrounds, borders and radii mirror as instanced rounded rects. Hit
+        <b>GPU-only</b> to hide the DOM paint and see just the GPU layer.
+      </div>
     </div>
+
+    <div id="panel">
+      <h3>compositor-gpu</h3>
+      <div class="row"><span>webgpu</span><b id="s-gpu">…</b></div>
+      <div class="row"><span>state</span><b id="s-state">…</b></div>
+      <div class="row"><span>boxes</span><b id="s-boxes">0</b></div>
+      <div class="row"><span>glyphs</span><b id="s-glyphs">0</b></div>
+      <div class="row"><span>text</span><b id="s-text">…</b></div>
+      <div class="row"><span>fps</span><b id="s-fps">0</b></div>
+      <button id="b-gpuonly" aria-pressed="false">GPU-only</button>
+      <button id="b-animate" aria-pressed="true">Animate letters</button>
+      <button id="b-toggle" aria-pressed="true">GPU layer on</button>
+      <div id="log"></div>
+    </div>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

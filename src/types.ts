@@ -39,6 +39,14 @@ export interface CompositorOptions {
   onFrame?: (ctx: FrameContext) => void
 }
 
+export interface CompositorStats {
+  active: boolean
+  boxes: number
+  images: number
+  glyphs: number
+  fps: number
+}
+
 export interface Compositor {
   start(): void
   stop(): void
@@ -47,4 +55,6 @@ export interface Compositor {
   destroy(): void
   /** True when a real GPU pipeline is active (false in passthrough). */
   readonly active: boolean
+  /** Live counts + fps, for debug overlays. */
+  stats(): CompositorStats
 }

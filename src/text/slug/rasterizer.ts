@@ -1,6 +1,6 @@
 import type { Shared } from '../../gpu/frame'
 import type { Scene } from '../../scene/scene'
-import { log } from '../../util/log'
+import { log, reportShaderErrors } from '../../util/log'
 import type { TextBackend } from '../textRasterizer'
 import { type ParsedFont, parseFont } from './font'
 import { SLUG_WGSL } from './shaders'
@@ -44,6 +44,7 @@ export class SlugText implements TextBackend {
       }))
     })
     const module = device.createShaderModule({ code: SLUG_WGSL })
+    reportShaderErrors(module, 'slug')
     this.pipeline = device.createRenderPipeline({
       layout: device.createPipelineLayout({
         bindGroupLayouts: [frameLayout, this.layout]

@@ -49,6 +49,7 @@ export async function createCompositor(
   }
 
   const dpr = options.devicePixelRatio ?? window.devicePixelRatio ?? 1
+  gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
   if (layers.has('boxes')) renderer.addPass(new BoxPass(renderer.shared))
   if (layers.has('images')) renderer.addPass(new ImagePass())
@@ -60,10 +61,14 @@ export async function createCompositor(
       void text.prepare(options.fonts)
     }
   }
+  gpu.device.popErrorScope().then((e) => {
+    if (e) log.error('GPU validation error during setup:', e.message)
+  })
 
   const scene = new Scene()
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
+  let fps = 0
 
   const resizeCanvas = (): void => {
     canvas.width = Math.floor(window.innerWidth * dpr)
@@ -99,6 +104,7 @@ export async function createCompositor(
     }
     options.onFrame?.(ctx)
 
+    if (dt > 0) fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
     renderer.render(scene, ctx, dpr)
     if (animating) scheduler.request()
   }
@@ -115,6 +121,13 @@ export async function createCompositor(
   return {
     active: true,
     text,
+    stats: () => ({
+      active: true,
+      boxes: scene.boxes.length,
+      images: scene.images.length,
+      glyphs: scene.glyphCount(),
+      fps
+    }),
     start() {
       scheduler.start()
       sync.start()
@@ -144,6 +157,7 @@ function inert(): Compositor & { text: null } {
   return {
     active: false,
     text: null,
+    stats: () => ({ active: false, boxes: 0, images: 0, glyphs: 0, fps: 0 }),
     start() {},
     stop() {},
     invalidate() {},

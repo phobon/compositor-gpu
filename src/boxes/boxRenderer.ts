@@ -1,5 +1,6 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
+import { reportShaderErrors } from '../util/log'
 
 const FLOATS_PER_BOX = 20 // 5 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
@@ -94,6 +95,7 @@ export class BoxPass implements RenderPass {
       ]
     })
     const module = device.createShaderModule({ code: SHADER })
+    reportShaderErrors(module, 'box')
     this.pipeline = device.createRenderPipeline({
       layout: device.createPipelineLayout({
         bindGroupLayouts: [frameLayout, this.group1Layout]
