@@ -25,6 +25,7 @@ struct Glyph {
   offset : vec4f,   // xy displacement, z, _
   color  : vec4f,
   gref   : vec4u,   // bandStart, bandCount, _, _
+  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
 };
 struct Band  { bounds : vec4f, };        // yMin, yMax, curveStart, curveEnd
 struct Curve { p : vec4f, c : vec4f, };  // x0,y0,x1,y1 ; cx,cy,_,_
@@ -37,6 +38,7 @@ struct VOut {
   @builtin(position) pos : vec4f,
   @location(0) em : vec2f,                 // 0..1 within the em box, y-up
   @location(1) @interpolate(flat) idx : u32,
+  @location(2) docp : vec2f,
 };
 
 @vertex
@@ -52,6 +54,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.pos = doc_to_clip(p);
   out.em = vec2f(corner.x, 1.0 - corner.y);
   out.idx = ii;
+  out.docp = p;
   return out;
 }
 
@@ -142,6 +145,9 @@ fn coverage_row(em : vec2f, gref : vec4u, invPx : f32) -> f32 {
 fn fs(in : VOut) -> @location(0) vec4f {
   let g = glyphs[in.idx];
   if (g.gref.y == 0u) { discard; }
+  let cl = g.clip;
+  if (in.docp.x < cl.x || in.docp.y < cl.y ||
+      in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   let invPx = 1.0 / max(fwidth(in.em.x), 1e-5);
   let pxH = max(fwidth(in.em.y), 1e-5);
   // 3-tap vertical supersample for anti-aliasing of near-horizontal edges.

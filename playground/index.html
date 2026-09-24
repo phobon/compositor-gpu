@@ -51,6 +51,28 @@
       .imgrow .cover { object-fit: cover; }
       .imgrow .contain { object-fit: contain; }
       .imgrow figcaption { font-size: 12px; color: #8a8a94; margin-top: 6px; }
+      .clipbox {
+        position: relative;
+        overflow: hidden;
+        width: 440px;
+        max-width: 100%;
+        height: 160px;
+        margin-top: 2.5rem;
+        border: 3px solid #6a5cff;
+        border-radius: 18px;
+        background: #16161f;
+      }
+      .clipbig {
+        position: absolute;
+        left: -40px;
+        top: -34px;
+        margin: 0;
+        font-size: 132px;
+        font-weight: 800;
+        line-height: 1;
+        white-space: nowrap;
+        color: #fff;
+      }
       .pill {
         display: inline-block;
         padding: 0.35rem 0.9rem;
@@ -61,10 +83,9 @@
         font-size: 0.95rem;
       }
 
-      /* GPU-only A/B: hide the DOM paint with opacity (which the compositor
-         does NOT read) so computed colors stay intact and the GPU mirror is
-         unaffected. Anything that vanishes wasn't mirrored onto the GPU. */
-      #stage.gpu-only { opacity: 0; }
+      /* GPU-only A/B is driven by compositor.setSourceHidden() (replace mode):
+         the DOM stays selectable and accessible while the GPU layer stands in
+         for its paint. Anything that vanishes wasn't mirrored onto the GPU. */
 
       /* Control panel — real DOM, sits above the GPU canvas. */
       #panel {
@@ -116,6 +137,11 @@
         <figure><img class="fill" src="./test.png" alt="" /><figcaption>fill</figcaption></figure>
         <figure><img class="cover" src="./test.png" alt="" /><figcaption>cover</figcaption></figure>
         <figure><img class="contain" src="./test.png" alt="" /><figcaption>contain</figcaption></figure>
+      </div>
+
+      <h2>Overflow clips</h2>
+      <div class="clipbox">
+        <div class="clipbig">overflow</div>
       </div>
     </div>
 

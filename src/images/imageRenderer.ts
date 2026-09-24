@@ -3,7 +3,7 @@ import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_IMAGE = 12 // rect(4) + uv(4) + params(4)
+const FLOATS_PER_IMAGE = 16 // rect(4) + uv(4) + params(4) + clip(4)
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
 const SHADER = /* wgsl */ `
@@ -13,6 +13,7 @@ struct Img {
   rect   : vec4f,   // x,y,w,h document space
   uv     : vec4f,   // u0,v0,u1,v1
   params : vec4f,   // opacity, _, _, _
+  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
 };
 @group(1) @binding(0) var<storage, read> imgs : array<Img>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -22,6 +23,7 @@ struct VOut {
   @builtin(position) pos : vec4f,
   @location(0) uv : vec2f,
   @location(1) @interpolate(flat) idx : u32,
+  @location(2) docp : vec2f,
 };
 
 @vertex
@@ -37,12 +39,16 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.pos = doc_to_clip(p);
   out.uv = mix(im.uv.xy, im.uv.zw, corner);
   out.idx = ii;
+  out.docp = p;
   return out;
 }
 
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let im = imgs[in.idx];
+  let cl = im.clip;
+  if (in.docp.x < cl.x || in.docp.y < cl.y ||
+      in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   let c = textureSample(tex, samp, in.uv);
   let o = im.params.x;
   return vec4f(c.rgb * c.a * o, c.a * o); // premultiplied
@@ -180,6 +186,11 @@ export class ImagePass implements RenderPass {
       d[o + 9] = 0
       d[o + 10] = 0
       d[o + 11] = 0
+      const c = rec.clip
+      d[o + 12] = c ? c.x : -1e9
+      d[o + 13] = c ? c.y : -1e9
+      d[o + 14] = c ? c.x + c.width : 1e9
+      d[o + 15] = c ? c.y + c.height : 1e9
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,

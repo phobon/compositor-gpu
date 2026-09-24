@@ -27,7 +27,8 @@ export interface BoxRecord {
   fill: RGBA
   border: { width: number; color: RGBA } | null
   opacity: number
-  z: number
+  z: number /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
+  clip?: Rect | null
 }
 
 export interface ImageRecord {
@@ -37,7 +38,8 @@ export interface ImageRecord {
   source: CanvasImageSource
   objectFit: 'fill' | 'contain' | 'cover'
   opacity: number
-  z: number
+  z: number /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
+  clip?: Rect | null
 }
 
 /** One shaped glyph, positioned by the browser, in document space. */
@@ -67,6 +69,8 @@ export interface GlyphRun {
   color: RGBA
   glyphs: Glyph[]
   z: number
+  /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
+  clip?: Rect | null
 }
 
 export type SceneRecord = BoxRecord | ImageRecord | GlyphRun

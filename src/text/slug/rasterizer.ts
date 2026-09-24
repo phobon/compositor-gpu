@@ -12,7 +12,7 @@ import {
 } from './font'
 import { SLUG_WGSL } from './shaders'
 
-const GLYPH_FLOATS = 16 // rect(4)+offset(4)+color(4)+gref(4)
+const GLYPH_FLOATS = 20 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)
 const BAND_COUNT = 16 // bands per glyph — must match font.ts bucketing
 const CURVE_FLOATS = 8 // vec4 p + vec4 c
 
@@ -433,6 +433,11 @@ export class SlugText implements TextBackend {
       const font = face.font
       const ascPx = font.ascender
       const descPx = -font.descender
+      const cl = run.clip
+      const clMinX = cl ? cl.x : -1e9
+      const clMinY = cl ? cl.y : -1e9
+      const clMaxX = cl ? cl.x + cl.width : 1e9
+      const clMaxY = cl ? cl.y + cl.height : 1e9
       for (const g of run.glyphs) {
         const gi = font.glyphForCodePoint(g.glyphId)
         const slot = this.ensureResident(face, gi)
@@ -466,6 +471,10 @@ export class SlugText implements TextBackend {
         u[base + 13] = slot >= 0 ? BAND_COUNT : 0
         u[base + 14] = 0
         u[base + 15] = 0
+        f[base + 16] = clMinX
+        f[base + 17] = clMinY
+        f[base + 18] = clMaxX
+        f[base + 19] = clMaxY
         i++
       }
     }

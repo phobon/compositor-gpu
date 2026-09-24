@@ -54,3 +54,27 @@ export function readBox(el: Element, id: number, z: number): BoxRecord | null {
     z
   }
 }
+
+const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])
+
+/**
+ * The padding-box clip rect (document space) an element imposes on its content
+ * when it clips overflow, or null when overflow is visible.
+ */
+export function clipRectFor(el: Element): Rect | null {
+  const s = getComputedStyle(el)
+  if (!CLIP_OVERFLOW.has(s.overflowX) && !CLIP_OVERFLOW.has(s.overflowY)) {
+    return null
+  }
+  const r = toDocRect(el.getBoundingClientRect())
+  const bl = px(s.borderLeftWidth)
+  const bt = px(s.borderTopWidth)
+  const br = px(s.borderRightWidth)
+  const bb = px(s.borderBottomWidth)
+  return {
+    x: r.x + bl,
+    y: r.y + bt,
+    width: Math.max(0, r.width - bl - br),
+    height: Math.max(0, r.height - bt - bb)
+  }
+}

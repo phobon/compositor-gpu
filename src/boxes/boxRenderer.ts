@@ -2,7 +2,7 @@ import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 20 // 5 * vec4f
+const FLOATS_PER_BOX = 24 // 6 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 
 const SHADER = /* wgsl */ `
@@ -14,6 +14,7 @@ struct Box {
   fill   : vec4f,   // linear rgba
   border : vec4f,   // linear rgba
   params : vec4f,   // borderWidth, opacity, z, _
+  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 
@@ -22,6 +23,7 @@ struct VOut {
   @location(0) local : vec2f,
   @location(1) half  : vec2f,
   @location(2) @interpolate(flat) idx : u32,
+  @location(3) docp : vec2f,
 };
 
 @vertex
@@ -38,6 +40,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.half = b.rect.zw * 0.5;
   out.local = (corner - vec2f(0.5)) * b.rect.zw;
   out.idx = ii;
+  out.docp = p;
   return out;
 }
 
@@ -53,6 +56,9 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let b = boxes[in.idx];
+  let cl = b.clip;
+  if (in.docp.x < cl.x || in.docp.y < cl.y ||
+      in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   let d = sd_round_box(in.local, in.half, b.radius);
   let aa = max(fwidth(d), 1e-4);
   let bw = b.params.x;
@@ -162,6 +168,11 @@ export class BoxPass implements RenderPass {
       d[o++] = b.opacity
       d[o++] = b.z
       d[o++] = 0
+      const c = b.clip
+      d[o++] = c ? c.x : -1e9
+      d[o++] = c ? c.y : -1e9
+      d[o++] = c ? c.x + c.width : 1e9
+      d[o++] = c ? c.y + c.height : 1e9
     }
     this.shared.device.queue.writeBuffer(
       this.buffer as GPUBuffer,
