@@ -43,10 +43,10 @@
         font-size: 0.95rem;
       }
 
-      /* GPU-only A/B: make the DOM paint invisible so ONLY the GPU layer shows.
-         Layout is untouched, so anything that vanishes wasn't mirrored. */
-      #stage.gpu-only :is(h1, h2, p, span, .card) { color: transparent !important; }
-      #stage.gpu-only :is(.card, .pill) { background: transparent !important; border-color: transparent !important; }
+      /* GPU-only A/B: hide the DOM paint with opacity (which the compositor
+         does NOT read) so computed colors stay intact and the GPU mirror is
+         unaffected. Anything that vanishes wasn't mirrored onto the GPU. */
+      #stage.gpu-only { opacity: 0; }
 
       /* Control panel — real DOM, sits above the GPU canvas. */
       #panel {

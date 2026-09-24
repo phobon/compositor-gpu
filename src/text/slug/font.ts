@@ -49,7 +49,7 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
     const cached = cache.get(index)
     if (cached) return cached
     const g = font.glyphs.get(index)
-    const quads = outlineToQuads(g, upm)
+    const quads = outlineToQuads(g)
     const bands = bucketIntoBands(quads)
     const result: GlyphBands = {
       advance: (g.advanceWidth ?? 0) / upm,
@@ -63,68 +63,80 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
   return { fontId, unitsPerEm: upm, glyphForCodePoint, glyph }
 }
 
-/** Flatten opentype path commands to quadratics in normalised em space. */
-function outlineToQuads(glyph: opentype.Glyph, upm: number): Quad[] {
-  const path = glyph.getPath(0, 0, upm) // y-down; we normalise below
+/**
+ * Flatten a glyph's outline to quadratics normalised into its own tight
+ * bounding box [0,1]^2, y-up — matching the shader's `em` space. Reads
+ * `glyph.path` (font units, y-up), NOT getPath() (which flips to y-down and
+ * is baseline-relative, so its outline falls outside [0,1] and never fills).
+ */
+function outlineToQuads(glyph: opentype.Glyph): Quad[] {
+  const bb = glyph.getBoundingBox()
+  const w = bb.x2 - bb.x1 || 1
+  const h = bb.y2 - bb.y1 || 1
+  const nx = (v: number) => (v - bb.x1) / w
+  const ny = (v: number) => (v - bb.y1) / h
+  const norm = (q: Quad): Quad => ({
+    x0: nx(q.x0),
+    y0: ny(q.y0),
+    cx: nx(q.cx),
+    cy: ny(q.cy),
+    x1: nx(q.x1),
+    y1: ny(q.y1)
+  })
+
   const quads: Quad[] = []
   let x = 0
   let y = 0
   let sx = 0
   let sy = 0
-  const n = (v: number) => v / upm
 
-  for (const c of path.commands) {
+  for (const c of glyph.path.commands) {
     if (c.type === 'M') {
       x = c.x
       y = c.y
       sx = x
       sy = y
     } else if (c.type === 'L') {
-      quads.push(quad(x, y, (x + c.x) / 2, (y + c.y) / 2, c.x, c.y, n))
+      quads.push(
+        norm({
+          x0: x,
+          y0: y,
+          cx: (x + c.x) / 2,
+          cy: (y + c.y) / 2,
+          x1: c.x,
+          y1: c.y
+        })
+      )
       x = c.x
       y = c.y
     } else if (c.type === 'Q') {
-      quads.push(quad(x, y, c.x1, c.y1, c.x, c.y, n))
+      quads.push(norm({ x0: x, y0: y, cx: c.x1, cy: c.y1, x1: c.x, y1: c.y }))
       x = c.x
       y = c.y
     } else if (c.type === 'C') {
-      // reduce cubic to two quadratics via midpoint split (scaffold-grade)
-      const [q1, q2] = cubicToQuads(x, y, c.x1, c.y1, c.x2, c.y2, c.x, c.y)
-      quads.push(mapQuad(q1, n), mapQuad(q2, n))
+      for (const q of cubicToQuads(x, y, c.x1, c.y1, c.x2, c.y2, c.x, c.y)) {
+        quads.push(norm(q))
+      }
       x = c.x
       y = c.y
     } else if (c.type === 'Z') {
       if (x !== sx || y !== sy) {
-        quads.push(quad(x, y, (x + sx) / 2, (y + sy) / 2, sx, sy, n))
+        quads.push(
+          norm({
+            x0: x,
+            y0: y,
+            cx: (x + sx) / 2,
+            cy: (y + sy) / 2,
+            x1: sx,
+            y1: sy
+          })
+        )
       }
       x = sx
       y = sy
     }
   }
   return quads
-}
-
-function quad(
-  x0: number,
-  y0: number,
-  cx: number,
-  cy: number,
-  x1: number,
-  y1: number,
-  n: (v: number) => number
-): Quad {
-  return { x0: n(x0), y0: n(y0), cx: n(cx), cy: n(cy), x1: n(x1), y1: n(y1) }
-}
-
-function mapQuad(q: Quad, n: (v: number) => number): Quad {
-  return {
-    x0: n(q.x0),
-    y0: n(q.y0),
-    cx: n(q.cx),
-    cy: n(q.cy),
-    x1: n(q.x1),
-    y1: n(q.y1)
-  }
 }
 
 function cubicToQuads(
