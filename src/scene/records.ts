@@ -38,7 +38,10 @@ export interface ImageRecord {
   source: CanvasImageSource
   objectFit: 'fill' | 'contain' | 'cover'
   opacity: number
-  z: number /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
+  z: number
+  /** Source pixels change over time (<video>, <canvas>): re-upload each frame. */
+  dynamic?: boolean
+  /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
 }
 

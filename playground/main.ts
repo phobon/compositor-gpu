@@ -55,9 +55,12 @@ async function boot(): Promise<void> {
   window.addEventListener('load', () => compositor.invalidate())
 
   // --- controls ---
+  // Replace mode: hide the DOM's own paint (still selectable / accessible) and
+  // let the GPU layer stand in for it.
   const gpuOnly = $('b-gpuonly')
   gpuOnly.addEventListener('click', () => {
-    const on = stage.classList.toggle('gpu-only')
+    const on = gpuOnly.getAttribute('aria-pressed') !== 'true'
+    compositor.setSourceHidden(on)
     gpuOnly.setAttribute('aria-pressed', String(on))
   })
 
@@ -78,4 +81,25 @@ async function boot(): Promise<void> {
   })
 }
 
+function animateLiveCanvas(): void {
+  const cv = document.querySelector('.livecanvas') as HTMLCanvasElement | null
+  const ctx = cv?.getContext('2d')
+  if (!cv || !ctx) return
+  const draw = (t: number): void => {
+    ctx.fillStyle = '#101018'
+    ctx.fillRect(0, 0, cv.width, cv.height)
+    for (let i = 0; i < 7; i++) {
+      const x = cv.width * (0.5 + 0.44 * Math.sin(t / 720 + i * 0.8))
+      const y = cv.height * 0.5 + Math.sin(t / 480 + i) * 34
+      ctx.beginPath()
+      ctx.arc(x, y, 28, 0, Math.PI * 2)
+      ctx.fillStyle = `hsl(${((t / 18 + i * 52) % 360).toFixed(0)} 82% 62%)`
+      ctx.fill()
+    }
+    requestAnimationFrame(draw)
+  }
+  requestAnimationFrame(draw)
+}
+
+animateLiveCanvas()
 void boot()

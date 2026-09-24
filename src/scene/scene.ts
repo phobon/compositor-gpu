@@ -14,6 +14,8 @@ export class Scene {
 
   /** True when instance buffers need re-upload. */
   dirty = true
+  /** True when any image source is dynamic (drives a continuous render). */
+  hasDynamic = false
 
   private nextId = 1
 
@@ -26,6 +28,7 @@ export class Scene {
     this.images = []
     this.runs = []
     this.dirty = true
+    this.hasDynamic = false
   }
 
   add(record: SceneRecord): void {
@@ -35,6 +38,7 @@ export class Scene {
         break
       case 'image':
         this.images.push(record)
+        if (record.dynamic) this.hasDynamic = true
         break
       case 'text':
         this.runs.push(record)

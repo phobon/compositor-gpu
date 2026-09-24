@@ -1,4 +1,4 @@
-import type { BoxRecord, Corners, Rect } from '../scene/records'
+import type { BoxRecord, Corners, ImageRecord, Rect } from '../scene/records'
 import { parseColor } from '../util/color'
 
 /** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
@@ -76,5 +76,51 @@ export function clipRectFor(el: Element): Rect | null {
     y: r.y + bt,
     width: Math.max(0, r.width - bl - br),
     height: Math.max(0, r.height - bt - bb)
+  }
+}
+
+/**
+ * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
+ * null when it isn't ready to sample. Canvas and video are marked dynamic so
+ * their textures re-upload every frame.
+ */
+export function readImageRecord(
+  el: Element,
+  id: number,
+  z: number,
+  clip: Rect | null
+): ImageRecord | null {
+  let source: CanvasImageSource
+  let dynamic = false
+  if (el.tagName === 'IMG') {
+    const img = el as HTMLImageElement
+    if (!img.complete || img.naturalWidth === 0) return null
+    source = img
+  } else if (el.tagName === 'VIDEO') {
+    const v = el as HTMLVideoElement
+    if (v.readyState < 2 || v.videoWidth === 0) return null
+    source = v
+    dynamic = true
+  } else if (el.tagName === 'CANVAS') {
+    const c = el as HTMLCanvasElement
+    if (c.width === 0 || c.height === 0) return null
+    source = c
+    dynamic = true
+  } else {
+    return null
+  }
+  const rect = toDocRect(el.getBoundingClientRect())
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const of = getComputedStyle(el).objectFit
+  return {
+    kind: 'image',
+    id,
+    rect,
+    source,
+    objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
+    opacity: 1,
+    z: z + 0.5,
+    clip,
+    dynamic
   }
 }

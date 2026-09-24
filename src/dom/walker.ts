@@ -1,7 +1,7 @@
-import type { ImageRecord, Rect } from '../scene/records'
+import type { Rect } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import type { Layer } from '../types'
-import { clipRectFor, readBox, toDocRect } from './styles'
+import { clipRectFor, readBox, readImageRecord } from './styles'
 import { readTextNode } from './textRuns'
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
@@ -49,26 +49,14 @@ export function readSubtree(
       }
     }
 
-    if (layers.has('images') && el.tagName === 'IMG') {
-      const img = el as HTMLImageElement
-      if (img.complete && img.naturalWidth > 0) {
-        const rec: ImageRecord = {
-          kind: 'image',
-          id: scene.allocId(),
-          rect: toDocRect(img.getBoundingClientRect()),
-          source: img,
-          objectFit:
-            getComputedStyle(img).objectFit === 'cover'
-              ? 'cover'
-              : getComputedStyle(img).objectFit === 'contain'
-                ? 'contain'
-                : 'fill',
-          opacity: 1,
-          z: z + 0.5,
-          clip
-        }
-        scene.add(rec)
-      }
+    if (
+      layers.has('images') &&
+      (el.tagName === 'IMG' ||
+        el.tagName === 'CANVAS' ||
+        el.tagName === 'VIDEO')
+    ) {
+      const rec = readImageRecord(el, scene.allocId(), z, clip)
+      if (rec) scene.add(rec)
     }
 
     // An element's own box is clipped by its ancestors; its content (children

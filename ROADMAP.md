@@ -22,10 +22,11 @@
 
 ## Phase 2 — fidelity
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
-- [ ] Images: background-image, <canvas>/<video>, shared atlas, mipmaps
+- [x] Images: `<canvas>`/`<video>` sources (dynamic textures, live re-upload)
+- [ ] Images: background-image + CSS gradients, shared atlas, mipmaps
 - [ ] Stacking contexts + z-index + opacity groups
-- [ ] `overflow` clipping (scissor / per-instance clip rects)
-- [ ] `replace` mode: hide DOM paint while preserving hit-testing & a11y
+- [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
+- [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
 - [ ] Per-layer dirty tracking + sub-tree reconciliation (stop full re-reads)
 
 ## Phase 3 — reach & polish

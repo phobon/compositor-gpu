@@ -59,6 +59,8 @@ export interface Compositor {
   stop(): void
   /** Force a re-read of the DOM + re-upload. */
   invalidate(): void
+  /** Hide or show the mirrored root's own paint (replace mode), reversibly. */
+  setSourceHidden(hidden: boolean): void
   destroy(): void
   /** True when a real GPU pipeline is active (false in passthrough). */
   readonly active: boolean

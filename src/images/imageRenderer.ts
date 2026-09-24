@@ -59,6 +59,8 @@ interface Cached {
   view: GPUTextureView
   texture: GPUTexture
   src: string
+  w: number
+  h: number
 }
 
 /**
@@ -138,11 +140,21 @@ export class ImagePass implements RenderPass {
     const [w, h] = naturalSize(src)
     if (w === 0 || h === 0) return null
     const key = srcKey(src)
+    const { device } = this.shared
     const cached = this.cache.get(src)
-    if (cached && cached.src === key) return cached
+    if (cached && cached.src === key && cached.w === w && cached.h === h) {
+      // Dynamic sources (<video>, <canvas>) change every frame — re-copy pixels.
+      if (rec.dynamic) {
+        device.queue.copyExternalImageToTexture(
+          { source: src as GPUCopyExternalImageSource },
+          { texture: cached.texture },
+          [w, h]
+        )
+      }
+      return cached
+    }
     cached?.texture.destroy()
 
-    const { device } = this.shared
     const texture = device.createTexture({
       size: [w, h],
       format: 'rgba8unorm-srgb',
@@ -156,7 +168,13 @@ export class ImagePass implements RenderPass {
       { texture },
       [w, h]
     )
-    const entry: Cached = { view: texture.createView(), texture, src: key }
+    const entry: Cached = {
+      view: texture.createView(),
+      texture,
+      src: key,
+      w,
+      h
+    }
     this.cache.set(src, entry)
     return entry
   }

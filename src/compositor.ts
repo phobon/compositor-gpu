@@ -26,6 +26,8 @@ export async function createCompositor(
   const root = options.root ?? document.body
   const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
   const fallback = options.fallback ?? 'passthrough'
+  const mode = options.mode ?? 'overlay'
+  const hideSource = options.hideSource ?? true
   setDebug(Boolean(options.debug))
 
   const canvas = document.createElement('canvas')
@@ -38,7 +40,9 @@ export async function createCompositor(
     zIndex: '2147483646'
   } satisfies Partial<CSSStyleDeclaration>)
   canvas.setAttribute('aria-hidden', 'true')
-  document.body.appendChild(canvas)
+  // Mount on <html>, not <body>: replace mode hides the mirrored root's
+  // paint via opacity, and the canvas must never be a descendant of it.
+  document.documentElement.appendChild(canvas)
 
   const gpu = await initGpu(canvas)
   if (!gpu) {
@@ -105,13 +109,13 @@ export async function createCompositor(
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
     // re-requests one once the viewport has a size.
     if (canvas.width === 0 || canvas.height === 0) {
-      if (animating) scheduler.request()
+      if (animating || scene.hasDynamic) scheduler.request()
       return
     }
 
     if (dt > 0) fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
     renderer.render(scene, ctx, dpr)
-    if (animating) scheduler.request()
+    if (animating || scene.hasDynamic) scheduler.request()
   }
 
   const scheduler = new FrameScheduler(frame)
@@ -138,6 +142,25 @@ export async function createCompositor(
     pendingReadFlags |= Dirty.LAYOUT
     scheduler.request()
   }
+  // Positions are absolute document space, so scrolling only needs a re-render
+  // (updated frame.scroll), not a re-read. Essential once the GPU IS the paint.
+  const onScroll = (): void => scheduler.request()
+
+  // Replace mode: hide the mirrored root's own paint while keeping its layout,
+  // focus, selection, hit-testing and a11y tree intact (opacity leaves all of
+  // those untouched). Reversible; the GPU canvas provides the pixels.
+  let sourceHidden = false
+  let savedOpacity = ''
+  const setSourceHidden = (hidden: boolean): void => {
+    if (hidden === sourceHidden || !(root instanceof HTMLElement)) return
+    sourceHidden = hidden
+    if (hidden) {
+      savedOpacity = root.style.opacity
+      root.style.opacity = '0'
+    } else {
+      root.style.opacity = savedOpacity
+    }
+  }
 
   log.info(`compositor ready — layers: ${[...layers].join(', ')}`)
 
@@ -155,12 +178,17 @@ export async function createCompositor(
       scheduler.start()
       sync.start()
       window.addEventListener('resize', onResize)
+      window.addEventListener('scroll', onScroll, { passive: true })
+      if (mode === 'replace' && hideSource) setSourceHidden(true)
     },
     stop() {
       scheduler.stop()
       sync.stop()
       window.removeEventListener('resize', onResize)
+      window.removeEventListener('scroll', onScroll)
+      setSourceHidden(false)
     },
+    setSourceHidden,
     invalidate() {
       pendingReadFlags = Dirty.ALL
       scheduler.request()
@@ -169,6 +197,8 @@ export async function createCompositor(
       scheduler.stop()
       sync.stop()
       window.removeEventListener('resize', onResize)
+      window.removeEventListener('scroll', onScroll)
+      setSourceHidden(false)
       renderer.destroy()
       gpu.root.destroy()
       canvas.remove()
@@ -184,6 +214,7 @@ function inert(): Compositor & { text: null } {
     start() {},
     stop() {},
     invalidate() {},
+    setSourceHidden() {},
     destroy() {}
   }
 }
