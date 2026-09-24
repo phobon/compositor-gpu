@@ -5,21 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>compositor-gpu playground</title>
     <style>
+      /* One variable file backs every weight; the compositor derives each
+         weight it sees by instancing the wght axis at runtime. */
       @font-face {
         font-family: 'Inter Play';
-        src: url('/inter-400.ttf');
-        font-weight: 400;
-      }
-      @font-face {
-        font-family: 'Inter Play';
-        src: url('/inter-700.ttf');
-        font-weight: 700;
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
       }
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         font-family: 'Inter Play', -apple-system, system-ui, sans-serif;
+        font-optical-sizing: none;
         background: #0b0b0c;
         color: #f2f2f2;
         -webkit-font-smoothing: antialiased;

@@ -4,7 +4,12 @@ import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
 import { resolveFontBytes } from '../fontSource'
 import type { TextBackend } from '../textRasterizer'
-import { type ParsedFont, parseFont } from './font'
+import {
+  type FontHandle,
+  type ParsedFont,
+  loadFontFile,
+  makeInstance
+} from './font'
 import { SLUG_WGSL } from './shaders'
 
 const GLYPH_FLOATS = 16 // rect(4)+offset(4)+color(4)+gref(4)
@@ -59,6 +64,16 @@ export class SlugText implements TextBackend {
   private faces: FaceEntry[] = []
   private loadedKeys = new Set<string>()
   private resolveCache = new Map<string, FaceEntry | null>()
+  // Variable fonts are kept as sources and instanced to exact weights on
+  // demand, so one file backs every weight the page uses.
+  private variableSources: {
+    family: string
+    italic: boolean
+    handle: FontHandle
+    min: number
+    max: number
+  }[] = []
+  private instanced = new Map<string, FaceEntry>()
 
   // Resident-glyph LRU. `cache` maps a glyph key to its slot; Map insertion
   // order is the recency order (oldest first), so the LRU victim is the first
@@ -146,21 +161,40 @@ export class SlugText implements TextBackend {
    * uploaded here — they load on demand at draw time (see ensureResident).
    */
   loadFontBuffer(buffer: ArrayBuffer, descriptor: FontDescriptor = {}): void {
-    const font = parseFont(buffer, this.faces.length)
-    this.faces.push({
-      idx: this.faces.length,
-      family: (descriptor.family ?? '').toLowerCase(),
-      weight: descriptor.weight ?? 400,
-      italic: descriptor.italic ?? false,
-      font
-    })
+    const handle = loadFontFile(buffer)
+    const family = (descriptor.family ?? '').toLowerCase()
+    const italic = descriptor.italic ?? false
     this.loadedKeys.add(faceKey(descriptor))
     this.resolveCache.clear()
     this.ready = true
+
+    if (handle.wght) {
+      this.variableSources.push({
+        family,
+        italic,
+        handle,
+        min: handle.wght.min,
+        max: handle.wght.max
+      })
+      log.info(
+        `SlugText: +variable ${descriptor.family ?? '(any)'} wght ${
+          handle.wght.min
+        }-${handle.wght.max}`
+      )
+      return
+    }
+
+    this.faces.push({
+      idx: this.faces.length,
+      family,
+      weight: descriptor.weight ?? 400,
+      italic,
+      font: makeInstance(handle, this.faces.length)
+    })
     log.info(
       `SlugText: +face ${descriptor.family ?? '(any)'} ${
         descriptor.weight ?? 400
-      }${descriptor.italic ? 'i' : ''} — ${this.faces.length} face(s)`
+      }${italic ? 'i' : ''} — ${this.faces.length} face(s)`
     )
   }
 
@@ -170,12 +204,31 @@ export class SlugText implements TextBackend {
     weight: number,
     italic: boolean
   ): FaceEntry | null {
-    if (this.faces.length === 0) return null
+    if (this.faces.length === 0 && this.variableSources.length === 0) {
+      return null
+    }
     const key = `${family}|${weight}|${italic ? 1 : 0}`
     const cached = this.resolveCache.get(key)
     if (cached !== undefined) return cached
 
     const fam = family.toLowerCase()
+    // Prefer a family-matching variable font (exact weight), then a static
+    // face, then any variable font as a last resort.
+    const best =
+      this.instanceFor(fam, weight, italic) ??
+      this.bestStatic(fam, weight, italic) ??
+      this.instanceFor(null, weight, italic)
+    this.resolveCache.set(key, best)
+    return best
+  }
+
+  /** Nearest static face by family, then italic, then weight. */
+  private bestStatic(
+    fam: string,
+    weight: number,
+    italic: boolean
+  ): FaceEntry | null {
+    if (this.faces.length === 0) return null
     let pool = this.faces.filter((f) => f.family === fam)
     if (pool.length === 0) pool = this.faces
     const italicPool = pool.filter((f) => f.italic === italic)
@@ -192,8 +245,43 @@ export class SlugText implements TextBackend {
         bestDiff = d
       }
     }
-    this.resolveCache.set(key, best)
     return best
+  }
+
+  /**
+   * Instance a variable source at (clamped) `weight`, caching one face per
+   * distinct weight. `fam === null` matches any source. Returns null if no
+   * variable source qualifies.
+   */
+  private instanceFor(
+    fam: string | null,
+    weight: number,
+    italic: boolean
+  ): FaceEntry | null {
+    let pool = this.variableSources
+    if (fam !== null) pool = pool.filter((v) => v.family === fam)
+    if (pool.length === 0) return null
+    const italicPool = pool.filter((v) => v.italic === italic)
+    const src = italicPool[0] ?? pool[0]
+    if (!src) return null
+
+    const w = Math.max(src.min, Math.min(src.max, weight))
+    const instKey = `${src.family}|${w}|${italic ? 1 : 0}`
+    const existing = this.instanced.get(instKey)
+    if (existing) return existing
+
+    const idx = this.faces.length
+    const face: FaceEntry = {
+      idx,
+      family: src.family,
+      weight: w,
+      italic,
+      font: makeInstance(src.handle, idx, { wght: w })
+    }
+    this.faces.push(face)
+    this.instanced.set(instKey, face)
+    log.info(`SlugText: instanced ${src.family || '(any)'} @ wght ${w}`)
+    return face
   }
 
   /**

@@ -18,7 +18,7 @@
 - [x] On-demand per-glyph band upload with an LRU
 - [x] Match per-element font-weight/style to a registered face (family +
       nearest-weight + italic resolution; multiple static faces)
-- [ ] Derive faces from a variable font by instancing (avoid shipping N files)
+- [x] Derive faces from a variable font by instancing (avoid shipping N files)
 
 ## Phase 2 — fidelity
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target

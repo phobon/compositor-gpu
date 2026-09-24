@@ -40,10 +40,64 @@ const BAND_COUNT = 16
  * implemented. Packing into GPU buffers and cmap coverage beyond the BMP are
  * the remaining work (see shaders.ts / README).
  */
-export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
+/** Variation axis coordinates in user units, e.g. `{ wght: 700 }`. */
+export type AxisCoords = Record<string, number>
+
+/** A parsed font file. Reuse one handle to derive many instances cheaply. */
+export interface FontHandle {
+  font: opentype.Font
+  upm: number
+  ascender: number
+  descender: number
+  /** Weight-axis range, present only for variable fonts with a `wght` axis. */
+  wght?: { min: number; def: number; max: number }
+}
+
+// @types/opentype.js predates variable-font support, so reach the runtime API
+// (font.variation, font.tables.fvar) through narrow casts.
+interface VariationApi {
+  getTransform(glyph: opentype.Glyph, coords: AxisCoords): opentype.Glyph
+}
+interface FvarAxis {
+  tag: string
+  minValue: number
+  defaultValue: number
+  maxValue: number
+}
+const variationOf = (font: opentype.Font): VariationApi =>
+  (font as unknown as { variation: VariationApi }).variation
+const fvarAxes = (font: opentype.Font): FvarAxis[] =>
+  (font.tables as unknown as { fvar?: { axes: FvarAxis[] } }).fvar?.axes ?? []
+
+/** Parse a font file once. Cheap to keep; instances share its tables. */
+export function loadFontFile(buffer: ArrayBuffer): FontHandle {
   const font = opentype.parse(buffer)
   const upm = font.unitsPerEm || 1000
+  const axis = fvarAxes(font).find((a) => a.tag === 'wght')
+  return {
+    font,
+    upm,
+    ascender: (font.ascender ?? upm * 0.8) / upm,
+    descender: (font.descender ?? -upm * 0.2) / upm,
+    wght: axis
+      ? { min: axis.minValue, def: axis.defaultValue, max: axis.maxValue }
+      : undefined
+  }
+}
+
+/**
+ * Derive a ParsedFont from a handle. With `coords` on a variable font, glyph
+ * outlines are interpolated to those axis coordinates (gvar), so one file backs
+ * many weights instead of shipping a static face per weight.
+ */
+export function makeInstance(
+  handle: FontHandle,
+  fontId: number,
+  coords?: AxisCoords
+): ParsedFont {
+  const { font, upm } = handle
   const cache = new Map<number, GlyphBands>()
+  const vary = coords !== undefined && handle.wght !== undefined
 
   const glyphForCodePoint = (cp: number): number => {
     const g = font.charToGlyph(String.fromCodePoint(cp))
@@ -53,7 +107,8 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
   const glyph = (index: number): GlyphBands => {
     const cached = cache.get(index)
     if (cached) return cached
-    const g = font.glyphs.get(index)
+    const raw = font.glyphs.get(index)
+    const g = vary ? variationOf(font).getTransform(raw, coords) : raw
     const bb = g.getBoundingBox()
     const quads = outlineToQuads(g, bb)
     const bands = bucketIntoBands(quads)
@@ -75,11 +130,16 @@ export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
   return {
     fontId,
     unitsPerEm: upm,
-    ascender: (font.ascender ?? upm * 0.8) / upm,
-    descender: (font.descender ?? -upm * 0.2) / upm,
+    ascender: handle.ascender,
+    descender: handle.descender,
     glyphForCodePoint,
     glyph
   }
+}
+
+/** Parse a static font into a single ParsedFont (the default, non-varied). */
+export function parseFont(buffer: ArrayBuffer, fontId: number): ParsedFont {
+  return makeInstance(loadFontFile(buffer), fontId)
 }
 
 /**
