@@ -33,13 +33,14 @@ export function readOpacity(s: CSSStyleDeclaration): number {
 
 /**
  * Build a BoxRecord for an element's background + border, or null when it
- * paints nothing we care about. Radii/border are read from computed style.
- * `opacity` and `z` are placeholders the walker overwrites (effective
+ * paints nothing we care about. Radii/border are read from computed style;
+ * `rect` is the element's doc-space border box, read once by the caller.
+ * `opacity` and `z` are placeholders the reader overwrites (effective
  * opacity and global paint order aren't known until the stacking pass).
  */
 export function readBox(
-  el: Element,
   s: CSSStyleDeclaration,
+  rect: Rect,
   id: number
 ): BoxRecord | null {
   if (s.visibility === 'hidden' || s.display === 'none') return null
@@ -50,8 +51,6 @@ export function readBox(
   const hasFill = fill.a > 0.001
   const hasBorder = borderWidth > 0 && borderColor.a > 0.001
   if (!hasFill && !hasBorder) return null
-
-  const rect = toDocRect(el.getBoundingClientRect())
   if (rect.width <= 0 || rect.height <= 0) return null
 
   return {
@@ -70,13 +69,13 @@ const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])
 
 /**
  * The padding-box clip rect (document space) an element imposes on its content
- * when it clips overflow, or null when overflow is visible.
+ * when it clips overflow, or null when overflow is visible. `r` is the
+ * element's doc-space border box.
  */
-export function clipRectFor(el: Element, s: CSSStyleDeclaration): Rect | null {
+export function clipRectFor(s: CSSStyleDeclaration, r: Rect): Rect | null {
   if (!CLIP_OVERFLOW.has(s.overflowX) && !CLIP_OVERFLOW.has(s.overflowY)) {
     return null
   }
-  const r = toDocRect(el.getBoundingClientRect())
   const bl = px(s.borderLeftWidth)
   const bt = px(s.borderTopWidth)
   const br = px(s.borderRightWidth)
@@ -92,12 +91,14 @@ export function clipRectFor(el: Element, s: CSSStyleDeclaration): Rect | null {
 /**
  * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
  * null when it isn't ready to sample. Canvas and video are marked dynamic so
- * their textures re-upload every frame. `opacity` and `z` are placeholders
- * the walker overwrites, as in readBox.
+ * their textures re-upload every frame. `rect` is the element's doc-space
+ * border box. `opacity` and `z` are placeholders the reader overwrites, as
+ * in readBox.
  */
 export function readImageRecord(
   el: Element,
   s: CSSStyleDeclaration,
+  rect: Rect,
   id: number,
   clip: Rect | null
 ): ImageRecord | null {
@@ -120,7 +121,6 @@ export function readImageRecord(
   } else {
     return null
   }
-  const rect = toDocRect(el.getBoundingClientRect())
   if (rect.width <= 0 || rect.height <= 0) return null
   const of = s.objectFit
   return {

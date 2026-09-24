@@ -34,6 +34,8 @@ async function boot(): Promise<void> {
       $('s-images').textContent = String(s.images)
       $('s-uploads').textContent = String(s.uploads)
       $('s-batches').textContent = String(s.batches)
+      $('s-read').textContent = String(s.readElements)
+      $('s-partial').textContent = String(s.partialReads)
       $('s-fps').textContent = s.fps.toFixed(0)
       const ready = compositor.text?.ready ?? false
       $('s-text').textContent = ready ? 'ready' : 'loading'
@@ -80,6 +82,26 @@ async function boot(): Promise<void> {
     else compositor.stop()
     toggle.setAttribute('aria-pressed', String(running))
     toggle.textContent = running ? 'GPU layer on' : 'GPU layer off'
+  })
+
+  // Mutation demo buttons
+  const mText = $('m-text')
+  const mList = $('m-list')
+  const mCard = document.querySelector('.mutdemo') as HTMLElement | null
+
+  $('b-edit').addEventListener('click', () => {
+    mText.textContent =
+      mText.textContent === 'Hello World' ? 'Hi there' : 'Hello World'
+  })
+
+  $('b-class').addEventListener('click', () => {
+    mCard?.classList.toggle('hot')
+  })
+
+  $('b-add').addEventListener('click', () => {
+    const li = document.createElement('li')
+    li.textContent = `Item ${mList.children.length + 1}`
+    mList.appendChild(li)
   })
 }
 

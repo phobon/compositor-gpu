@@ -29,7 +29,7 @@
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
 - [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
 - [x] Per-layer dirty tracking (upload only changed layers; `uploads` stat)
-- [ ] Sub-tree reconciliation: stop full DOM re-reads on every mutation
+- [x] Sub-tree reconciliation: mutations re-read only their boundary subtree; escalates to a full read when the boundary's rect changes (persistent element tree, CPU-only re-flatten)
 
 ## Phase 3 — reach & polish
 - [ ] Culling via IntersectionObserver in the draw path

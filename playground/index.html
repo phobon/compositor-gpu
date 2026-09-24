@@ -151,6 +151,32 @@
         margin-top: 1rem;
         font-style: italic;
       }
+      /* Colour-only change: same geometry, so the re-read stays partial. */
+      .mutdemo.hot {
+        background: #7f1d1d;
+        border-color: #dc2626;
+        color: #fecaca;
+      }
+      .mutdemo ul {
+        margin: 0.5rem 0 0 1.5rem;
+        padding: 0;
+      }
+      .mutdemo li {
+        margin: 0.25rem 0;
+      }
+      .mutdemo button {
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        border: 1px solid #33333a;
+        background: #22222a;
+        color: #f2f2f2;
+        font: inherit;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      .mutdemo button:hover {
+        background: #2a2a32;
+      }
 
       /* GPU-only A/B is driven by compositor.setSourceHidden() (replace mode):
          the DOM stays selectable and accessible while the GPU layer stands in
@@ -225,6 +251,27 @@
       </div>
       <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
 
+      <h2>Mutations re-read only their subtree</h2>
+      <!-- Wrapper: an attribute change on the card scopes the re-read to its
+           parent, so the parent must not be the root or the read is full. -->
+      <div class="mutwrap">
+      <div class="mutdemo card">
+        <p>
+          Text: <span id="m-text">Hello World</span>
+        </p>
+        <ul id="m-list">
+          <li>First item</li>
+          <li>Second item</li>
+        </ul>
+        <div style="display: flex; gap: 8px; margin-top: 1rem;">
+          <button id="b-edit">Edit text</button>
+          <button id="b-class">Toggle colour</button>
+          <button id="b-add">Add item</button>
+        </div>
+      </div>
+      </div>
+      <p class="hint">Watch the <b>read</b> stat — the first two stay small, the third jumps to the full element count.</p>
+
       <h2>Live canvas mirrors</h2>
       <canvas class="livecanvas" width="480" height="160"></canvas>
     </div>
@@ -238,6 +285,8 @@
       <div class="row"><span>images</span><b id="s-images">0</b></div>
       <div class="row"><span>uploads</span><b id="s-uploads">0</b></div>
       <div class="row"><span>batches</span><b id="s-batches">0</b></div>
+      <div class="row"><span>read</span><b id="s-read">0</b></div>
+      <div class="row"><span>partial</span><b id="s-partial">0</b></div>
       <div class="row"><span>text</span><b id="s-text">…</b></div>
       <div class="row"><span>fps</span><b id="s-fps">0</b></div>
       <button id="b-gpuonly" aria-pressed="false">GPU-only</button>

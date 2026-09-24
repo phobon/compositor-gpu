@@ -32,7 +32,7 @@ scaffold. Read `ROADMAP.md` before assuming a feature is missing by accident.
 
 ## Architecture
 
-Data flows one way: **DOM → walker → Scene → RenderPass → canvas.** Observers
+Data flows one way: **DOM → reader → Scene → RenderPass → canvas.** Observers
 only set dirty flags; they never touch GPU state. One rAF drains them.
 
 ### Two coordinate spaces
@@ -45,11 +45,15 @@ and never make scroll a reason to re-walk the DOM.
 
 ### The frame
 `compositor.ts` owns the loop. Per frame: take dirty flags → if
-LAYOUT/STYLE/CONTENT, `readSubtree()` (the only place DOM layout is read) → run
+LAYOUT/STYLE/CONTENT call `SceneReader.fullRead()`, if MUTATION call
+`partialRead(scopes)` (the only places DOM layout is read) in `dom/tree.ts` → run
 `onGlyph`/`onFrame` hooks → `renderer.render()`. All DOM reads happen in one
-batched phase before any GPU write. **Never call `getBoundingClientRect` /
-`getClientRects` from a pass, a shader upload, or anything downstream of the
-reader** — per-glyph rects are already a forced-reflow hazard.
+batched phase before any GPU write. A partial read escalates to a full read when
+the mutated element's border-box rect changed (siblings could move); inline and
+`display:contents` elements are never boundaries. **Never call
+`getBoundingClientRect` / `getClientRects` from a pass, a shader upload, or
+anything downstream of the reader** — per-glyph rects are already a
+forced-reflow hazard.
 
 Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
 `upload()` runs only when its layer is dirty. `onGlyph` dirties the text layer

@@ -22,19 +22,20 @@ function graphemes(text: string): string[] {
  * NOTE: getClientRects here is a forced layout read. The caller MUST batch all
  * of these before any GPU write in a frame (see observer/sync).
  *
+ * `s` is the computed style of the text node's parent element.
+ *
  * `glyphId` is set to the grapheme's first code point as a placeholder; the
  * Slug font stage remaps it through the font cmap to a real glyph index.
  */
 export function readTextNode(
   node: Text,
-  parent: Element,
+  s: CSSStyleDeclaration,
   runId: number,
   fontId: number,
   startIndex: number
 ): GlyphRun | null {
   const text = node.nodeValue
   if (!text || !text.trim()) return null
-  const s = getComputedStyle(parent)
   const color = parseColor(s.color)
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const fontFamily = (s.fontFamily.split(',')[0] ?? '')

@@ -1,6 +1,6 @@
 import { BoxPass } from './boxes/boxRenderer'
 import { Dirty, DomSync } from './dom/observer'
-import { readSubtree } from './dom/walker'
+import { SceneReader } from './dom/tree'
 import { initGpu } from './gpu/device'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
@@ -67,6 +67,7 @@ export async function createCompositor(
   })
 
   const scene = new Scene()
+  const reader = new SceneReader(root, scene, layers)
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0
@@ -78,12 +79,15 @@ export async function createCompositor(
   resizeCanvas()
 
   const frame = (time: number, dt: number): void => {
-    const flags = sync.take() | pendingReadFlags
+    const dirty = sync.take()
+    const flags = dirty.flags | pendingReadFlags
     pendingReadFlags = Dirty.NONE
 
     if (flags & Dirty.LAYOUT) resizeCanvas()
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
-      readSubtree(root, scene, layers)
+      reader.fullRead()
+    } else if (flags & Dirty.MUTATION) {
+      reader.partialRead(dirty.scopes)
     }
 
     const ctx: FrameContext = {
@@ -176,6 +180,8 @@ export async function createCompositor(
       glyphs: scene.glyphCount(),
       uploads: renderer.lastUploads,
       batches: renderer.lastBatches,
+      readElements: reader.readElements,
+      partialReads: reader.partialReads,
       fps
     }),
     start() {
@@ -221,6 +227,8 @@ function inert(): Compositor & { text: null } {
       glyphs: 0,
       uploads: 0,
       batches: 0,
+      readElements: 0,
+      partialReads: 0,
       fps: 0
     }),
     start() {},

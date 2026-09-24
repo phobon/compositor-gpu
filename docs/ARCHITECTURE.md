@@ -89,7 +89,7 @@ invalidations, updates buffers, and draws.
 | `compositor.ts` | Public lifecycle: `createCompositor()`, mount/unmount, start/stop, options. Owns the rAF loop and wires everything together. |
 | `gpu/device.ts` | WebGPU adapter/device init via **TypeGPU**, canvas configuration, resize, DPR, feature detection + graceful bail. |
 | `gpu/renderer.ts` | Frame orchestration: begins a render pass, runs each enabled pass, submits. Holds shared uniforms (viewport, scroll, time). |
-| `dom/walker.ts` | Traverses a root element, decides what each node contributes (box / image / text), produces raw draw intents. |
+| `dom/tree.ts` | Persistent element tree reader: fullRead() walks the DOM and rebuilds the tree; partialRead(scopes) re-reads only the subtrees a mutation could have changed. Escalates to a full read when a mutated element's border-box rect changes (siblings could move). |
 | `dom/styles.ts` | Reads `getComputedStyle` and normalises the subset we paint (background, border-radius, colour, opacity, transform, clip, z-order). |
 | `dom/textRuns.ts` | Extracts per-glyph geometry from text nodes using `Range.getClientRects()` / segmentation, mapped to font + colour. The heart of text fidelity. |
 | `dom/observer.ts` | Resize/Mutation/Intersection observers + scroll + `document.fonts.ready`; coalesces into invalidation flags. |
@@ -181,11 +181,15 @@ rects is the whole trick behind "perfectly replicating the HTML text."
 ## 6. The sync loop
 
 ```
-on any observer fire ─► set dirty flags (LAYOUT | STYLE | CONTENT | SCROLL)
+on any observer fire ─► set dirty flags (LAYOUT | STYLE | CONTENT | MUTATION | SCROLL)
                         request a frame (rAF), coalesced
 
 frame():
-  if LAYOUT|STYLE|CONTENT:  reader.reReadDirtySubtree()   // batched DOM reads
+  if LAYOUT|STYLE|CONTENT:  reader.fullRead()             // batched DOM reads
+                            scene.rebuildDirty()           // update records
+                            renderer.uploadDirtyInstances()// update GPU buffers
+  if MUTATION:              reader.partialRead(scopes)     // re-read boundaries
+                            (escalates to fullRead if a boundary's rect changed)
                             scene.rebuildDirty()           // update records
                             renderer.uploadDirtyInstances()// update GPU buffers
   if SCROLL:                renderer.setScrollUniform()    // one uniform write
@@ -194,7 +198,8 @@ frame():
 
 - **ResizeObserver** on the root (and key subtrees) → LAYOUT.
 - **MutationObserver** (childList, characterData, attributes: style/class) →
-  CONTENT/STYLE, scoped to the mutated subtree.
+  MUTATION, scoped to the mutated subtree's boundaries; escalates to a full read
+  if a boundary's border-box rect changed.
 - **IntersectionObserver** → cull offscreen records cheaply; only on-screen
   instances are drawn.
 - **scroll** (passive) → SCROLL only (uniform, no re-read).

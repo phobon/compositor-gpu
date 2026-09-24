@@ -55,6 +55,10 @@ export interface CompositorStats {
   uploads: number
   /** Draw batches issued in the most recent frame. */
   batches: number
+  /** Elements whose style/geometry the most recent DOM read visited. */
+  readElements: number
+  /** Running count of mutation-scoped (non-full) DOM reads. */
+  partialReads: number
   fps: number
 }
 
