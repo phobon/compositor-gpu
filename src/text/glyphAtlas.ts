@@ -97,6 +97,32 @@ export class GlyphAtlas {
     return entry
   }
 
+  /**
+   * Blurred `text-shadow` silhouette of a grapheme (or a ligature's joined
+   * text), rasterised white so any shadow colour can tint it: Canvas 2D's
+   * own shadow (σ = blur / 2, as CSS) of text drawn off-cell. `blurPx` is
+   * the device-px blur radius (> 0). The cell is padded by 1.5 × blur, and
+   * `leftPx`/`cellAscPx` include that pad, so placement matches `get`.
+   */
+  getShadow(
+    text: string,
+    stack: string,
+    weight: number,
+    italic: boolean,
+    sizePx: number,
+    blurPx: number
+  ): AtlasEntry | null {
+    const key = `S|${text}|${stack}|${weight}|${italic ? 1 : 0}|${sizePx}|${blurPx}`
+    const hit = this.entries.get(key)
+    if (hit !== undefined) return hit
+    const font = `${italic ? 'italic ' : ''}${weight} ${sizePx}px ${
+      stack || 'sans-serif'
+    }`
+    const entry = this.rasterise(text, font, '#fff', true, blurPx)
+    this.entries.set(key, entry)
+    return entry
+  }
+
   private ensureCanvas(): Ctx2D | null {
     if (this.ctx) return this.ctx
     const s = this.size
@@ -115,11 +141,14 @@ export class GlyphAtlas {
     grapheme: string,
     font: string,
     fill: string,
-    tint: boolean
+    tint: boolean,
+    blurPx = 0
   ): AtlasEntry | null {
     const ctx = this.ensureCanvas()
     if (!ctx) return null
     const pad = ATLAS_PAD
+    // Room for the shadow's Gaussian tail (3σ) on every side.
+    const bp = blurPx > 0 ? Math.ceil(blurPx * 1.5) : 0
     ctx.font = font
     ctx.textBaseline = 'alphabetic'
     const m = ctx.measureText(grapheme)
@@ -129,16 +158,37 @@ export class GlyphAtlas {
     const ascentPx = m.fontBoundingBoxAscent
     const descentPx = m.fontBoundingBoxDescent
     // Whole-px pen origin within the cell keeps texels on the device-px grid.
-    const leftPx = Math.max(0, Math.ceil(inkL))
-    const cellAscPx = Math.ceil(Math.max(ascentPx, m.actualBoundingBoxAscent))
-    const cellDesc = Math.ceil(Math.max(descentPx, m.actualBoundingBoxDescent))
-    const w = leftPx + Math.ceil(Math.max(m.width, inkR, 0)) + 2 * pad
+    const leftPx = Math.max(0, Math.ceil(inkL)) + bp
+    const cellAscPx =
+      Math.ceil(Math.max(ascentPx, m.actualBoundingBoxAscent)) + bp
+    const cellDesc =
+      Math.ceil(Math.max(descentPx, m.actualBoundingBoxDescent)) + bp
+    const w = leftPx + Math.ceil(Math.max(m.width, inkR, 0)) + bp + 2 * pad
     const h = cellAscPx + cellDesc + 2 * pad
 
     const spot = this.pack(w, h)
     if (!spot) return null
     ctx.fillStyle = fill
-    ctx.fillText(grapheme, spot.x + pad + leftPx, spot.y + pad + cellAscPx)
+    const x = spot.x + pad + leftPx
+    const y = spot.y + pad + cellAscPx
+    if (bp > 0) {
+      // Only the shadow lands in the cell: the text itself is drawn far to
+      // the left and the shadow offset brings it back. Clipped to the cell
+      // so the tail never bleeds into a neighbour.
+      const far = 10000
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(spot.x, spot.y, w, h)
+      ctx.clip()
+      ctx.shadowColor = '#fff'
+      ctx.shadowBlur = blurPx
+      ctx.shadowOffsetX = far
+      ctx.shadowOffsetY = 0
+      ctx.fillText(grapheme, x - far, y)
+      ctx.restore()
+    } else {
+      ctx.fillText(grapheme, x, y)
+    }
     this.dirty = true
     const S = this.size
     return {

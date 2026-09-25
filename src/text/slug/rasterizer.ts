@@ -1,11 +1,16 @@
 import type { Shared } from '../../gpu/frame'
-import type { Glyph } from '../../scene/records'
+import type { Glyph, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
 import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlasShader'
 import { resolveFontBytes } from '../fontSource'
-import { ATLAS_PAD, GlyphAtlas, isColorGrapheme } from '../glyphAtlas'
+import {
+  ATLAS_PAD,
+  type AtlasEntry,
+  GlyphAtlas,
+  isColorGrapheme
+} from '../glyphAtlas'
 import type { TextBackend } from '../textRasterizer'
 import {
   type FontHandle,
@@ -88,6 +93,14 @@ export class SlugText implements TextBackend {
   private atlasBindGroup: GPUBindGroup | null = null
   private atlasGen = -1
   private slugLive = 0
+  /** Non-zero atlas quads (fallback glyphs + atlas-drawn text shadows). */
+  private atlasLive = 0
+  /** Glyphs + text-shadow instances written by the last upload. */
+  private instances = 0
+  /** Per glyph index: start of its run's shadow range (see fill). */
+  private shadowStart = new Uint32Array(0)
+  /** The current run's doc-space clip (minX, minY, maxX, maxY). */
+  private readonly clip = new Float64Array(4)
   // face.idx * 2^21 + code point -> glyph index (0 = .notdef).
   private gidCache = new Map<number, number>()
   // Per-run Slug glyph ids (0 = fallback), reused across runs.
@@ -526,28 +539,42 @@ export class SlugText implements TextBackend {
 
   upload(scene: Scene): void {
     let total = 0
-    for (const run of scene.runs) total += run.glyphs.length
+    let shadowTotal = 0
+    for (const run of scene.runs) {
+      const n = run.glyphs.length
+      total += n
+      shadowTotal += n * (run.textShadows?.length ?? 0)
+    }
     this.count = 0
+    this.instances = 0
     this.slugLive = 0
+    this.atlasLive = 0
     this.fallbackCount = 0
     this.ligatureCount = 0
     if (total === 0) return
-    this.ensureGlyphCapacity(total)
+    this.ensureGlyphCapacity(total + shadowTotal)
+    if (this.shadowStart.length < total + 1) {
+      this.shadowStart = new Uint32Array(
+        Math.max(total + 1, this.shadowStart.length * 2)
+      )
+    }
     this.frameId++
     this.overflowed = false
     const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
     // An atlas grow/clear mid-frame invalidates entries already written this
     // frame; one re-pack against the fresh atlas fixes that.
     const epoch = this.atlas.epoch
-    let n = this.fill(scene, dpr)
-    if (this.atlas.epoch !== epoch) n = this.fill(scene, dpr)
+    let n = this.fill(scene, dpr, total)
+    if (this.atlas.epoch !== epoch) n = this.fill(scene, dpr, total)
     this.count = n
+    this.instances = total + shadowTotal
     if (this.overflowed) {
       log.info(
         `SlugText: glyph cache overflow — >${SLOT_COUNT} distinct glyphs in one frame; raise SLOT_COUNT`
       )
     }
     if (n === 0) return
+    const m = this.instances
     const queue = this.shared.device.queue
     if (this.slugLive > 0) {
       queue.writeBuffer(
@@ -555,10 +582,10 @@ export class SlugText implements TextBackend {
         0,
         this.glyphBytes,
         0,
-        n * GLYPH_FLOATS * 4
+        m * GLYPH_FLOATS * 4
       )
     }
-    if (this.fallbackCount > 0) {
+    if (this.atlasLive > 0) {
       this.atlas.flush(this.shared.device)
       this.ensureAtlasBindGroup()
       queue.writeBuffer(
@@ -566,47 +593,67 @@ export class SlugText implements TextBackend {
         0,
         this.quadF32.buffer,
         0,
-        n * ATLAS_QUAD_FLOATS * 4
+        m * ATLAS_QUAD_FLOATS * 4
       )
     }
   }
 
-  /** Write one Slug instance and one atlas quad per glyph; returns count. */
-  private fill(scene: Scene, dpr: number): number {
+  /**
+   * Write one Slug instance and one atlas quad per glyph (indices
+   * `[0, total)`, scene glyph order), then its text-shadow instances after
+   * all glyphs: run r's shadows fill `[base_r, base_r + S·n)` layer-major
+   * (layer k = CSS layer S−1−k, so bottom-most first; glyph j of layer k at
+   * `base_r + k·n + j`), again one real + one zero instance per pipeline.
+   * `shadowStart[g]` is base_r for a run's first glyph and the run's end
+   * for the rest, so a batch of whole runs `[first, first + count)` owns the
+   * shadow range `[shadowStart[first], shadowStart[first + count])`.
+   * Returns the glyph count.
+   */
+  private fill(scene: Scene, dpr: number, total: number): number {
     const f = this.glyphF32
     const u = this.glyphU32
     const q = this.quadF32
     const pad = ATLAS_PAD / dpr
+    const starts = this.shadowStart
     this.slugLive = 0
+    this.atlasLive = 0
     this.fallbackCount = 0
     this.ligatureCount = 0
     const ids = this.idScratch
     let i = 0
+    let sCursor = total
     for (const run of scene.runs) {
       const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
       const font = face?.font
       const ascPx = font ? font.ascender : 0
       const descPx = font ? -font.descender : 0
       const cl = run.clip
-      const clMinX = cl ? cl.x : -1e9
-      const clMinY = cl ? cl.y : -1e9
-      const clMaxX = cl ? cl.x + cl.width : 1e9
-      const clMaxY = cl ? cl.y + cl.height : 1e9
+      const clip = this.clip
+      clip[0] = cl ? cl.x : -1e9
+      clip[1] = cl ? cl.y : -1e9
+      clip[2] = cl ? cl.x + cl.width : 1e9
+      clip[3] = cl ? cl.y + cl.height : 1e9
       const alpha = run.opacity
       // Italic requested but the face is upright: synthesise oblique like
       // the browser does (a shear about the baseline; Slug only — the atlas
       // rasterises with `italic` in the font string, so Canvas 2D does it).
       const oblique = face && run.italic && !face.italic ? OBLIQUE : 0
       const glyphs = run.glyphs
-      ids.length = glyphs.length
-      for (let j = 0; j < glyphs.length; j++) {
+      const nGlyphs = glyphs.length
+      const shadows = run.textShadows ?? NO_SHADOWS
+      const S = shadows.length
+      const runBase = sCursor
+      sCursor += S * nGlyphs
+      ids.length = nGlyphs
+      for (let j = 0; j < nGlyphs; j++) {
         const g = glyphs[j] as Glyph
         ids[j] = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
       }
       // Components of a ligature already drawn by an earlier instance.
       let consumed = 0
-      for (let j = 0; j < glyphs.length; j++) {
+      for (let j = 0; j < nGlyphs; j++) {
         const g = glyphs[j] as Glyph
+        starts[i] = j === 0 ? runBase : sCursor
         const base = i * GLYPH_FLOATS
         const qb = i * ATLAS_QUAD_FLOATS
         i++
@@ -614,12 +661,15 @@ export class SlugText implements TextBackend {
           consumed--
           f.fill(0, base, base + GLYPH_FLOATS)
           q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
+          for (let k = 0; k < S; k++)
+            this.zeroInstance(runBase + k * nGlyphs + j)
           continue
         }
         let gi = ids[j] ?? 0
         // Local width of the drawn box: the union of a ligature's component
         // rects in the first component's frame (the pen origin is shared).
         let w = g.local.w
+        let text = g.text
         if (gi > 0 && font && run.ligatures) {
           const lig = font.ligatureAt(ids, j)
           const right = lig ? ligatureRight(glyphs, j, lig.len) : null
@@ -628,8 +678,13 @@ export class SlugText implements TextBackend {
             w = right
             consumed = lig.len - 1
             this.ligatureCount++
+            if (S > 0) {
+              for (let k = 1; k < lig.len; k++)
+                text += glyphs[j + k]?.text ?? ''
+            }
           }
         }
+        const sizePx = Math.max(1, Math.round(g.fontSize * dpr))
         // Placement runs in the glyph's local line-box frame (origin at its
         // top-left, size g.local); xform maps it to doc space.
         const xf = g.xform
@@ -665,10 +720,10 @@ export class SlugText implements TextBackend {
           u[base + 13] = slot >= 0 ? BAND_COUNT : 0
           u[base + 14] = 0
           u[base + 15] = 0
-          f[base + 16] = clMinX
-          f[base + 17] = clMinY
-          f[base + 18] = clMaxX
-          f[base + 19] = clMaxY
+          f[base + 16] = clip[0]
+          f[base + 17] = clip[1]
+          f[base + 18] = clip[2]
+          f[base + 19] = clip[3]
           // xform · shear, the shear [1, 0, -k, 1] taken about local y =
           // baseline: x' = x + k (baseline - y).
           const kb = oblique * baseline
@@ -681,6 +736,34 @@ export class SlugText implements TextBackend {
           f[base + 26] = 0
           f[base + 27] = 0
           if (slot >= 0) this.slugLive++
+          for (let k = 0; k < S; k++) {
+            const sh = shadows[S - 1 - k] as TextShadow
+            const si = runBase + k * nGlyphs + j
+            if (sh.blur > 0) {
+              f.fill(0, si * GLYPH_FLOATS, (si + 1) * GLYPH_FLOATS)
+              const e = this.atlas.getShadow(
+                text,
+                run.fontStack,
+                run.fontWeight,
+                run.italic,
+                sizePx,
+                shadowBlurPx(sh.blur, dpr)
+              )
+              this.putQuad(si, e, g, dpr, pad, sh.color, alpha, sh.ox, sh.oy)
+              continue
+            }
+            // Hard shadow: the same Slug glyph, moved and recoloured. The
+            // rect is pre-shear, so pre-compensate x for the oblique.
+            const sb = si * GLYPH_FLOATS
+            q.fill(0, si * ATLAS_QUAD_FLOATS, (si + 1) * ATLAS_QUAD_FLOATS)
+            u.copyWithin(sb, base, base + GLYPH_FLOATS)
+            f[sb + 0] = (f[base + 0] ?? 0) + sh.ox + oblique * sh.oy
+            f[sb + 1] = (f[base + 1] ?? 0) + sh.oy
+            f[sb + 8] = sh.color.r
+            f[sb + 9] = sh.color.g
+            f[sb + 10] = sh.color.b
+            f[sb + 11] = sh.color.a * alpha
+          }
           continue
         }
 
@@ -691,58 +774,107 @@ export class SlugText implements TextBackend {
           run.fontStack,
           run.fontWeight,
           run.italic,
-          Math.max(1, Math.round(g.fontSize * dpr)),
+          sizePx,
           g.color
         )
-        if (!e) {
-          q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
-          continue
+        this.putQuad(i - 1, e, g, dpr, pad, g.color, alpha, 0, 0, !e?.tint)
+        if (e) this.fallbackCount++
+        for (let k = 0; k < S; k++) {
+          const sh = shadows[S - 1 - k] as TextShadow
+          const si = runBase + k * nGlyphs + j
+          f.fill(0, si * GLYPH_FLOATS, (si + 1) * GLYPH_FLOATS)
+          const se = !e
+            ? null
+            : sh.blur > 0
+              ? this.atlas.getShadow(
+                  g.text,
+                  run.fontStack,
+                  run.fontWeight,
+                  run.italic,
+                  sizePx,
+                  shadowBlurPx(sh.blur, dpr)
+                )
+              : e
+          this.putQuad(si, se, g, dpr, pad, sh.color, alpha, sh.ox, sh.oy)
         }
-        // Same line-box centring rule as Slug, with the browser's metrics,
-        // in the local frame. Untransformed glyphs are snapped to device px
-        // so texels land 1:1 on the target; transformed ones can't be.
-        const asc = e.ascentPx / dpr
-        const desc = e.descentPx / dpr
-        let baseline = (g.local.h - (asc + desc)) / 2 + asc
-        let penX = 0
-        const tx = xf[4]
-        const ty = xf[5]
-        if (xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1) {
-          baseline = Math.round((ty + baseline) * dpr) / dpr - ty
-          penX = Math.round(tx * dpr) / dpr - tx
-        }
-        q[qb + 0] = penX - e.leftPx / dpr - pad
-        q[qb + 1] = baseline - e.cellAscPx / dpr - pad
-        q[qb + 2] = e.w / dpr
-        q[qb + 3] = e.h / dpr
-        q[qb + 4] = e.u0
-        q[qb + 5] = e.v0
-        q[qb + 6] = e.u1
-        q[qb + 7] = e.v1
-        q[qb + 8] = g.color.r
-        q[qb + 9] = g.color.g
-        q[qb + 10] = g.color.b
-        q[qb + 11] = g.color.a * alpha
-        q[qb + 12] = e.tint ? 1 : 0
-        q[qb + 13] = 0
-        q[qb + 14] = 0
-        q[qb + 15] = 0
-        q[qb + 16] = clMinX
-        q[qb + 17] = clMinY
-        q[qb + 18] = clMaxX
-        q[qb + 19] = clMaxY
-        q[qb + 20] = xf[0]
-        q[qb + 21] = xf[1]
-        q[qb + 22] = xf[2]
-        q[qb + 23] = xf[3]
-        q[qb + 24] = tx + g.offset.x
-        q[qb + 25] = ty + g.offset.y
-        q[qb + 26] = 0
-        q[qb + 27] = 0
-        this.fallbackCount++
       }
     }
+    starts[i] = sCursor
     return i
+  }
+
+  /** Zero both pipelines' instance `k`. */
+  private zeroInstance(k: number): void {
+    this.glyphF32.fill(0, k * GLYPH_FLOATS, (k + 1) * GLYPH_FLOATS)
+    this.quadF32.fill(0, k * ATLAS_QUAD_FLOATS, (k + 1) * ATLAS_QUAD_FLOATS)
+  }
+
+  /**
+   * Write atlas quad `k` for entry `e` (zero when null) at glyph `g`'s pen
+   * origin + (dx, dy) local px. Same line-box centring rule as Slug, with
+   * the browser's metrics; untransformed glyphs are snapped to device px so
+   * texels land 1:1 on the target. `colour`: keep the texel colours (colour
+   * glyphs) instead of tinting coverage by `color`.
+   */
+  private putQuad(
+    k: number,
+    e: AtlasEntry | null,
+    g: Glyph,
+    dpr: number,
+    pad: number,
+    color: RGBA,
+    alpha: number,
+    dx: number,
+    dy: number,
+    colour = false
+  ): void {
+    const q = this.quadF32
+    const qb = k * ATLAS_QUAD_FLOATS
+    if (!e) {
+      q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
+      return
+    }
+    const xf = g.xform
+    const asc = e.ascentPx / dpr
+    const desc = e.descentPx / dpr
+    let baseline = (g.local.h - (asc + desc)) / 2 + asc
+    let penX = 0
+    const tx = xf[4]
+    const ty = xf[5]
+    if (xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1) {
+      baseline = Math.round((ty + baseline) * dpr) / dpr - ty
+      penX = Math.round(tx * dpr) / dpr - tx
+    }
+    const clip = this.clip
+    q[qb + 0] = penX + dx - e.leftPx / dpr - pad
+    q[qb + 1] = baseline + dy - e.cellAscPx / dpr - pad
+    q[qb + 2] = e.w / dpr
+    q[qb + 3] = e.h / dpr
+    q[qb + 4] = e.u0
+    q[qb + 5] = e.v0
+    q[qb + 6] = e.u1
+    q[qb + 7] = e.v1
+    q[qb + 8] = color.r
+    q[qb + 9] = color.g
+    q[qb + 10] = color.b
+    q[qb + 11] = color.a * alpha
+    q[qb + 12] = colour ? 0 : 1
+    q[qb + 13] = 0
+    q[qb + 14] = 0
+    q[qb + 15] = 0
+    q[qb + 16] = clip[0] ?? -1e9
+    q[qb + 17] = clip[1] ?? -1e9
+    q[qb + 18] = clip[2] ?? 1e9
+    q[qb + 19] = clip[3] ?? 1e9
+    q[qb + 20] = xf[0]
+    q[qb + 21] = xf[1]
+    q[qb + 22] = xf[2]
+    q[qb + 23] = xf[3]
+    q[qb + 24] = tx + g.offset.x
+    q[qb + 25] = ty + g.offset.y
+    q[qb + 26] = 0
+    q[qb + 27] = 0
+    this.atlasLive++
   }
 
   /**
@@ -764,15 +896,35 @@ export class SlugText implements TextBackend {
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
     if (this.count === 0 || count === 0) return 0
     let draws = 0
-    if (this.ready && this.slugLive > 0 && this.bindGroup) {
+    const slug = this.ready && this.slugLive > 0 && this.bindGroup
+    const atlas = this.atlasLive > 0 && this.atlasBindGroup
+    // Text shadows of these runs first, under every glyph. Blurred (atlas)
+    // shadows go before hard (Slug) ones: glows are usually listed last.
+    const s0 = this.shadowStart[first] ?? 0
+    const s1 = this.shadowStart[first + count] ?? s0
+    if (s1 > s0) {
+      if (atlas) {
+        encoder.setPipeline(this.atlasPipeline)
+        encoder.setBindGroup(1, atlas)
+        encoder.draw(6, s1 - s0, 0, s0)
+        draws++
+      }
+      if (slug) {
+        encoder.setPipeline(this.pipeline)
+        encoder.setBindGroup(1, slug)
+        encoder.draw(6, s1 - s0, 0, s0)
+        draws++
+      }
+    }
+    if (slug) {
       encoder.setPipeline(this.pipeline)
-      encoder.setBindGroup(1, this.bindGroup)
+      encoder.setBindGroup(1, slug)
       encoder.draw(6, count, 0, first)
       draws++
     }
-    if (this.fallbackCount > 0 && this.atlasBindGroup) {
+    if (atlas) {
       encoder.setPipeline(this.atlasPipeline)
-      encoder.setBindGroup(1, this.atlasBindGroup)
+      encoder.setBindGroup(1, atlas)
       encoder.draw(6, count, 0, first)
       draws++
     }
@@ -821,6 +973,13 @@ function ligatureRight(
     right = Math.max(right, prevRight)
   }
   return right
+}
+
+const NO_SHADOWS: readonly TextShadow[] = []
+
+/** Device-px blur for the shadow atlas key, quantised to 1/2 px. */
+function shadowBlurPx(blur: number, dpr: number): number {
+  return Math.max(0.5, Math.round(blur * dpr * 2) / 2)
 }
 
 /** U+FE00–FE0F and U+E0100–E01EF. */

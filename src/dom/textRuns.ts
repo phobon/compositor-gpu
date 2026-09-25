@@ -1,4 +1,4 @@
-import type { Glyph, GlyphRun } from '../scene/records'
+import type { Glyph, GlyphRun, TextShadow } from '../scene/records'
 import { parseColor } from '../util/color'
 import { toDocRect } from './styles'
 
@@ -103,9 +103,68 @@ export function readTextNode(
     ligatures: ligaturesEnabled(s),
     color,
     glyphs,
+    textShadows: readTextShadows(s.textShadow, s.color),
     opacity: 1,
     z: 0
   }
+}
+
+const NO_SHADOWS: TextShadow[] = []
+const shadowCache = new Map<string, TextShadow[]>()
+
+/**
+ * Computed `text-shadow` (`none`, or a comma list of `<color>? ox oy blur?`)
+ * -> layers in CSS list order. A missing colour takes `currentColor`.
+ * Cached per (value, colour); the result is shared, so treat it as read-only.
+ */
+export function readTextShadows(value: string, color: string): TextShadow[] {
+  if (!value || value === 'none') return NO_SHADOWS
+  const key = `${value}|${color}`
+  const hit = shadowCache.get(key)
+  if (hit) return hit
+  const out: TextShadow[] = []
+  for (const layer of splitTop(value, ',')) {
+    const lens: number[] = []
+    let col = ''
+    for (const tok of splitTop(layer, ' ')) {
+      if (/^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i.test(tok)) {
+        lens.push(Number.parseFloat(tok))
+      } else {
+        col = tok
+      }
+    }
+    if (lens.length < 2) continue
+    const c = parseColor(col || color)
+    if (c.a <= 0.001) continue
+    out.push({
+      color: c,
+      ox: lens[0] ?? 0,
+      oy: lens[1] ?? 0,
+      blur: Math.max(0, lens[2] ?? 0)
+    })
+  }
+  if (shadowCache.size >= 256) shadowCache.clear()
+  shadowCache.set(key, out)
+  return out
+}
+
+/** Split on `sep` outside parentheses, dropping empty parts. */
+function splitTop(value: string, sep: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of value) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    if (depth === 0 && ch === sep) {
+      if (cur.trim()) out.push(cur.trim())
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out
 }
 
 /** Whether the browser applies the font's common ligatures (liga/clig). */
@@ -132,7 +191,21 @@ export type FontStyleLike = Pick<
 >
 
 const fontMetricsCache = new Map<string, FontMetrics>()
+const glyphInkCache = new Map<string, GlyphInk | null>()
+const INK_CACHE_MAX = 4096
 let measureCtx: CanvasRenderingContext2D | null | undefined
+
+function ensureMeasureCtx(): CanvasRenderingContext2D | null {
+  if (measureCtx === undefined) {
+    measureCtx = document.createElement('canvas').getContext('2d')
+    // A web font finishing its load changes the metrics for the same key.
+    document.fonts?.addEventListener('loadingdone', () => {
+      fontMetricsCache.clear()
+      glyphInkCache.clear()
+    })
+  }
+  return measureCtx
+}
 
 /**
  * A style's primary font metrics (ascent/descent/height), independent of
@@ -144,13 +217,7 @@ export function fontMetrics(s: FontStyleLike): FontMetrics {
   const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
   const hit = fontMetricsCache.get(font)
   if (hit !== undefined) return hit
-  if (measureCtx === undefined) {
-    measureCtx = document.createElement('canvas').getContext('2d')
-    // A web font finishing its load changes the metrics for the same key.
-    document.fonts?.addEventListener('loadingdone', () =>
-      fontMetricsCache.clear()
-    )
-  }
+  const measureCtx = ensureMeasureCtx()
   let ascent = fontSize * 0.8
   let descent = fontSize * 0.2
   if (measureCtx) {
@@ -177,4 +244,146 @@ export function fontMetrics(s: FontStyleLike): FontMetrics {
  */
 export function contentHeight(s: CSSStyleDeclaration): number {
   return fontMetrics(s).height
+}
+
+/** Per-grapheme Canvas 2D ink extent, at the glyph's own font size (see
+ * `measureGlyphInk`). */
+export interface GlyphInk {
+  /** Canvas 2D `measureText` advance width, px. */
+  advance: number
+  /** `actualBoundingBoxLeft`, px (positive = ink extends left of origin). */
+  left: number
+  /** `actualBoundingBoxRight`, px. */
+  right: number
+  /** `actualBoundingBoxDescent`, px (positive = ink extends below baseline). */
+  descent: number
+  /**
+   * Horizontal extent (local px, relative to the glyph's origin) of ink
+   * strictly AT OR BELOW the baseline — a lowercase 'p' or 'g''s full glyph
+   * bbox spans almost its whole advance (the bowl sits above the
+   * baseline), but `text-decoration-skip-ink` only needs to clear the
+   * narrow descender stroke, so `decorations.ts` cuts around this instead
+   * of `left`/`right` when it's available. Undefined when `descent` is
+   * negligible (nothing to isolate).
+   */
+  descLeft?: number
+  descRight?: number
+}
+
+let scratch: HTMLCanvasElement | OffscreenCanvas | null = null
+let scratchCtx: CanvasRenderingContext2D | null = null
+
+/** A small offscreen canvas reused for pixel-scanning descender ink,
+ * grown (never shrunk) to fit `w`×`h`. */
+function ensureScratch(w: number, h: number): CanvasRenderingContext2D | null {
+  if (!scratch) {
+    scratch =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(w, h)
+        : Object.assign(document.createElement('canvas'), {
+            width: w,
+            height: h
+          })
+    scratchCtx = scratch.getContext('2d') as CanvasRenderingContext2D | null
+  } else if (scratch.width < w || scratch.height < h) {
+    scratch.width = Math.max(scratch.width, w)
+    scratch.height = Math.max(scratch.height, h)
+  }
+  return scratchCtx
+}
+
+/**
+ * The horizontal span (local px, relative to the text origin) of opaque
+ * pixels in the rows from the baseline down to the bottom of `descentPx`,
+ * for `text` rendered at `font` — i.e. just the descender stroke, not the
+ * whole glyph. Returns null if nothing renders there (shouldn't happen
+ * when the caller already found `actualBoundingBoxDescent > 0`).
+ */
+function scanDescenderExtent(
+  font: string,
+  text: string,
+  ascentPx: number,
+  descentPx: number,
+  leftBearingPx: number,
+  widthPx: number
+): { left: number; right: number } | null {
+  const pad = 2
+  const originX = leftBearingPx + pad
+  const baselineY = ascentPx + pad
+  const w = Math.ceil(originX + widthPx + pad)
+  const h = Math.ceil(baselineY + descentPx + pad)
+  const ctx = ensureScratch(w, h)
+  if (!ctx) return null
+  ctx.clearRect(0, 0, w, h)
+  ctx.font = font
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#fff'
+  ctx.fillText(text, originX, baselineY)
+  const rowStart = Math.max(0, Math.floor(baselineY))
+  const rowEnd = Math.min(h, Math.ceil(baselineY + descentPx))
+  if (rowEnd <= rowStart) return null
+  const img = ctx.getImageData(0, rowStart, w, rowEnd - rowStart)
+  let minX = w
+  let maxX = -1
+  const data = img.data
+  for (let y = 0; y < img.height; y++) {
+    const rowOff = y * w * 4
+    for (let x = 0; x < w; x++) {
+      if ((data[rowOff + x * 4 + 3] ?? 0) > 10) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+      }
+    }
+  }
+  if (maxX < minX) return null
+  return { left: minX - originX, right: maxX + 1 - originX }
+}
+
+/**
+ * A single grapheme's ink box for `text-decoration-skip-ink`, measured with
+ * Canvas 2D at the run's own font (family/weight/style) and the glyph's own
+ * font size — same construction as `fontMetrics`, cached per font+grapheme.
+ * Returns null when Canvas 2D is unavailable.
+ */
+export function measureGlyphInk(
+  text: string,
+  fontFamily: string,
+  fontWeight: number,
+  italic: boolean,
+  fontSize: number
+): GlyphInk | null {
+  const font = `${italic ? 'italic' : 'normal'} ${fontWeight} ${fontSize}px ${fontFamily}`
+  const key = `${font}\u0000${text}`
+  const hit = glyphInkCache.get(key)
+  if (hit !== undefined) return hit
+  const ctx = ensureMeasureCtx()
+  let out: GlyphInk | null = null
+  if (ctx) {
+    ctx.font = font
+    ctx.textBaseline = 'alphabetic'
+    const m = ctx.measureText(text)
+    out = {
+      advance: m.width,
+      left: m.actualBoundingBoxLeft,
+      right: m.actualBoundingBoxRight,
+      descent: m.actualBoundingBoxDescent
+    }
+    if (out.descent > 0.5) {
+      const sub = scanDescenderExtent(
+        font,
+        text,
+        Math.ceil(m.actualBoundingBoxAscent || 0),
+        Math.ceil(out.descent),
+        Math.ceil(Math.max(0, out.left)),
+        Math.ceil(Math.max(m.width, out.right, 0))
+      )
+      if (sub) {
+        out.descLeft = sub.left
+        out.descRight = sub.right
+      }
+    }
+  }
+  if (glyphInkCache.size >= INK_CACHE_MAX) glyphInkCache.clear()
+  glyphInkCache.set(key, out)
+  return out
 }

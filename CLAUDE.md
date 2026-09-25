@@ -36,8 +36,10 @@ partial-read and frame-encode medians (`test/perf/out/last.json`);
 `test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~370 ms
 (dominated by per-grapheme `Range.getBoundingClientRect`, the approach's
 floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms; timings swing ±30% run to run in the sandbox, so compare A/B in
-the same session. Draw calls on that page are ~2 per card because each card's
-box-shadow overlaps the previous card's text and splits the batch.
+the same session. That page draws in ~114 calls: the batch builder indexes
+members in a 128px grid and tests text runs per glyph (a run's union rect
+spans whole paragraphs and blocked every merge), and shadow records use a
+1.5σ `batchRect` footprint.
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
@@ -123,10 +125,13 @@ Conventions each pass must follow:
 - **Decorations and shadows are BoxRecords.** `dom/decorations.ts` turns
   `text-decoration` into one box per line fragment on `run.decorations`
   (flatten emits them just before the run); `readShadows` in `dom/styles.ts`
-  turns outer `box-shadow` layers into boxes with `shadow` set, pushed into an
-  element's `own` records before its background box. The box shader draws a
+  turns `box-shadow` layers into boxes with `shadow` set — outer ones before
+  the element's background box, inset ones after it. The box shader draws a
   `shadow` record as a blurred rounded rect (Wallace's analytic method) masked
-  outside the element's border box.
+  outside (outer) or inside (inset) the element's box. Underlines are split
+  around descender ink (skip-ink). `text-shadow` lives in the text pass:
+  shadow instances are appended after the glyph range in both text buffers
+  (per run, per layer) and drawn before the glyphs of each batch.
 - **Pseudo-elements** (`dom/pseudo.ts`): browsers expose pseudo STYLE but no
   geometry, so `::marker`/`::before`/`::after` are synthesised — Chrome does
   report px `width/height/left/top` for block and positioned pseudos, which

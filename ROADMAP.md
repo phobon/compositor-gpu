@@ -41,12 +41,18 @@
 ## Phase 3 — reach & polish
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)
+- [x] Batch builder: grid-indexed members + per-glyph text footprints
+      (400-card page: 841 → 114 draws)
 - [x] `text-decoration` underline / overline / line-through (per line fragment,
       propagated to inline descendants, transform-aware; solid style only)
-- [ ] `text-decoration-skip-ink`, dotted/dashed/wavy/double decoration styles
+- [x] `text-decoration-skip-ink` (descender stroke extents from a scratch
+      canvas; gap 0.06em)
+- [ ] dotted/dashed/wavy/double decoration styles
 - [x] Outer `box-shadow` (analytic Gaussian rounded rect, multi-layer, spread,
       masked outside the border box)
-- [ ] Inset `box-shadow`; `text-shadow`
+- [x] Inset `box-shadow`; `text-shadow` (hard = offset Slug instances, blurred =
+      atlas-rasterised shadow glyphs; extra instances after the glyph range)
+- [ ] text-shadow on pseudo text; inset shadows on replaced elements
 - [ ] Culling via IntersectionObserver in the draw path
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no

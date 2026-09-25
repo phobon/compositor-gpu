@@ -30,6 +30,7 @@ mkdirSync(goldenDir, { recursive: true })
 const SECTIONS = [
   'text',
   'decorations',
+  'textshadow',
   'ligatures',
   'emoji',
   'boxes',

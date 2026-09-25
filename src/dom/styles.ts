@@ -3,6 +3,7 @@ import type {
   Corners,
   Gradient,
   ImageRecord,
+  RGBA,
   Rect
 } from '../scene/records'
 import { parseColor } from '../util/color'
@@ -296,15 +297,17 @@ interface ShadowLayer {
   oy: number
   blur: number
   spread: number
+  inset: boolean
 }
 
-/** One computed `box-shadow` layer, or null for inset / unparsable ones. */
+/** One computed `box-shadow` layer, or null for unparsable ones. */
 function parseShadowLayer(layer: string): ShadowLayer | null {
   const lens: number[] = []
   let color = ''
+  let inset = false
   for (const tok of splitOutside(layer, /\s/)) {
-    if (tok === 'inset') return null
-    if (LENGTH.test(tok)) lens.push(Number.parseFloat(tok))
+    if (tok === 'inset') inset = true
+    else if (LENGTH.test(tok)) lens.push(Number.parseFloat(tok))
     else color = tok
   }
   if (lens.length < 2) return null
@@ -313,7 +316,8 @@ function parseShadowLayer(layer: string): ShadowLayer | null {
     ox: lens[0] ?? 0,
     oy: lens[1] ?? 0,
     blur: Math.max(0, lens[2] ?? 0),
-    spread: lens[3] ?? 0
+    spread: lens[3] ?? 0,
+    inset
   }
 }
 
@@ -333,19 +337,25 @@ function clampCorners(r: Corners, w: number, h: number): Corners {
 
 /**
  * One BoxRecord per outer `box-shadow` layer, in paint order (CSS paints
- * the last layer bottom-most, so the list is reversed). Inset layers are
- * skipped. Each record's local box is the shadow box (border box offset by
- * (ox, oy), grown by `spread`) padded by `shadowPad(blur)` on every side;
- * `radius` is the shadow box's radii (`r + spread` for r > 0 — the CSS
- * small-radius attenuation is ignored), `shadow.inner` the element's
- * border box in the record's local frame. `rect`/`place` are the
- * element's doc-space border box and placement; `alloc` hands out ids.
+ * the last layer bottom-most, so the list is reversed). Each record's local
+ * box is the shadow box (border box offset by (ox, oy), grown by `spread`)
+ * padded by `shadowPad(blur)` on every side; `radius` is the shadow box's
+ * radii (`r + spread` for r > 0 — the CSS small-radius attenuation is
+ * ignored), `shadow.inner` the element's border box in the record's local
+ * frame. `rect`/`place` are the element's doc-space border box and
+ * placement; `alloc` hands out ids.
+ *
+ * With `inset` set it returns the inset layers instead (also last-listed
+ * first), which paint above the background: each record's box is the
+ * padding box (radii `r - border`), `shadow.inner` the shadow box (padding
+ * box offset by (ox, oy), shrunk by `spread`, radii `r - spread`).
  */
 export function readShadows(
   s: CSSStyleDeclaration,
   rect: Rect,
   place: Placement,
-  alloc: () => number
+  alloc: () => number,
+  inset = false
 ): BoxRecord[] {
   const value = s.boxShadow
   if (!value || value === 'none') return []
@@ -357,9 +367,14 @@ export function readShadows(
   const layers = splitOutside(value, /,/)
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = parseShadowLayer(layers[i] ?? '')
-    if (!layer) continue
+    if (!layer || layer.inset !== inset) continue
     const color = parseColor(layer.color || s.color)
     if (color.a <= 0.001) continue
+    if (inset) {
+      const rec = insetShadow(s, place, radius, layer, color, alloc())
+      if (rec) out.push(rec)
+      continue
+    }
     const { ox, oy, blur, spread } = layer
     const sw = w + 2 * spread
     const sh = h + 2 * spread
@@ -371,6 +386,20 @@ export function readShadows(
     const grown = radius.map((r) =>
       r > 0 ? Math.max(0, r + spread) : 0
     ) as Corners
+    // Batching footprint: 1.5σ (vs. the 3σ paint padding above) — the tail
+    // beyond it is under ~7% alpha, so using it for overlap tests keeps
+    // adjacent elements' shadows from splitting batches without visibly
+    // reordering paint.
+    const batchPad = Math.ceil(0.75 * blur)
+    const bx0 = ox - spread - batchPad
+    const by0 = oy - spread - batchPad
+    const batchSp = subPlacement(
+      place,
+      bx0,
+      by0,
+      sw + 2 * batchPad,
+      sh + 2 * batchPad
+    )
     out.push({
       kind: 'box',
       id: alloc(),
@@ -387,8 +416,64 @@ export function readShadows(
         inner: { x: -x0, y: -y0, w, h, radius }
       },
       opacity: 1,
-      z: 0
+      z: 0,
+      batchRect: placementAabb(batchSp)
     })
   }
   return out
+}
+
+/** One inset layer as a BoxRecord over the padding box (see readShadows). */
+function insetShadow(
+  s: CSSStyleDeclaration,
+  place: Placement,
+  radius: Corners,
+  layer: ShadowLayer,
+  color: RGBA,
+  id: number
+): BoxRecord | null {
+  const bl = px(s.borderLeftWidth)
+  const bt = px(s.borderTopWidth)
+  const br = px(s.borderRightWidth)
+  const bb = px(s.borderBottomWidth)
+  const pw = place.local.w - bl - br
+  const ph = place.local.h - bt - bb
+  if (pw <= 0 || ph <= 0) return null
+  const { ox, oy, blur, spread } = layer
+  const [tl, tr, brr, bll] = radius
+  const pr: Corners = [
+    Math.max(0, tl - Math.max(bl, bt)),
+    Math.max(0, tr - Math.max(br, bt)),
+    Math.max(0, brr - Math.max(br, bb)),
+    Math.max(0, bll - Math.max(bl, bb))
+  ]
+  const sw = Math.max(0, pw - 2 * spread)
+  const sh = Math.max(0, ph - 2 * spread)
+  const shrunk = pr.map((r) => (r > 0 ? Math.max(0, r - spread) : 0))
+  const sp = subPlacement(place, bl, bt, pw, ph)
+  return {
+    kind: 'box',
+    id,
+    rect: placementAabb(sp),
+    xform: sp.xform,
+    local: sp.local,
+    radius: pr,
+    fill: color,
+    gradient: null,
+    border: null,
+    shadow: {
+      color,
+      blur,
+      inner: {
+        x: ox + spread,
+        y: oy + spread,
+        w: sw,
+        h: sh,
+        radius: clampCorners(shrunk as Corners, sw, sh)
+      },
+      inset: true
+    },
+    opacity: 1,
+    z: 0
+  }
 }

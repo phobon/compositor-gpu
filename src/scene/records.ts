@@ -71,11 +71,18 @@ export interface BoxRecord {
    * ignored. `blur` is the CSS blur radius in px; `inner` is the element's
    * own rounded box in the padded local frame, masked out (CSS clips outer
    * shadows to outside the border box).
+   *
+   * `inset`: an inset shadow. `rect`/`local`/`radius` are then the
+   * element's PADDING box (unpadded) — coverage is masked to its inside —
+   * and `inner` is the shadow box (padding box offset by (ox, oy), shrunk
+   * by `spread`) in that frame; the shadow covers what lies outside
+   * `inner`, blurred.
    */
   shadow?: {
     color: RGBA
     blur: number
     inner: { x: number; y: number; w: number; h: number; radius: Corners }
+    inset?: boolean
   } | null
   /** Multiplier applied by the pass. The reader writes 1: an element's
    * opacity is applied once by its opacity group (see stacking.ts). */
@@ -84,6 +91,12 @@ export interface BoxRecord {
   z: number
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
+  /**
+   * Footprint used by the batch builder's overlap test instead of `rect`
+   * when set. Shadows set it to the box inset to ~1.5σ so their near-zero
+   * blur tails don't split batches (paint order in the tail is invisible).
+   */
+  batchRect?: Rect
 }
 
 export interface ImageRecord {
@@ -141,6 +154,15 @@ export interface Glyph {
   offset: { x: number; y: number }
 }
 
+/** One `text-shadow` layer. */
+export interface TextShadow {
+  color: RGBA
+  ox: number
+  oy: number
+  /** CSS blur radius in px (σ = blur / 2). */
+  blur: number
+}
+
 export interface GlyphRun {
   kind: 'text'
   id: number
@@ -168,6 +190,12 @@ export interface GlyphRun {
    * run's glyphs (flatten emits them first). Filled by the reader.
    */
   decorations?: BoxRecord[]
+  /**
+   * `text-shadow` layers in CSS list order (the first is painted top-most;
+   * all paint below the glyphs). Offsets and blur are CSS px in the glyph's
+   * local frame. Absent / empty for `none`.
+   */
+  textShadows?: TextShadow[]
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
 }

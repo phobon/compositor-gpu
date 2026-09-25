@@ -408,15 +408,24 @@
       <section data-vr="decorations">
         <h2>Text decoration lines</h2>
         <p>
-          A <a href="#" style="color: #8ab4ff;">plain underlined link</a>, and
+          A <a href="#" style="color: #8ab4ff;">plain underlined jumpy gap</a>, and
           an <a href="#" style="color: #8ab4ff;">underlined link with
-          <strong>bold text inside</strong></a> — the underline propagates
+          <strong>bold gypsy jog text inside</strong></a> — the underline propagates
           into the nested element.
         </p>
         <p>
           <s>Struck-through text</s> ·
           <span style="text-decoration: overline;">Overline span</span> ·
           <span style="text-decoration: underline; text-decoration-color: #f472b6; text-decoration-thickness: 3px;">Custom pink underline</span>
+        </p>
+      </section>
+
+      <section data-vr="textshadow" style="background: #5a5a70; padding: 4px 16px; border-radius: 12px;">
+        <h2 style="text-shadow: 0 2px 0 #000">Hard text shadow</h2>
+        <p style="font-size: 22px; color: #e8e6ff; text-shadow: 0 0 12px #6a5cff">Glowing text, blurred</p>
+        <p style="font-size: 22px; text-shadow: 1px 1px 0 #f472b6, -1px -1px 0 #06b6d4">Two offset shadows</p>
+        <p style="font-size: 22px; font-family: 'Chalkboard SE', cursive; text-shadow: 2px 3px 4px #ec4899">
+          Fallback atlas, soft shadow
         </p>
       </section>
 
@@ -455,6 +464,8 @@
           <div class="shtile" style="border-radius: 24px; box-shadow: 0 2px 6px rgba(0,0,0,.5)"></div>
           <div class="shtile" style="background: rgba(255,255,255,.08); box-shadow: 0 10px 20px rgba(0,0,0,.7)"></div>
           <div class="shtile" style="box-shadow: 6px 6px 0 3px #ec4899"></div>
+          <div class="shtile" style="background: #c9c9d6; box-shadow: inset 0 2px 8px rgba(0,0,0,.6)"></div>
+          <div class="shtile" style="box-shadow: inset 0 0 0 3px #6a5cff"></div>
         </div>
       </section>
 

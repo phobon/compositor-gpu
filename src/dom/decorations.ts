@@ -15,7 +15,7 @@
 // no second stroke) — a known gap, not a bug.
 import type { BoxRecord, Glyph, GlyphRun, RGBA, Rect } from '../scene/records'
 import { parseColor } from '../util/color'
-import { fontMetrics } from './textRuns'
+import { fontMetrics, measureGlyphInk } from './textRuns'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
 export type DecorationLine = 'underline' | 'overline' | 'line-through'
@@ -37,6 +37,9 @@ export interface Decoration {
    * `fontBoundingBox*`, same measurement as textRuns.contentHeight). */
   ascent: number
   descent: number
+  /** `text-decoration-skip-ink` is not `none` (default is `auto`): break the
+   * `underline` around descenders (p, g, y, …). Only applies to `underline`. */
+  skipInk: boolean
 }
 
 const REPLACED_TAGS = new Set([
@@ -86,13 +89,15 @@ export function readOwnDecorations(
     thicknessPx = Number.isFinite(n) ? n : null
   }
   const { ascent, descent } = fontMetrics(s)
+  const skipInk = s.textDecorationSkipInk !== 'none'
   return lines.map((line) => ({
     line,
     color,
     thicknessPx,
     fontSize,
     ascent,
-    descent
+    descent,
+    skipInk
   }))
 }
 
@@ -137,35 +142,46 @@ export function buildDecorationBoxes(
     const prev = glyphs[i - 1] as Glyph
     const cur: Glyph | undefined = glyphs[i]
     if (cur && Math.abs(cur.rect.y - prev.rect.y) < LINE_EPS) continue
-    const g0 = glyphs[start] as Glyph
     for (const d of decor) {
-      out.push(decorationBox(g0, prev, d, clip, allocId()))
+      out.push(...fragmentBoxes(run, glyphs, start, i, d, clip, allocId))
     }
     start = i
   }
   return out
 }
 
-/** Local x of `gLast`'s right edge, in `g0`'s local frame: glyphs in a run
- * share the same linear part, so this is `inv(lin) · (t_last − t_first)`
- * (the origin shift) plus `gLast`'s own local width. */
-function fragmentRightX(g0: Glyph, gLast: Glyph): number {
+/** Local x of `g`'s left (advance-box) edge, in `g0`'s local frame: glyphs
+ * in a run share the same linear part, so this is `inv(lin) · (t_g − t_0)`
+ * (the origin shift). */
+function glyphLocalX(g0: Glyph, g: Glyph): number {
   const [a, b, c, d, tx0, ty0] = g0.xform
-  const dx = gLast.xform[4] - tx0
-  const dy = gLast.xform[5] - ty0
+  const dx = g.xform[4] - tx0
+  const dy = g.xform[5] - ty0
   const det = a * d - b * c
-  const ix = det !== 0 ? (d * dx - c * dy) / det : dx
-  return ix + gLast.local.w
+  return det !== 0 ? (d * dx - c * dy) / det : dx
 }
 
-function decorationBox(
-  g0: Glyph,
-  gLast: Glyph,
+/** Local x of `gLast`'s right edge, in `g0`'s local frame. */
+function fragmentRightX(g0: Glyph, gLast: Glyph): number {
+  return glyphLocalX(g0, gLast) + gLast.local.w
+}
+
+/** One or more BoxRecords for `d` over glyphs `[start, end)` of `run`: a
+ * single box spanning the fragment, except for `underline` with
+ * `skip-ink`, which is split around glyphs whose ink intrudes into the
+ * underline band. */
+function fragmentBoxes(
+  run: GlyphRun,
+  glyphs: Glyph[],
+  start: number,
+  end: number,
   d: Decoration,
   clip: Rect | null,
-  id: number
-): BoxRecord {
-  const xLast = fragmentRightX(g0, gLast)
+  allocId: () => number
+): BoxRecord[] {
+  const g0 = glyphs[start] as Glyph
+  const gLast = glyphs[end - 1] as Glyph
+  const xLast = Math.max(0, fragmentRightX(g0, gLast))
 
   // Slug baseline rule (see rasterizer.ts): the decorating element's own
   // font metrics, centred in the line box, not the text run's.
@@ -195,8 +211,103 @@ function decorationBox(
   }
   top = Math.round(top)
 
+  if (d.line === 'underline' && d.skipInk) {
+    const segments = skipInkSegments(run, glyphs, start, end, g0, baseline, top)
+    const boxes: BoxRecord[] = []
+    for (const [xL, xR] of segments) {
+      boxes.push(
+        makeDecorationBox(g0, xL, xR, top, thickness, d, clip, allocId())
+      )
+    }
+    return boxes
+  }
+
+  return [makeDecorationBox(g0, 0, xLast, top, thickness, d, clip, allocId())]
+}
+
+/** `max(1, 0.06 * fontSize)`: the padding added around each glyph's ink
+ * extent before it's cut from the underline, tuned against Chrome's
+ * `skip-ink: auto` (harness `decorations` section). */
+function skipInkGap(fontSize: number): number {
+  return Math.max(1, 0.06 * fontSize)
+}
+
+/**
+ * Local-x ranges `[0, xLast]` (in `g0`'s frame) still covered by the
+ * underline once glyphs whose ink reaches into the underline band
+ * (`[top, top + thickness]`) have their horizontal ink extent, padded by
+ * `skipInkGap`, cut out. One canvas `measureText` per grapheme (cached).
+ */
+function skipInkSegments(
+  run: GlyphRun,
+  glyphs: Glyph[],
+  start: number,
+  end: number,
+  g0: Glyph,
+  baseline: number,
+  top: number
+): Array<[number, number]> {
+  const xLast = Math.max(0, fragmentRightX(g0, glyphs[end - 1] as Glyph))
+  const cuts: Array<[number, number]> = []
+  for (let i = start; i < end; i++) {
+    const g = glyphs[i] as Glyph
+    const ink = measureGlyphInk(
+      g.text,
+      run.fontFamily,
+      run.fontWeight,
+      run.italic,
+      g.fontSize
+    )
+    if (!ink) continue
+    // Ink reaching past the top of the underline band intrudes on it.
+    if (ink.descent <= top - baseline) continue
+    const glyphLeft = glyphLocalX(g0, g)
+    // Prefer the descender-only span (just the sub-baseline stroke) over
+    // the whole glyph's ink bbox — a 'p' or 'g's bowl sits above the
+    // baseline and would otherwise widen the gap to nearly the full glyph.
+    const left =
+      ink.descLeft !== undefined ? ink.descLeft : Math.max(0, -ink.left)
+    const right = ink.descRight !== undefined ? ink.descRight : ink.right
+    const inkL = glyphLeft + Math.max(0, left)
+    const inkR = glyphLeft + right
+    const gap = skipInkGap(g.fontSize)
+    cuts.push([inkL - gap, inkR + gap])
+  }
+  if (cuts.length === 0) return [[0, xLast]]
+  cuts.sort((a, b) => a[0] - b[0])
+
+  // Merge overlapping/adjacent cuts, then take the complement within
+  // [0, xLast].
+  const merged: Array<[number, number]> = []
+  for (const c of cuts) {
+    const last = merged[merged.length - 1]
+    if (last && c[0] <= last[1]) last[1] = Math.max(last[1], c[1])
+    else merged.push([...c])
+  }
+  const out: Array<[number, number]> = []
+  let cursor = 0
+  for (const [cL, cR] of merged) {
+    const segL = Math.max(0, cursor)
+    const segR = Math.min(xLast, cL)
+    if (segR - segL >= 1) out.push([segL, segR])
+    cursor = Math.max(cursor, cR)
+  }
+  if (xLast - cursor >= 1) out.push([Math.max(0, cursor), xLast])
+  return out
+}
+
+function makeDecorationBox(
+  g0: Glyph,
+  xL: number,
+  xR: number,
+  top: number,
+  thickness: number,
+  d: Decoration,
+  clip: Rect | null,
+  id: number
+): BoxRecord {
   const p0: Placement = { xform: g0.xform, local: g0.local }
-  const place = subPlacement(p0, 0, top, Math.max(0, xLast), thickness)
+  const place = subPlacement(p0, xL, top, Math.max(0, xR - xL), thickness)
   const rect = placementAabb(place)
 
   return {

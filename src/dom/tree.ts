@@ -455,6 +455,12 @@ export class SceneReader {
         own = own.length ? [...own, bg] : [bg]
       }
     }
+    if (layers.has('boxes') && s.boxShadow.includes('inset')) {
+      // Inset shadows paint above the backgrounds, below the content.
+      const inset = readShadows(s, rect, place, () => scene.allocId(), true)
+      for (const sh of inset) sh.clip = clip
+      if (inset.length) own = [...own, ...inset]
+    }
 
     // An element's own box is clipped by its ancestors; its content
     // (children and text) is additionally clipped by its own overflow.

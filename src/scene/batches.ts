@@ -20,15 +20,22 @@ interface GroupEvent {
   depth: number
 }
 
-/** Bounds-hit on a batch this big is treated as an overlap (conservative). */
-const MEMBER_CAP = 256
+// Members are indexed in a coarse uniform grid so the overlap test stays
+// cheap for batches with thousands of records (a 400-card page puts every
+// paragraph in one text batch); a candidate only checks the cells it covers.
+const CELL = 128
 
 interface Entry {
   layer: Layer
   z: number
   first: number
   count: number
+  /** Bounds of the entry (union of `rects`). */
   rect: Rect
+  /** Footprints tested for overlap: per-glyph rects for text runs (a run's
+   * union rect spans whole paragraphs and would block everything), else
+   * just `rect`. */
+  rects: Rect[]
 }
 
 interface Accum {
@@ -39,7 +46,20 @@ interface Accum {
   minY: number
   maxX: number
   maxY: number
-  members: Rect[]
+  /** Members bucketed by grid cell (key = cx * 65536 + cy). */
+  grid: Map<number, Rect[]>
+}
+
+function forEachCell(r: Rect, fn: (key: number) => boolean | undefined): void {
+  const x0 = Math.floor(r.x / CELL)
+  const y0 = Math.floor(r.y / CELL)
+  const x1 = Math.floor((r.x + r.width) / CELL)
+  const y1 = Math.floor((r.y + r.height) / CELL)
+  for (let cx = x0; cx <= x1; cx++) {
+    for (let cy = y0; cy <= y1; cy++) {
+      if (fn(cx * 65536 + cy)) return
+    }
+  }
 }
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
@@ -60,17 +80,41 @@ function boundsOverlap(a: Accum, r: Rect): boolean {
   )
 }
 
-function accumOverlaps(a: Accum, r: Rect): boolean {
-  if (!boundsOverlap(a, r)) return false
-  if (a.members.length > MEMBER_CAP) return true
-  for (const m of a.members) {
-    if (rectsOverlap(m, r)) return true
+function accumOverlaps(a: Accum, e: Entry): boolean {
+  if (!boundsOverlap(a, e.rect)) return false
+  for (const r of e.rects) {
+    if (rectOverlapsAccum(a, r)) return true
   }
   return false
 }
 
+function rectOverlapsAccum(a: Accum, r: Rect): boolean {
+  let hit = false
+  forEachCell(r, (key) => {
+    const cell = a.grid.get(key)
+    if (!cell) return false
+    for (const m of cell) {
+      if (rectsOverlap(m, r)) {
+        hit = true
+        return true
+      }
+    }
+    return false
+  })
+  return hit
+}
+
+function insertMember(a: Accum, r: Rect): void {
+  forEachCell(r, (key) => {
+    const cell = a.grid.get(key)
+    if (cell) cell.push(r)
+    else a.grid.set(key, [r])
+    return false
+  })
+}
+
 function newAccum(e: Entry): Accum {
-  return {
+  const a: Accum = {
     layer: e.layer,
     first: e.first,
     count: e.count,
@@ -78,8 +122,10 @@ function newAccum(e: Entry): Accum {
     minY: e.rect.y,
     maxX: e.rect.x + e.rect.width,
     maxY: e.rect.y + e.rect.height,
-    members: [e.rect]
+    grid: new Map()
   }
+  for (const r of e.rects) insertMember(a, r)
+  return a
 }
 
 function extend(a: Accum, e: Entry): void {
@@ -88,7 +134,7 @@ function extend(a: Accum, e: Entry): void {
   a.minY = Math.min(a.minY, e.rect.y)
   a.maxX = Math.max(a.maxX, e.rect.x + e.rect.width)
   a.maxY = Math.max(a.maxY, e.rect.y + e.rect.height)
-  if (a.members.length <= MEMBER_CAP) a.members.push(e.rect)
+  for (const r of e.rects) insertMember(a, r)
 }
 
 /** Union of doc-space rects; a degenerate zero rect for an empty list. */
@@ -138,7 +184,14 @@ export function buildBatches(
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]
     if (!b) continue
-    entries.push({ layer: 'boxes', z: b.z, first: i, count: 1, rect: b.rect })
+    entries.push({
+      layer: 'boxes',
+      z: b.z,
+      first: i,
+      count: 1,
+      rect: b.batchRect ?? b.rect,
+      rects: [b.batchRect ?? b.rect]
+    })
   }
   for (let i = 0; i < images.length; i++) {
     const im = images[i]
@@ -148,7 +201,8 @@ export function buildBatches(
       z: im.z,
       first: i,
       count: 1,
-      rect: im.rect
+      rect: im.rect,
+      rects: [im.rect]
     })
   }
   let glyphBase = 0
@@ -161,7 +215,8 @@ export function buildBatches(
       z: run.z,
       first: glyphBase,
       count,
-      rect: runRects[i] ?? { x: 0, y: 0, width: 0, height: 0 }
+      rect: runRects[i] ?? { x: 0, y: 0, width: 0, height: 0 },
+      rects: run.glyphs.map((g) => g.rect)
     })
     glyphBase += count
   }
@@ -206,7 +261,7 @@ export function buildBatches(
         let blocked = false
         for (let i = lastLIdx + 1; i < batches.length; i++) {
           const later = batches[i]
-          if (later && 'layer' in later && accumOverlaps(later, e.rect)) {
+          if (later && 'layer' in later && accumOverlaps(later, e)) {
             blocked = true
             break
           }

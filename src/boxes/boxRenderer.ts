@@ -21,8 +21,9 @@ struct Box {
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
-  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, _
-  sh1    : vec4f,   // shadow: inner (element) box x, y, w, h (local px)
+  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset
+  sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
+                    // element box (outer) or the shadow box (inset)
   shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
@@ -161,6 +162,18 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let ip = in.local + in.half - (b.sh1.xy + b.sh1.zw * 0.5);
   let di = sd_round_box(ip, b.sh1.zw * 0.5, b.shr);
   let aai = max(fwidth(di), 1e-4);
+  if (b.sh0.z > 0.5 && b.sh0.w > 0.5) {
+    // Inset: the quad is the padding box (pad = 0), kept inside by the
+    // outer mask; the shadow is everything outside the blurred shadow box.
+    let sigma = b.sh0.x;
+    var inner = 1.0 - smoothstep(-aai, aai, di);
+    if (sigma > 0.05) {
+      inner = shadow_cov(ip, b.sh1.zw * 0.5, b.shr, sigma);
+    }
+    let keep = 1.0 - smoothstep(-aa, aa, d);
+    let sa = b.fill.a * clamp(1.0 - inner, 0.0, 1.0) * keep;
+    return vec4f(b.fill.rgb * sa, sa) * opacity;
+  }
   if (b.sh0.z > 0.5) {
     let sigma = b.sh0.x;
     var cov = 1.0 - smoothstep(-aa, aa, d);
@@ -373,9 +386,9 @@ export class BoxPass implements RenderPass {
       const sh = b.shadow
       if (sh) {
         d[o++] = sh.blur * 0.5
-        d[o++] = shadowPad(sh.blur)
+        d[o++] = sh.inset ? 0 : shadowPad(sh.blur)
         d[o++] = 1
-        d[o++] = 0
+        d[o++] = sh.inset ? 1 : 0
         d[o++] = sh.inner.x
         d[o++] = sh.inner.y
         d[o++] = sh.inner.w
