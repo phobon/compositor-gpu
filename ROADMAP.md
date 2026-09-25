@@ -24,7 +24,10 @@
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
 - [x] Images: `<canvas>`/`<video>` sources (dynamic textures, live re-upload)
 - [x] Images: background-image url() (size/position/repeat, rounded clip, async load → scoped re-read), linear/radial gradients in the box pass, mipmaps for static textures
-- [ ] Images: shared texture atlas (one bind group for many small images); repeating/conic gradients; gradient background-size/position
+- [x] Images: shared mipmapped texture atlas (`images/imageAtlas.ts`; static
+      images ≤1024px; consecutive atlas instances draw as one call; `draws` stat)
+- [ ] Atlas eviction + edge-filled gutters; repeating/conic gradients; gradient
+      background-size/position
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
 - [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)

@@ -1,11 +1,13 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
+import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
+import { ImageAtlas, MAX_ENTRY_SIZE } from './imageAtlas'
 
 // rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
-// xf1(4)
-const FLOATS_PER_IMAGE = 32
+// xf1(4) + atlas(4)
+const FLOATS_PER_IMAGE = 36
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
 /** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
@@ -13,6 +15,10 @@ const FLAG_REPEAT = 1
 /** params.y bit 1: sample via `tile` (fit 'none') instead of the
  * vertex-interpolated `uv` (fill/cover/contain). */
 const FLAG_UV_FROM_TILE = 2
+/** params.y bit 2: the instance is packed into the shared atlas — remap the
+ * fragment's [0,1] uv into `atlas.xy..atlas.zw` (clamped half a texel in,
+ * per `params.zw`, to avoid bleeding into the entry's gutter). */
+const FLAG_ATLAS = 4
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
@@ -21,12 +27,13 @@ ${FRAME_WGSL}
 struct Img {
   rect   : vec4f,   // x,y,w,h local space (quad rect)
   uv     : vec4f,   // u0,v0,u1,v1 — used unless FLAG_UV_FROM_TILE is set
-  params : vec4f,   // opacity, flags, _, _
+  params : vec4f,   // opacity, flags, atlas half-texel inset u/v
   clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
   radius : vec4f,   // tl, tr, br, bl (px) — clips against the local box
   tile   : vec4f,   // originX, originY, w, h (local space) — fit 'none' only
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space), local box w, h
+  atlas  : vec4f,   // u0,v0,u1,v1 of the entry in atlas uv space (FLAG_ATLAS)
 };
 @group(1) @binding(0) var<storage, read> imgs : array<Img>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -86,6 +93,11 @@ fn fs(in : VOut) -> @location(0) vec4f {
       discard;
     }
   }
+  if ((flags & ${FLAG_ATLAS}u) != 0u) {
+    let inset = im.params.zw;
+    let cu = clamp(uv, inset, vec2f(1.0) - inset);
+    uv = mix(im.atlas.xy, im.atlas.zw, cu);
+  }
 
   // Rounded clip against the record's local box, not the quad — 'contain'
   // can shrink the quad inside it, but the radius still applies to the
@@ -101,35 +113,6 @@ fn fs(in : VOut) -> @location(0) vec4f {
 }
 `
 
-const BLIT_SHADER = /* wgsl */ `
-struct VOut {
-  @builtin(position) pos : vec4f,
-  @location(0) uv : vec2f,
-};
-
-@vertex
-fn vs_blit(@builtin(vertex_index) vi : u32) -> VOut {
-  // Fullscreen triangle: NDC positions that overshoot the viewport, with UV
-  // derived from the same positions (flipping y: NDC is y-up, textures are
-  // y-down).
-  var pos = array<vec2f, 3>(
-    vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
-  var out : VOut;
-  let p = pos[vi];
-  out.pos = vec4f(p, 0.0, 1.0);
-  out.uv = vec2f(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
-  return out;
-}
-
-@group(0) @binding(0) var srcTex : texture_2d<f32>;
-@group(0) @binding(1) var srcSamp : sampler;
-
-@fragment
-fn fs_blit(in : VOut) -> @location(0) vec4f {
-  return textureSample(srcTex, srcSamp, in.uv);
-}
-`
-
 interface Cached {
   view: GPUTextureView
   texture: GPUTexture
@@ -140,11 +123,12 @@ interface Cached {
 
 /**
  * Textured-quad pass for <img> and (via `dom/backgrounds.ts`)
- * `background-image` url layers. One texture per source (cached), one
- * instance per on-screen image; object-fit/position maps to the quad rect
+ * `background-image` url layers. Small static sources are packed into a
+ * shared `ImageAtlas`, so a run of on-screen atlas instances draws in one
+ * `draw(6,n,0,i0)`; anything ineligible (dynamic, or bigger than
+ * `MAX_ENTRY_SIZE`) falls back to its own cached texture and bind group,
+ * one draw per image as before. object-fit/position maps to the quad rect
  * and/or UV sub-rect, and the element's border radius clips the fragment.
- * Distinct textures mean one draw per image (draw(6,1,0,i)), each with its
- * own bind group over the shared instance buffer.
  */
 export class ImagePass implements RenderPass {
   readonly layer = 'images' as const
@@ -155,16 +139,22 @@ export class ImagePass implements RenderPass {
   private capacity = 0
   private data = new Float32Array(0)
   private cache = new WeakMap<CanvasImageSource, Cached>()
-  /** Aligned with scene.images: null where the texture isn't ready yet. */
-  private draws: (GPUBindGroup | null)[] = []
+  /** Aligned with scene.images: null (not ready), 'atlas' (shared bind
+   * group), or a standalone per-instance bind group. */
+  private draws: (GPUBindGroup | null | 'atlas')[] = []
+
+  private readonly atlas: ImageAtlas
+  private atlasBindGroup: GPUBindGroup | null = null
+  private atlasBindGroupGen = -1
+  private atlasBindGroupBuffer: GPUBuffer | null = null
 
   // Lazily-built mip-generation pipeline, shared across every non-dynamic
-  // texture (they're all the same fixed format).
-  private blitPipeline: GPURenderPipeline | null = null
-  private blitLayout: GPUBindGroupLayout | null = null
-  private blitSampler: GPUSampler | null = null
+  // texture (standalone or atlas — they're all the same fixed format).
+  private readonly mips: MipGenerator
 
   constructor(private readonly shared: Shared) {
+    this.atlas = new ImageAtlas(shared.device)
+    this.mips = new MipGenerator(shared.device)
     const { device, frameLayout } = shared
     this.group1Layout = device.createBindGroupLayout({
       entries: [
@@ -220,78 +210,6 @@ export class ImagePass implements RenderPass {
     this.capacity = cap
   }
 
-  private ensureBlitPipeline(): void {
-    if (this.blitPipeline) return
-    const { device } = this.shared
-    this.blitLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
-      ]
-    })
-    const module = device.createShaderModule({ code: BLIT_SHADER })
-    reportShaderErrors(module, 'image-blit')
-    this.blitPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [this.blitLayout]
-      }),
-      vertex: { module, entryPoint: 'vs_blit' },
-      fragment: {
-        module,
-        entryPoint: 'fs_blit',
-        targets: [{ format: 'rgba8unorm' }]
-      },
-      primitive: { topology: 'triangle-list' }
-    })
-    this.blitSampler = device.createSampler({
-      magFilter: 'linear',
-      minFilter: 'linear'
-    })
-  }
-
-  /** Downsample level 0 into every level of `texture`, one render pass
-   * each, via a fullscreen-triangle blit. */
-  private generateMips(texture: GPUTexture, mipLevelCount: number): void {
-    this.ensureBlitPipeline()
-    const pipeline = this.blitPipeline as GPURenderPipeline
-    const layout = this.blitLayout as GPUBindGroupLayout
-    const sampler = this.blitSampler as GPUSampler
-    const { device } = this.shared
-    const encoder = device.createCommandEncoder()
-    for (let level = 1; level < mipLevelCount; level++) {
-      const srcView = texture.createView({
-        baseMipLevel: level - 1,
-        mipLevelCount: 1
-      })
-      const dstView = texture.createView({
-        baseMipLevel: level,
-        mipLevelCount: 1
-      })
-      const bindGroup = device.createBindGroup({
-        layout,
-        entries: [
-          { binding: 0, resource: srcView },
-          { binding: 1, resource: sampler }
-        ]
-      })
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [
-          {
-            view: dstView,
-            loadOp: 'clear',
-            storeOp: 'store',
-            clearValue: { r: 0, g: 0, b: 0, a: 0 }
-          }
-        ]
-      })
-      pass.setPipeline(pipeline)
-      pass.setBindGroup(0, bindGroup)
-      pass.draw(3)
-      pass.end()
-    }
-    device.queue.submit([encoder.finish()])
-  }
-
   private textureFor(rec: ImageRecord): Cached | null {
     const src = rec.source
     const [w, h] = naturalSize(src)
@@ -314,9 +232,7 @@ export class ImagePass implements RenderPass {
 
     // Dynamic sources re-copy every frame, so a mip chain would just be
     // stale most of the time; only static sources get one.
-    const mipLevelCount = rec.dynamic
-      ? 1
-      : 1 + Math.floor(Math.log2(Math.max(w, h)))
+    const mipLevelCount = rec.dynamic ? 1 : mipLevelCountFor(Math.max(w, h))
     const texture = device.createTexture({
       size: [w, h],
       format: 'rgba8unorm',
@@ -331,7 +247,7 @@ export class ImagePass implements RenderPass {
       { texture },
       [w, h]
     )
-    if (mipLevelCount > 1) this.generateMips(texture, mipLevelCount)
+    if (mipLevelCount > 1) this.mips.generate(texture, mipLevelCount)
     const entry: Cached = {
       view: texture.createView(),
       texture,
@@ -352,8 +268,7 @@ export class ImagePass implements RenderPass {
     for (let i = 0; i < images.length; i++) {
       const rec = images[i]
       const o = i * FLOATS_PER_IMAGE
-      const cached = rec ? this.textureFor(rec) : null
-      if (!rec || !cached) {
+      if (!rec) {
         // Keep the instance index aligned with scene.images: zero-size quad,
         // no bind group, so draw() skips it without shifting later indices.
         d.fill(0, o, o + FLOATS_PER_IMAGE)
@@ -361,6 +276,28 @@ export class ImagePass implements RenderPass {
         continue
       }
       const [nw, nh] = naturalSize(rec.source)
+      if (nw === 0 || nh === 0) {
+        d.fill(0, o, o + FLOATS_PER_IMAGE)
+        this.draws.push(null)
+        continue
+      }
+      // Static <img>/background sources up to MAX_ENTRY_SIZE try the shared
+      // atlas first, so a texture is never allocated for them; anything
+      // else (dynamic, oversized, or an atlas that's full) falls back to
+      // its own cached texture and bind group.
+      const atlasEligible =
+        !rec.dynamic &&
+        rec.source instanceof HTMLImageElement &&
+        Math.max(nw, nh) <= MAX_ENTRY_SIZE
+      const spot = atlasEligible
+        ? this.atlas.add(rec.source as HTMLImageElement, nw, nh)
+        : null
+      const cached = spot ? null : this.textureFor(rec)
+      if (!spot && !cached) {
+        d.fill(0, o, o + FLOATS_PER_IMAGE)
+        this.draws.push(null)
+        continue
+      }
       const f = fit(rec, nw, nh)
       d[o + 0] = f.rect.x
       d[o + 1] = f.rect.y
@@ -371,9 +308,6 @@ export class ImagePass implements RenderPass {
       d[o + 6] = f.uv.u1
       d[o + 7] = f.uv.v1
       d[o + 8] = rec.opacity
-      d[o + 9] = f.flags
-      d[o + 10] = 0
-      d[o + 11] = 0
       const c = rec.clip
       d[o + 12] = c ? c.x : -1e9
       d[o + 13] = c ? c.y : -1e9
@@ -396,12 +330,34 @@ export class ImagePass implements RenderPass {
       d[o + 29] = xf[5]
       d[o + 30] = rec.local.w
       d[o + 31] = rec.local.h
+
+      if (spot) {
+        const s = this.atlas.size
+        d[o + 9] = f.flags | FLAG_ATLAS
+        d[o + 10] = 0.5 / spot.w
+        d[o + 11] = 0.5 / spot.h
+        d[o + 32] = spot.x / s
+        d[o + 33] = spot.y / s
+        d[o + 34] = (spot.x + spot.w) / s
+        d[o + 35] = (spot.y + spot.h) / s
+        this.draws.push('atlas')
+        continue
+      }
+      d[o + 9] = f.flags
+      d[o + 10] = 0
+      d[o + 11] = 0
+      d[o + 32] = 0
+      d[o + 33] = 0
+      d[o + 34] = 0
+      d[o + 35] = 0
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,
           entries: [
             { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
-            { binding: 1, resource: cached.view },
+            // Reached only when `cached` was resolved above (spot is null
+            // here, and the combined null case already `continue`d).
+            { binding: 1, resource: (cached as Cached).view },
             { binding: 2, resource: this.sampler }
           ]
         })
@@ -414,22 +370,65 @@ export class ImagePass implements RenderPass {
       0,
       images.length * FLOATS_PER_IMAGE
     )
+    this.atlas.flush()
   }
 
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
-    if (this.draws.length === 0) return
+  private ensureAtlasBindGroup(): GPUBindGroup {
+    if (
+      this.atlasBindGroup &&
+      this.atlasBindGroupGen === this.atlas.generation &&
+      this.atlasBindGroupBuffer === this.buffer
+    ) {
+      return this.atlasBindGroup
+    }
+    this.atlasBindGroup = this.shared.device.createBindGroup({
+      layout: this.group1Layout,
+      entries: [
+        { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
+        { binding: 1, resource: this.atlas.view as GPUTextureView },
+        { binding: 2, resource: this.sampler }
+      ]
+    })
+    this.atlasBindGroupGen = this.atlas.generation
+    this.atlasBindGroupBuffer = this.buffer
+    return this.atlasBindGroup
+  }
+
+  /** Consecutive atlas-backed instances collapse into one draw call;
+   * standalone ones (and gaps) draw individually / are skipped. Returns the
+   * number of draw calls issued. */
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+    if (this.draws.length === 0) return 0
     encoder.setPipeline(this.pipeline)
     const end = first + count
-    for (let i = first; i < end; i++) {
+    let issued = 0
+    let i = first
+    while (i < end) {
       const bg = this.draws[i]
-      if (!bg) continue
+      if (bg === null) {
+        i++
+        continue
+      }
+      if (bg === 'atlas') {
+        let j = i + 1
+        while (j < end && this.draws[j] === 'atlas') j++
+        encoder.setBindGroup(1, this.ensureAtlasBindGroup())
+        encoder.draw(6, j - i, 0, i)
+        issued++
+        i = j
+        continue
+      }
       encoder.setBindGroup(1, bg)
       encoder.draw(6, 1, 0, i)
+      issued++
+      i++
     }
+    return issued
   }
 
   destroy(): void {
     this.buffer?.destroy()
+    this.atlas.destroy()
   }
 }
 

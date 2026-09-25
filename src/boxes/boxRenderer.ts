@@ -406,11 +406,12 @@ export class BoxPass implements RenderPass {
     }
   }
 
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
-    if (count === 0 || !this.bindGroup) return
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+    if (count === 0 || !this.bindGroup) return 0
     encoder.setPipeline(this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
     encoder.draw(6, count, 0, first)
+    return 1
   }
 
   destroy(): void {

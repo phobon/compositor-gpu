@@ -29,9 +29,11 @@ export interface RenderPass {
   /**
    * Draw instances [first, first + count) of this layer, in scene order.
    * Called once per draw batch (Scene.batches); the renderer interleaves
-   * layers so paint order holds across boxes/images/text.
+   * layers so paint order holds across boxes/images/text. Returns the
+   * number of `encoder.draw` calls issued (the `draws` stat) — a pass may
+   * collapse several instances into one draw (e.g. atlas-backed images).
    */
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): void
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): number
   destroy(): void
 }
 

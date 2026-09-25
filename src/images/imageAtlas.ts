@@ -1,0 +1,191 @@
+import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
+import { log } from '../util/log'
+
+/** Transparent border kept around every entry, in atlas px (mip bleeding). */
+export const GUTTER = 4
+const START_SIZE = 2048
+const HARD_MAX = 4096
+/** Images bigger than this (in either dimension) never enter the atlas. */
+export const MAX_ENTRY_SIZE = 1024
+
+export interface AtlasRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+interface Entry {
+  rect: AtlasRect
+  source: HTMLImageElement
+}
+
+/** Stable key for a static image source: URL + natural size. */
+function key(source: HTMLImageElement, w: number, h: number): string {
+  const s = source.currentSrc || source.src
+  return `${s}|${w}x${h}`
+}
+
+/**
+ * One shared `rgba8unorm` texture that packs many small, static
+ * (`HTMLImageElement`) sources so an image batch can draw them with a
+ * single bind group. Shelf packing, GPU-side (there is no canvas backing
+ * this atlas — entries are copied straight from the source element via
+ * `copyExternalImageToTexture`, so unlike `GlyphAtlas` there is no 2D
+ * context to redraw from on grow/resize).
+ *
+ * Gutters are left transparent rather than filled from the image's edge
+ * pixels — the fragment shader clamps its UV a half-texel inside the entry
+ * instead, which is simpler and adequate; mip level >= 2 of a very small
+ * entry can show a faint edge darkening as it blends toward that
+ * transparent border.
+ *
+ * No eviction yet (`count` only grows) — a full atlas just stops accepting
+ * new entries (logged once) and the caller falls back to a standalone
+ * texture for anything that doesn't fit.
+ */
+export class ImageAtlas {
+  size = START_SIZE
+  /** Bumps when the GPU texture object is re-created (grow), so a pass
+   * rebuilding a bind group on this can detect it cheaply. */
+  generation = 0
+  view: GPUTextureView | null = null
+
+  private texture: GPUTexture | null = null
+  private entries = new Map<string, Entry>()
+  private shelfX = 0
+  private shelfY = 0
+  private shelfH = 0
+  private mipsDirty = false
+  private warnedFull = false
+  private readonly mips: MipGenerator
+
+  constructor(private readonly device: GPUDevice) {
+    this.mips = new MipGenerator(device)
+  }
+
+  get count(): number {
+    return this.entries.size
+  }
+
+  /** True once the atlas is at max size and has refused an entry. */
+  get full(): boolean {
+    return this.warnedFull
+  }
+
+  private maxSize(): number {
+    return Math.min(this.device.limits.maxTextureDimension2D, HARD_MAX)
+  }
+
+  private ensureTexture(): GPUTexture {
+    if (this.texture) return this.texture
+    this.texture = this.createTexture(this.size)
+    this.view = this.texture.createView()
+    return this.texture
+  }
+
+  private createTexture(size: number): GPUTexture {
+    return this.device.createTexture({
+      size: [size, size],
+      format: 'rgba8unorm',
+      mipLevelCount: mipLevelCountFor(size),
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT
+    })
+  }
+
+  /** Shelf-pack a `w`x`h` cell (plus its gutter). Null if it can't fit at
+   * the current size. */
+  private pack(w: number, h: number): { x: number; y: number } | null {
+    const cw = w + 2 * GUTTER
+    const ch = h + 2 * GUTTER
+    const s = this.size
+    if (cw > s || ch > s) return null
+    if (this.shelfX + cw > s) {
+      this.shelfY += this.shelfH
+      this.shelfX = 0
+      this.shelfH = 0
+    }
+    if (this.shelfY + ch > s) return null
+    const x = this.shelfX + GUTTER
+    const y = this.shelfY + GUTTER
+    this.shelfX += cw
+    this.shelfH = Math.max(this.shelfH, ch)
+    return { x, y }
+  }
+
+  /** Re-create the texture one step bigger (2048 -> 4096, capped at
+   * `device.limits.maxTextureDimension2D`) and re-upload every live entry
+   * at its existing coordinates — packing state is untouched, only the
+   * backing texture grows. False if already at the cap. */
+  private grow(): boolean {
+    const max = this.maxSize()
+    if (this.size >= max) return false
+    const newSize = Math.min(this.size * 2, max)
+    const texture = this.createTexture(newSize)
+    for (const e of this.entries.values()) {
+      this.device.queue.copyExternalImageToTexture(
+        { source: e.source },
+        { texture, origin: [e.rect.x, e.rect.y] },
+        [e.rect.w, e.rect.h]
+      )
+    }
+    this.texture?.destroy()
+    this.texture = texture
+    this.view = texture.createView()
+    this.size = newSize
+    this.generation++
+    this.mipsDirty = true
+    return true
+  }
+
+  /**
+   * Pack + upload `source` (natural size `w`x`h`) if it fits, returning its
+   * rect in atlas px, or null when it's ineligible or the atlas is full —
+   * the caller should fall back to a standalone texture. Idempotent: a
+   * source already in the atlas returns its existing rect without
+   * re-uploading pixels.
+   */
+  add(source: HTMLImageElement, w: number, h: number): AtlasRect | null {
+    if (w <= 0 || h <= 0) return null
+    if (Math.max(w, h) > MAX_ENTRY_SIZE) return null
+    const k = key(source, w, h)
+    const hit = this.entries.get(k)
+    if (hit) return hit.rect
+    this.ensureTexture()
+    let spot = this.pack(w, h)
+    if (!spot && this.grow()) spot = this.pack(w, h)
+    if (!spot) {
+      if (!this.warnedFull) {
+        this.warnedFull = true
+        log.warn(`ImageAtlas: ${this.size}px atlas full — falling back`)
+      }
+      return null
+    }
+    this.device.queue.copyExternalImageToTexture(
+      { source },
+      { texture: this.texture as GPUTexture, origin: [spot.x, spot.y] },
+      [w, h]
+    )
+    const rect: AtlasRect = { x: spot.x, y: spot.y, w, h }
+    this.entries.set(k, { rect, source })
+    this.mipsDirty = true
+    return rect
+  }
+
+  /** Regenerate the mip chain if the atlas changed since the last flush
+   * (at most once per frame). */
+  flush(encoder?: GPUCommandEncoder): void {
+    if (!this.mipsDirty || !this.texture) return
+    this.mips.generate(this.texture, mipLevelCountFor(this.size), encoder)
+    this.mipsDirty = false
+  }
+
+  destroy(): void {
+    this.texture?.destroy()
+    this.texture = null
+    this.view = null
+  }
+}

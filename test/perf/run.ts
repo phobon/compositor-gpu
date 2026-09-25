@@ -32,6 +32,7 @@ interface Stats {
   fallback: number
   uploads: number
   batches: number
+  draws: number
   groups: number
   readElements: number
   partialReads: number
@@ -202,6 +203,7 @@ async function main(): Promise<void> {
         images: finalStats.images,
         fallback: finalStats.fallback,
         batches: finalStats.batches,
+        draws: finalStats.draws,
         groups: finalStats.groups,
         readElements: finalStats.readElements
       },
@@ -240,6 +242,7 @@ function printTable(r: {
     images: number
     fallback: number
     batches: number
+    draws: number
     groups: number
     readElements: number
   }
@@ -261,8 +264,8 @@ function printTable(r: {
   console.log(
     `  scene: boxes=${r.counts.boxes} glyphs=${r.counts.glyphs} ` +
       `images=${r.counts.images} fallback=${r.counts.fallback} ` +
-      `batches=${r.counts.batches} groups=${r.counts.groups} ` +
-      `readElements=${r.counts.readElements}`
+      `batches=${r.counts.batches} draws=${r.counts.draws} ` +
+      `groups=${r.counts.groups} readElements=${r.counts.readElements}`
   )
   console.log('\n  metric                median (ms)   p90 (ms)')
   console.log('  --------------------------------------------')

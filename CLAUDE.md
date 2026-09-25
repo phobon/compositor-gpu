@@ -35,7 +35,9 @@ partial-read and frame-encode medians (`test/perf/out/last.json`);
 `npx tsx test/perf/profile.ts` writes a CPU profile of five full reads to
 `test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~370 ms
 (dominated by per-grapheme `Range.getBoundingClientRect`, the approach's
-floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms.
+floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms; timings swing ±30% run to run in the sandbox, so compare A/B in
+the same session. Draw calls on that page are ~2 per card because each card's
+box-shadow overlaps the previous card's text and splits the batch.
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
@@ -131,6 +133,12 @@ Conventions each pass must follow:
   are used when present; text is measured with Canvas 2D and anchored to the
   element's first/last glyph line. They become BoxRecords/GlyphRuns in
   `node.kids` (marker, ::before, kids, ::after) in the element's local frame.
+- **Image atlas.** Static `<img>`/background sources ≤1024px are packed into
+  one mipmapped `rgba8unorm` atlas (`images/imageAtlas.ts`, 4px gutters, UVs
+  clamped by a half texel in the shader); canvas/video and larger images keep
+  their own texture. `ImagePass.draw` collapses consecutive atlas-backed
+  instances into one call. `draw()` returns the number of GPU draws issued
+  (`stats().draws`). Mip generation lives in `gpu/mips.ts`.
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
   list carries `push`/`pop` markers at its cuts; `Renderer` renders the range

@@ -57,6 +57,10 @@ export interface CompositorStats {
   uploads: number
   /** Draw batches issued in the most recent frame. */
   batches: number
+  /** `encoder.draw` calls issued in the most recent frame — lower than
+   * `batches` when a pass collapses several instances into one draw (e.g.
+   * atlas-backed images). */
+  draws: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
   /** Elements whose style/geometry the most recent DOM read visited. */

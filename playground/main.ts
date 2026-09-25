@@ -67,6 +67,7 @@ async function boot(): Promise<void> {
       $('s-images').textContent = String(s.images)
       $('s-uploads').textContent = String(s.uploads)
       $('s-batches').textContent = String(s.batches)
+      $('s-draws').textContent = String(s.draws)
       $('s-groups').textContent = String(s.groups)
       $('s-read').textContent = String(s.readElements)
       $('s-read-ms').textContent = s.readMs.toFixed(2)

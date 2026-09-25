@@ -71,6 +71,10 @@ export class Renderer {
   lastBatches = 0
   /** Opacity groups composited in the most recent render. */
   lastGroups = 0
+  /** `encoder.draw` calls issued by passes in the most recent render (for
+   * debug/stats) — lower than `lastBatches` when a pass collapses several
+   * instances into one draw (e.g. atlas-backed images). */
+  lastDraws = 0
   /** Wall time spent in pass uploads in the most recent render, ms. */
   lastUploadMs = 0
   /** Wall time from createCommandEncoder to submit in the most recent
@@ -214,6 +218,7 @@ export class Renderer {
     let rp = this.beginPass(encoder, main, 'clear')
     let batches = 0
     let groups = 0
+    let draws = 0
     let slot = 0
     const list = scene.batches
     for (let i = 0; i < list.length; i++) {
@@ -246,12 +251,13 @@ export class Renderer {
       } else {
         const pass = this.passByLayer.get(batch.layer)
         if (!pass) continue
-        pass.draw(rp, batch.first, batch.count)
+        draws += pass.draw(rp, batch.first, batch.count)
         batches++
       }
     }
     this.lastBatches = batches
     this.lastGroups = groups
+    this.lastDraws = draws
     rp.end()
     this.composite.flush()
     this.device.queue.submit([encoder.finish()])

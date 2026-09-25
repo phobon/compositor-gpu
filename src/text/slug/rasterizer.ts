@@ -722,18 +722,22 @@ export class SlugText implements TextBackend {
     return this.glyphIndex(face, cp)
   }
 
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): void {
-    if (this.count === 0 || count === 0) return
+  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+    if (this.count === 0 || count === 0) return 0
+    let draws = 0
     if (this.ready && this.slugLive > 0 && this.bindGroup) {
       encoder.setPipeline(this.pipeline)
       encoder.setBindGroup(1, this.bindGroup)
       encoder.draw(6, count, 0, first)
+      draws++
     }
     if (this.fallbackCount > 0 && this.atlasBindGroup) {
       encoder.setPipeline(this.atlasPipeline)
       encoder.setBindGroup(1, this.atlasBindGroup)
       encoder.draw(6, count, 0, first)
+      draws++
     }
+    return draws
   }
 
   destroy(): void {
