@@ -1,5 +1,6 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
+import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { log, reportShaderErrors } from '../util/log'
@@ -301,7 +302,8 @@ export class ImagePass implements RenderPass {
     if (cached && cached.src === key && cached.w === w && cached.h === h) {
       // Dynamic sources (<video>, <canvas>) change every frame — re-copy pixels.
       if (dynamic) {
-        device.queue.copyExternalImageToTexture(
+        copyExternalImage(
+          device,
           { source: source as GPUCopyExternalImageSource },
           { texture: cached.texture },
           [w, h]
@@ -315,6 +317,7 @@ export class ImagePass implements RenderPass {
     // stale most of the time; only static sources get one.
     const mipLevelCount = dynamic ? 1 : mipLevelCountFor(Math.max(w, h))
     const texture = device.createTexture({
+      label: `image ${dynamic ? 'dynamic' : 'static'} ${key.slice(0, 80)}`,
       size: [w, h],
       format: 'rgba8unorm',
       mipLevelCount,
@@ -323,7 +326,8 @@ export class ImagePass implements RenderPass {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT
     })
-    device.queue.copyExternalImageToTexture(
+    copyExternalImage(
+      device,
       { source: source as GPUCopyExternalImageSource },
       { texture },
       [w, h]
@@ -396,6 +400,7 @@ export class ImagePass implements RenderPass {
     this.cache.get(img)?.texture.destroy()
     const mipLevelCount = mipLevelCountFor(Math.max(w, h))
     const texture = device.createTexture({
+      label: `image bitmap ${key.slice(0, 80)}`,
       size: [w, h],
       format: 'rgba8unorm',
       mipLevelCount,
@@ -404,10 +409,7 @@ export class ImagePass implements RenderPass {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT
     })
-    device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [
-      w,
-      h
-    ])
+    copyExternalImage(device, { source: bitmap }, { texture }, [w, h])
     if (mipLevelCount > 1) {
       this.mips.generate(texture, mipLevelCount)
     }
@@ -447,10 +449,9 @@ export class ImagePass implements RenderPass {
       el.height = h
       canvas = el
     }
-    const ctx = (canvas as HTMLCanvasElement).getContext('2d') as
-      | CanvasRenderingContext2D
-      | OffscreenCanvasRenderingContext2D
-      | null
+    const ctx = (canvas as HTMLCanvasElement).getContext('2d', {
+      willReadFrequently: true
+    }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
     if (!ctx) {
       return null
     }

@@ -103,6 +103,7 @@ export function readTextNode(
     .replace(/^['"]|['"]$/g, '')
   const fontWeight = Number.parseInt(s.fontWeight, 10) || 400
   const italic = s.fontStyle === 'italic' || s.fontStyle.startsWith('oblique')
+  const opsz = opticalSize(s, fontSize)
   const glyphs: Glyph[] = []
 
   const range = document.createRange()
@@ -152,6 +153,7 @@ export function readTextNode(
     fontFamily,
     fontStack: s.fontFamily,
     fontWeight,
+    opsz,
     italic,
     ligatures: ligaturesEnabled(s),
     color,
@@ -160,6 +162,16 @@ export function readTextNode(
     opacity: 1,
     z: 0
   }
+}
+
+/** `opsz` the browser instances a variable font at: the font-size under
+ * `font-optical-sizing: auto` (the initial value), none under `none`. */
+export function opticalSize(
+  s: CSSStyleDeclaration,
+  fontSize: number
+): number | null {
+  const v = (s as unknown as { fontOpticalSizing?: string }).fontOpticalSizing
+  return v === 'none' ? null : fontSize
 }
 
 const NO_SHADOWS: TextShadow[] = []

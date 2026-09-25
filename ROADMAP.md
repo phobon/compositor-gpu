@@ -16,11 +16,12 @@ gated by the harnesses, which all pass on the current tree:
   offsets with a clean console.
 
 **Real-site next steps (mds-home).**
-1. The site uses only system fonts, so every glyph currently goes through the
-   Canvas 2D fallback atlas (`stats().faces === 0`). Slug — and therefore
-   `onGlyph` letter animation — needs a web font shipped as TTF/OTF/WOFF
-   (opentype.js can't read WOFF2). Pick one for `/duo` and register it with
-   `@font-face`; `fonts: 'auto'` (the default) will find it.
+1. [x] Web font for Slug: `/duo` now loads Inter (`static/fonts/inter/`,
+   `src/components/Duo/DuoFont.jsx` in mds-home) — woff2 for the browser plus
+   the variable TTF in the same `@font-face` so `fonts: 'auto'` can read the
+   outlines. Before this every glyph went through the fallback atlas
+   (`stats().faces === 0`), and the last `/duo` capture drew no text at all
+   — worth checking that path too once Inter is confirmed working.
 2. Wire `src/components/Duo/GpuCompositor.jsx`: add the submodule/alias per
    `docs/INTEGRATION.md`, `yarn add typegpu opentype.js`. `compositor-gpu`
    must be imported before anything else that imports `typegpu` (it installs
@@ -31,6 +32,15 @@ gated by the harnesses, which all pass on the current tree:
    listed under Phase 3 (border styles, 1px border snapping).
 4. `mode: 'replace'` on the real page hasn't been exercised yet (the harness
    uses overlay + `setSourceHidden`); try `--replace`.
+5. [x] The three react-feather inline SVG icons (and every fallback-atlas
+   glyph) didn't draw on `/duo`: on macOS headless Chromium with the
+   SwiftShader WebGPU fallback, importing a canvas into WebGPU yields an
+   `[Invalid Texture]` source and the copy is dropped — the 2D canvas is
+   GPU-backed on a different API. `gpu/upload.ts` runs every external-image
+   upload under a validation scope; on the first canvas failure it re-issues
+   the copy from `getImageData` and routes all later canvas uploads that way
+   (the atlas/raster contexts are `willReadFrequently`). Image elements and
+   bitmaps were never affected.
 
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are
@@ -64,6 +74,13 @@ atlas eviction · isolated groups for `filter`/`mix-blend-mode` · pseudo
 - [x] Match per-element font-weight/style to a registered face (family +
       nearest-weight + italic resolution; multiple static faces)
 - [x] Derive faces from a variable font by instancing (avoid shipping N files)
+- [x] `opsz`: variable faces are instanced per (weight, optical size), opsz =
+      font-size under `font-optical-sizing: auto` — Inter's headings use the
+      Display cut like the browser does
+- [x] opentype.js 2.0 gvar bug worked around (`text/slug/gvarFix.ts`): a
+      packed point count of 0 means "all points", not "no points"; without it
+      Inter's D/R (shared point list + all-points tuple) render mangled at
+      any non-default weight
 
 ## Phase 2 — fidelity
 - [x] Image pass: <img> textures + object-fit (fill/cover/contain), sRGB target
@@ -90,8 +107,11 @@ atlas eviction · isolated groups for `filter`/`mix-blend-mode` · pseudo
       `createImageBitmap` (naturalWidth is density-corrected), SVG `<img>`
       rasterised at display size (gatsby-plugin-image sizers stalled lazy loads),
       `process.env` shim for typegpu
-- [ ] Border styles (dashed/dotted/double), background under translucent
-      borders, pixel-snapped 1px borders; external `<use href>` in inline SVG
+- [x] Border styles: dashed / dotted / double in the box shader (arc-length
+      along the rounded outer edge, pattern period fitted to the perimeter
+      like Chrome; round dots ≥3px)
+- [ ] Background under translucent borders, pixel-snapped 1px borders;
+      external `<use href>` in inline SVG
 - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
       leaks, `visibility`, inline transforms + `rotate/scale/translate`,
       colour parsing, decoration order, animation scoping; docs reconciled

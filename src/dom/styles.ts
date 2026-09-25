@@ -1,4 +1,5 @@
 import type {
+  BorderStyle,
   BoxRecord,
   Corners,
   Gradient,
@@ -210,12 +211,18 @@ export function readBox(
 }
 
 const NO_BORDER_STYLE = new Set(['none', 'hidden'])
+const BORDER_STYLE_CODE: Record<string, BorderStyle> = {
+  dashed: 1,
+  dotted: 2,
+  double: 3
+}
 
 /**
  * The four border sides, [top, right, bottom, left], or null when none
  * paints. `none`/`hidden` zero a side's width; a transparent side keeps
- * its width (it still insets the padding box) but paints nothing. Every
- * other style (dashed, dotted, double, groove, ...) is drawn solid.
+ * its width (it still insets the padding box) but paints nothing.
+ * dashed/dotted/double carry their style code; groove/ridge/inset/outset
+ * draw solid.
  */
 function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
   const side = (width: string, style: string) =>
@@ -232,8 +239,14 @@ function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
     parseColor(s.borderBottomColor),
     parseColor(s.borderLeftColor)
   ]
+  const styles: [BorderStyle, BorderStyle, BorderStyle, BorderStyle] = [
+    BORDER_STYLE_CODE[s.borderTopStyle] ?? 0,
+    BORDER_STYLE_CODE[s.borderRightStyle] ?? 0,
+    BORDER_STYLE_CODE[s.borderBottomStyle] ?? 0,
+    BORDER_STYLE_CODE[s.borderLeftStyle] ?? 0
+  ]
   const paints = widths.some((w, i) => w > 0 && (colors[i]?.a ?? 0) > 0.001)
-  return paints ? { widths, colors } : null
+  return paints ? { widths, colors, styles } : null
 }
 
 const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])

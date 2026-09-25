@@ -122,6 +122,7 @@ export class SlugText implements TextBackend {
     handle: FontHandle
     min: number
     max: number
+    opsz?: { min: number; max: number }
   }[] = []
   private instanced = new Map<string, FaceEntry>()
 
@@ -283,7 +284,8 @@ export class SlugText implements TextBackend {
         italic,
         handle,
         min: handle.wght.min,
-        max: handle.wght.max
+        max: handle.wght.max,
+        opsz: handle.opsz
       })
       log.info(
         `SlugText: +variable ${descriptor.family ?? '(any)'} wght ${
@@ -311,12 +313,14 @@ export class SlugText implements TextBackend {
   private resolveFace(
     family: string,
     weight: number,
-    italic: boolean
+    italic: boolean,
+    opsz: number | null
   ): FaceEntry | null {
     if (this.faces.length === 0 && this.variableSources.length === 0) {
       return null
     }
-    const key = `${family}|${weight}|${italic ? 1 : 0}`
+    const o = opsz === null ? null : Math.round(opsz)
+    const key = `${family}|${weight}|${italic ? 1 : 0}|${o}`
     const cached = this.resolveCache.get(key)
     if (cached !== undefined) {
       return cached
@@ -327,9 +331,9 @@ export class SlugText implements TextBackend {
     // face; faces registered without a family ('') match any run. A run
     // whose family has no face returns null and falls back to the atlas.
     const best =
-      this.instanceFor(fam, weight, italic) ??
+      this.instanceFor(fam, weight, italic, o) ??
       this.bestStatic(fam, weight, italic) ??
-      this.instanceFor('', weight, italic) ??
+      this.instanceFor('', weight, italic, o) ??
       this.bestStatic('', weight, italic)
     this.resolveCache.set(key, best)
     return best
@@ -365,13 +369,18 @@ export class SlugText implements TextBackend {
   }
 
   /**
-   * Instance a variable source at (clamped) `weight`, caching one face per
-   * distinct weight. Returns null if no variable source of `fam` qualifies.
+   * Instance a variable source at (clamped) `weight` and, when the font has
+   * an `opsz` axis and the run asks for one, (clamped, whole-px) optical
+   * size — the browser's `font-optical-sizing: auto` picks opsz = font-size,
+   * so a 96px heading and 16px body text come from different instances.
+   * One face is cached per distinct (weight, opsz). Returns null if no
+   * variable source of `fam` qualifies.
    */
   private instanceFor(
     fam: string,
     weight: number,
-    italic: boolean
+    italic: boolean,
+    opsz: number | null
   ): FaceEntry | null {
     const pool = this.variableSources.filter((v) => v.family === fam)
     if (pool.length === 0) {
@@ -384,7 +393,11 @@ export class SlugText implements TextBackend {
     }
 
     const w = Math.max(src.min, Math.min(src.max, weight))
-    const instKey = `${src.family}|${w}|${italic ? 1 : 0}`
+    const o =
+      src.opsz && opsz !== null
+        ? Math.max(src.opsz.min, Math.min(src.opsz.max, opsz))
+        : null
+    const instKey = `${src.family}|${w}|${italic ? 1 : 0}|${o}`
     const existing = this.instanced.get(instKey)
     if (existing) {
       return existing
@@ -398,11 +411,19 @@ export class SlugText implements TextBackend {
       // The source's slant, not the requested one: an upright source
       // standing in for italic gets a synthetic oblique (see fill()).
       italic: src.italic,
-      font: makeInstance(src.handle, idx, { wght: w })
+      font: makeInstance(
+        src.handle,
+        idx,
+        o === null ? { wght: w } : { wght: w, opsz: o }
+      )
     }
     this.faces.push(face)
     this.instanced.set(instKey, face)
-    log.info(`SlugText: instanced ${src.family || '(any)'} @ wght ${w}`)
+    log.info(
+      `SlugText: instanced ${src.family || '(any)'} @ wght ${w}${
+        o === null ? '' : ` opsz ${o}`
+      }`
+    )
     return face
   }
 
@@ -700,7 +721,12 @@ export class SlugText implements TextBackend {
     let i = 0
     let sCursor = total
     for (const run of scene.runs) {
-      const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
+      const face = this.resolveFace(
+        run.fontFamily,
+        run.fontWeight,
+        run.italic,
+        run.opsz
+      )
       const font = face?.font
       const ascPx = font ? font.ascender : 0
       const descPx = font ? -font.descender : 0

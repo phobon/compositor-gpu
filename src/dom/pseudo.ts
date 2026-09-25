@@ -33,7 +33,8 @@ import {
   fontMetrics,
   graphemeClass,
   graphemes,
-  ligaturesEnabled
+  ligaturesEnabled,
+  opticalSize
 } from './textRuns'
 import {
   applyAffine,
@@ -416,6 +417,7 @@ function buildRun(
       .replace(/^['"]|['"]$/g, ''),
     fontStack: s.fontFamily,
     fontWeight: Number.parseInt(s.fontWeight, 10) || 400,
+    opsz: opticalSize(s, fontSize),
     italic,
     ligatures: ligaturesEnabled(s),
     color,
@@ -628,7 +630,11 @@ export function readMarker(
       fill: stroke ? { r: 0, g: 0, b: 0, a: 0 } : color,
       gradient: null,
       border: stroke
-        ? { widths: [1, 1, 1, 1], colors: [color, color, color, color] }
+        ? {
+            widths: [1, 1, 1, 1],
+            colors: [color, color, color, color],
+            styles: [0, 0, 0, 0]
+          }
         : null,
       opacity: 1,
       z: 0,

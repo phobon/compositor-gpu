@@ -1,4 +1,5 @@
 import * as opentype from 'opentype.js'
+import { installGvarFix } from './gvarFix'
 
 /** A quadratic Bézier segment in em space (unitsPerEm normalised to 0..1). */
 export interface Quad {
@@ -63,6 +64,8 @@ export interface FontHandle {
   descender: number
   /** Weight-axis range, present only for variable fonts with a `wght` axis. */
   wght?: { min: number; def: number; max: number }
+  /** Optical-size axis range, when the font has one. */
+  opsz?: { min: number; def: number; max: number }
   /** Default ligatures keyed by first component, longest first. */
   ligatures: Map<number, Ligature[]>
 }
@@ -135,17 +138,23 @@ function readLigatures(font: opentype.Font): Map<number, Ligature[]> {
 
 /** Parse a font file once. Cheap to keep; instances share its tables. */
 export function loadFontFile(buffer: ArrayBuffer): FontHandle {
+  installGvarFix()
   const font = opentype.parse(buffer)
   const upm = font.unitsPerEm || 1000
-  const axis = fvarAxes(font).find((a) => a.tag === 'wght')
+  const axes = fvarAxes(font)
+  const range = (tag: string) => {
+    const a = axes.find((x) => x.tag === tag)
+    return a
+      ? { min: a.minValue, def: a.defaultValue, max: a.maxValue }
+      : undefined
+  }
   return {
     font,
     upm,
     ascender: (font.ascender ?? upm * 0.8) / upm,
     descender: (font.descender ?? -upm * 0.2) / upm,
-    wght: axis
-      ? { min: axis.minValue, def: axis.defaultValue, max: axis.maxValue }
-      : undefined,
+    wght: range('wght'),
+    opsz: range('opsz'),
     ligatures: readLigatures(font)
   }
 }
@@ -162,7 +171,9 @@ export function makeInstance(
 ): ParsedFont {
   const { font, upm } = handle
   const cache = new Map<number, GlyphBands>()
-  const vary = coords !== undefined && handle.wght !== undefined
+  const vary =
+    coords !== undefined &&
+    (handle.wght !== undefined || handle.opsz !== undefined)
 
   const glyphForCodePoint = (cp: number): number => {
     const g = font.charToGlyph(String.fromCodePoint(cp))

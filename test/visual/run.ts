@@ -53,7 +53,8 @@ const SECTIONS = [
   'transforms',
   'mutations',
   'pseudo',
-  'canvas'
+  'canvas',
+  'duo'
 ] as const
 
 interface Args {

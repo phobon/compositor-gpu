@@ -55,6 +55,10 @@ export interface Gradient {
  * Absent means 'doc'. */
 export type Space = 'doc' | 'viewport'
 
+/** Border-style code the box shader draws: 0 solid, 1 dashed, 2 dotted,
+ * 3 double. Packed per side into `params.x` as base-4 digits. */
+export type BorderStyle = 0 | 1 | 2 | 3
+
 export interface BoxRecord {
   kind: 'box'
   id: number
@@ -71,12 +75,13 @@ export interface BoxRecord {
   gradient?: Gradient | null
   /**
    * Per-side border, [top, right, bottom, left] (CSS order). A side with
-   * style none/hidden has width 0; every other style is drawn solid. Null
-   * when no side paints.
+   * style none/hidden has width 0. `styles` is the BorderStyle code per
+   * side; groove/ridge/inset/outset draw solid. Null when no side paints.
    */
   border: {
     widths: [number, number, number, number]
     colors: [RGBA, RGBA, RGBA, RGBA]
+    styles: [BorderStyle, BorderStyle, BorderStyle, BorderStyle]
   } | null
   /**
    * Outer box-shadow: when set, the box pass draws this record as a blurred
@@ -198,6 +203,10 @@ export interface GlyphRun {
   fontStack: string
   /** Numeric font-weight (normal=400, bold=700). */
   fontWeight: number
+  /** `opsz` axis value a variable face should be instanced at: the
+   * computed font-size under `font-optical-sizing: auto` (the browser's
+   * rule), null under `none`. Ignored by faces without the axis. */
+  opsz: number | null
   italic: boolean
   /** False when the element disables common ligatures
    * (`font-variant-ligatures: none | no-common-ligatures`, `"liga" 0`). */

@@ -1,3 +1,4 @@
+import { copyExternalImage } from '../gpu/upload'
 import type { RGBA } from '../scene/records'
 import { log } from '../util/log'
 
@@ -141,7 +142,10 @@ export class GlyphAtlas {
             width: s,
             height: s
           })
-    this.ctx = this.canvas.getContext('2d') as Ctx2D | null
+    // Read back on upload when the direct canvas import fails (gpu/upload.ts).
+    this.ctx = this.canvas.getContext('2d', {
+      willReadFrequently: true
+    }) as Ctx2D | null
     return this.ctx
   }
 
@@ -285,6 +289,7 @@ export class GlyphAtlas {
     if (!this.texture || this.texture.width !== S) {
       this.texture?.destroy()
       this.texture = device.createTexture({
+        label: `glyph-atlas ${S}`,
         size: [S, S],
         format: 'rgba8unorm',
         usage:
@@ -299,7 +304,8 @@ export class GlyphAtlas {
     if (!this.dirty) {
       return
     }
-    device.queue.copyExternalImageToTexture(
+    copyExternalImage(
+      device,
       { source: this.canvas },
       { texture: this.texture, premultipliedAlpha: true },
       [S, S]

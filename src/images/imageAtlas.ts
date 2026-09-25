@@ -1,4 +1,5 @@
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
+import { copyExternalImage } from '../gpu/upload'
 import { log } from '../util/log'
 
 /** Transparent border kept around every entry, in atlas px (mip bleeding). */
@@ -98,6 +99,7 @@ export class ImageAtlas {
 
   private createTexture(size: number): GPUTexture {
     return this.device.createTexture({
+      label: `image-atlas ${size}`,
       size: [size, size],
       format: 'rgba8unorm',
       mipLevelCount: mipLevelCountFor(size),
@@ -158,7 +160,8 @@ export class ImageAtlas {
         this.entries.delete(k)
         continue
       }
-      this.device.queue.copyExternalImageToTexture(
+      copyExternalImage(
+        this.device,
         { source: e.source },
         { texture, origin: [e.rect.x, e.rect.y] },
         [e.rect.w, e.rect.h]
@@ -218,7 +221,8 @@ export class ImageAtlas {
       }
       return null
     }
-    this.device.queue.copyExternalImageToTexture(
+    copyExternalImage(
+      this.device,
       { source: source as GPUCopyExternalImageSource },
       { texture: this.texture as GPUTexture, origin: [spot.x, spot.y] },
       [w, h]

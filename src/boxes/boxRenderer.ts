@@ -17,7 +17,7 @@ struct Box {
   radius : vec4f,   // tl, tr, br, bl
   fill   : vec4f,   // sRGB rgba
   bc0    : vec4f,   // top border colour, sRGB rgba
-  params : vec4f,   // (unused), opacity, z, space (1 = viewport)
+  params : vec4f,   // border styles (base-4 t,r,b,l), opacity, z, space
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
@@ -149,6 +149,87 @@ fn gradient_at(t : f32, start : u32, count : u32) -> vec4f {
   return c0;
 }
 
+// Arc length along the outer rounded-rect edge, clockwise from the start
+// of the top edge (just after the top-left arc), for the point on the edge
+// nearest p (centred local coords, y down). side is the winning border
+// side (0 top, 1 right, 2 bottom, 3 left), so straight runs never bleed
+// into a neighbour's parameterisation; corner arcs take the angle about
+// the corner centre. Used to lay dashes and dots along the border.
+fn edge_arc_length(p : vec2f, half : vec2f, r : vec4f, side : u32) -> f32 {
+  let q = 1.5707963;
+  let lt = 2.0 * half.x - r.x - r.y;
+  let lr = 2.0 * half.y - r.y - r.z;
+  let lb = 2.0 * half.x - r.z - r.w;
+  let ll = 2.0 * half.y - r.w - r.x;
+  // Segment starts: top, tr arc, right, br arc, bottom, bl arc, left, tl arc.
+  let s1 = lt;
+  let s2 = s1 + q * r.y;
+  let s3 = s2 + lr;
+  let s4 = s3 + q * r.z;
+  let s5 = s4 + lb;
+  let s6 = s5 + q * r.w;
+  let s7 = s6 + ll;
+  let total = s7 + q * r.x;
+  // Corner arcs: p inside a corner's radius square.
+  if (p.x > half.x - r.y && p.y < -half.y + r.y) {
+    let c = vec2f(half.x - r.y, -half.y + r.y);
+    let a = atan2(p.y - c.y, p.x - c.x); // -q (top) .. 0 (right)
+    return s1 + (a + q) * r.y;
+  }
+  if (p.x > half.x - r.z && p.y > half.y - r.z) {
+    let c = vec2f(half.x - r.z, half.y - r.z);
+    let a = atan2(p.y - c.y, p.x - c.x); // 0 .. q
+    return s3 + a * r.z;
+  }
+  if (p.x < -half.x + r.w && p.y > half.y - r.w) {
+    let c = vec2f(-half.x + r.w, half.y - r.w);
+    let a = atan2(p.y - c.y, p.x - c.x); // q .. pi
+    return s5 + (a - q) * r.w;
+  }
+  if (p.x < -half.x + r.x && p.y < -half.y + r.x) {
+    let c = vec2f(-half.x + r.x, -half.y + r.x);
+    let a = atan2(p.y - c.y, p.x - c.x); // -pi .. -q
+    return s7 + (a + 3.1415927) * r.x;
+  }
+  switch (side) {
+    case 0u: { return p.x + half.x - r.x; }
+    case 1u: { return s2 + p.y + half.y - r.y; }
+    case 2u: { return s4 + half.x - r.z - p.x; }
+    default: { return s6 + half.y - r.w - p.y; }
+  }
+}
+
+fn edge_perimeter(half : vec2f, r : vec4f) -> f32 {
+  return 4.0 * (half.x + half.y) - (2.0 - 1.5707963) * (r.x + r.y + r.z + r.w);
+}
+
+// Coverage multiplier for a dashed/dotted/double border at arc length s,
+// ring depth depth (px in from the outer edge) on a side of width w.
+// Dashes are 3w long with ~2w gaps, dots w with w gaps, both with the
+// period stretched so a whole number of them closes the loop (the browser
+// fits the pattern to the path). Dots 3px or wider are round. Double is two
+// w/3 lines with a w/3 gap.
+fn border_style_cov(style : u32, s : f32, depth : f32, w : f32,
+                    perim : f32, aa : f32) -> f32 {
+  if (style == 3u) {
+    let t = depth / max(w, 1e-4);
+    let inner = smoothstep(2.0 / 3.0 - aa / w, 2.0 / 3.0 + aa / w, t);
+    let outer = 1.0 - smoothstep(1.0 / 3.0 - aa / w, 1.0 / 3.0 + aa / w, t);
+    return max(inner, outer);
+  }
+  let dash = select(w, 3.0 * w, style == 1u);
+  let gap0 = select(w, 2.0 * w, style == 1u);
+  let n = max(1.0, round(perim / (dash + gap0)));
+  let period = perim / n;
+  let u = s - floor(s / period) * period; // 0 .. period
+  if (style == 2u && w >= 3.0) {
+    let c = vec2f(u - dash * 0.5, depth - w * 0.5);
+    return 1.0 - smoothstep(w * 0.5 - aa, w * 0.5 + aa, length(c));
+  }
+  let e = min(u, dash - u); // signed distance inside the dash, along s
+  return smoothstep(-aa, aa, e);
+}
+
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
   let b = boxes[in.idx];
@@ -214,9 +295,20 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let nd = select(dist / max(bw, vec4f(1e-6)), vec4f(1e9), bw <= vec4f(0.0));
   var bc = b.bc0;
   var best = nd.x;
-  if (nd.y < best) { bc = b.bc1; best = nd.y; }
-  if (nd.z < best) { bc = b.bc2; best = nd.z; }
-  if (nd.w < best) { bc = b.bc3; }
+  var side = 0u;
+  var sw = bw.x;
+  if (nd.y < best) { bc = b.bc1; best = nd.y; side = 1u; sw = bw.y; }
+  if (nd.z < best) { bc = b.bc2; best = nd.z; side = 2u; sw = bw.z; }
+  if (nd.w < best) { bc = b.bc3; best = nd.w; side = 3u; sw = bw.w; }
+  let style = (u32(b.params.x + 0.5) >> (2u * side)) & 3u;
+  var borderCov2 = borderCov;
+  if (style != 0u && borderCov > 0.0) {
+    let s = edge_arc_length(in.local, half, b.radius, side);
+    let perim = edge_perimeter(half, b.radius);
+    // Depth from the outer edge is -d: exact on the corner arcs too, where
+    // the per-side distance would measure to the straight edge instead.
+    borderCov2 = borderCov * border_style_cov(style, s, -d, sw, perim, aa);
+  }
 
   // Background: gradient over fill, source-over, kept premultiplied.
   var bgp = b.fill.rgb * b.fill.a;
@@ -240,8 +332,8 @@ fn fs(in : VOut) -> @location(0) vec4f {
     bga = g.a + bga * (1.0 - g.a);
   }
 
-  let rgb = (bgp * fillCov + bc.rgb * bc.a * borderCov) * opacity;
-  let a = (bga * fillCov + bc.a * borderCov) * opacity;
+  let rgb = (bgp * fillCov + bc.rgb * bc.a * borderCov2) * opacity;
+  let a = (bga * fillCov + bc.a * borderCov2) * opacity;
   return vec4f(rgb, a); // premultiplied
 }
 `
@@ -388,7 +480,12 @@ export class BoxPass implements RenderPass {
       d[o++] = top?.g ?? 0
       d[o++] = top?.b ?? 0
       d[o++] = top?.a ?? 0
-      d[o++] = 0
+      d[o++] = bd
+        ? bd.styles[0] +
+          bd.styles[1] * 4 +
+          bd.styles[2] * 16 +
+          bd.styles[3] * 64
+        : 0
       d[o++] = b.opacity
       d[o++] = b.z
       d[o++] = b.space === 'viewport' ? 1 : 0
