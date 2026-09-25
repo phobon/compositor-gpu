@@ -1,4 +1,5 @@
 import type { Shared } from '../../gpu/frame'
+import type { Glyph } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
@@ -17,6 +18,9 @@ import { SLUG_WGSL } from './shaders'
 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
 // written through the shared u32 view of the same buffer.
 const GLYPH_FLOATS = 28
+/** Max gap (px) between a component's right edge and the next one's left
+ * edge for them to count as one ligature: Chrome's split rects abut. */
+const LIGATURE_GAP = 1.5
 /** tan(14°): the browser's synthetic-oblique shear. */
 const OBLIQUE = Math.tan((14 * Math.PI) / 180)
 const BAND_COUNT = 16 // bands per glyph — must match font.ts bucketing
@@ -57,6 +61,8 @@ export class SlugText implements TextBackend {
   ready = false
   /** Glyphs drawn via the Canvas 2D fallback atlas in the last upload. */
   fallbackCount = 0
+  /** Ligature glyphs formed in the last upload (components merged). */
+  ligatureCount = 0
 
   private pipeline: GPURenderPipeline
   private layout: GPUBindGroupLayout
@@ -84,6 +90,8 @@ export class SlugText implements TextBackend {
   private slugLive = 0
   // face.idx * 2^21 + code point -> glyph index (0 = .notdef).
   private gidCache = new Map<number, number>()
+  // Per-run Slug glyph ids (0 = fallback), reused across runs.
+  private idScratch: number[] = []
 
   private faces: FaceEntry[] = []
   private loadedKeys = new Set<string>()
@@ -522,6 +530,7 @@ export class SlugText implements TextBackend {
     this.count = 0
     this.slugLive = 0
     this.fallbackCount = 0
+    this.ligatureCount = 0
     if (total === 0) return
     this.ensureGlyphCapacity(total)
     this.frameId++
@@ -570,6 +579,8 @@ export class SlugText implements TextBackend {
     const pad = ATLAS_PAD / dpr
     this.slugLive = 0
     this.fallbackCount = 0
+    this.ligatureCount = 0
+    const ids = this.idScratch
     let i = 0
     for (const run of scene.runs) {
       const face = this.resolveFace(run.fontFamily, run.fontWeight, run.italic)
@@ -586,11 +597,39 @@ export class SlugText implements TextBackend {
       // the browser does (a shear about the baseline; Slug only — the atlas
       // rasterises with `italic` in the font string, so Canvas 2D does it).
       const oblique = face && run.italic && !face.italic ? OBLIQUE : 0
-      for (const g of run.glyphs) {
+      const glyphs = run.glyphs
+      ids.length = glyphs.length
+      for (let j = 0; j < glyphs.length; j++) {
+        const g = glyphs[j] as Glyph
+        ids[j] = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
+      }
+      // Components of a ligature already drawn by an earlier instance.
+      let consumed = 0
+      for (let j = 0; j < glyphs.length; j++) {
+        const g = glyphs[j] as Glyph
         const base = i * GLYPH_FLOATS
         const qb = i * ATLAS_QUAD_FLOATS
         i++
-        const gi = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
+        if (consumed > 0) {
+          consumed--
+          f.fill(0, base, base + GLYPH_FLOATS)
+          q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
+          continue
+        }
+        let gi = ids[j] ?? 0
+        // Local width of the drawn box: the union of a ligature's component
+        // rects in the first component's frame (the pen origin is shared).
+        let w = g.local.w
+        if (gi > 0 && font && run.ligatures) {
+          const lig = font.ligatureAt(ids, j)
+          const right = lig ? ligatureRight(glyphs, j, lig.len) : null
+          if (lig && right !== null) {
+            gi = lig.by
+            w = right
+            consumed = lig.len - 1
+            this.ligatureCount++
+          }
+        }
         // Placement runs in the glyph's local line-box frame (origin at its
         // top-left, size g.local); xform maps it to doc space.
         const xf = g.xform
@@ -611,7 +650,7 @@ export class SlugText implements TextBackend {
           } else {
             f[base + 0] = 0
             f[base + 1] = 0
-            f[base + 2] = g.local.w
+            f[base + 2] = w
             f[base + 3] = g.local.h
           }
           f[base + 4] = g.offset.x
@@ -747,6 +786,41 @@ export class SlugText implements TextBackend {
     this.curveBuf.destroy()
     this.atlas.destroy()
   }
+}
+
+/**
+ * Right edge, in `glyphs[j]`'s local frame, of the union of the `len`
+ * component rects starting at j, or null when they don't form one ligature
+ * on screen: fewer than two, a gap between graphemes, a line break, or a
+ * component rect that doesn't abut the previous one. Glyphs in a run share
+ * the linear part of their xform, so a component's origin in the first's
+ * frame is `inv(lin) · (t_k − t_0)` (as decorations.ts does).
+ */
+function ligatureRight(
+  glyphs: readonly Glyph[],
+  j: number,
+  len: number
+): number | null {
+  const g0 = glyphs[j]
+  if (!g0 || len < 2) return null
+  const [a, b, c, d, tx0, ty0] = g0.xform
+  const det = a * d - b * c
+  let prevRight = g0.local.w
+  let right = prevRight
+  for (let k = 1; k < len; k++) {
+    const gk = glyphs[j + k]
+    if (!gk || gk.index !== g0.index + k) return null
+    const dx = gk.xform[4] - tx0
+    const dy = gk.xform[5] - ty0
+    const ix = det !== 0 ? (d * dx - c * dy) / det : dx
+    const iy = det !== 0 ? (a * dy - b * dx) / det : dy
+    if (Math.abs(iy) >= 1 || Math.abs(ix - prevRight) > LIGATURE_GAP) {
+      return null
+    }
+    prevRight = ix + gk.local.w
+    right = Math.max(right, prevRight)
+  }
+  return right
 }
 
 /** U+FE00–FE0F and U+E0100–E01EF. */

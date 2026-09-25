@@ -28,7 +28,7 @@ import type { BoxRecord, Glyph, GlyphRun, Rect } from '../scene/records'
 import { contextZIndex, createsStackingContext } from '../scene/stacking'
 import { parseColor } from '../util/color'
 import { px, readBox, readOpacity, readShadows } from './styles'
-import { type FontStyleLike, fontMetrics } from './textRuns'
+import { type FontStyleLike, fontMetrics, ligaturesEnabled } from './textRuns'
 import {
   type Placement,
   applyAffine,
@@ -403,6 +403,7 @@ function buildRun(
     fontStack: s.fontFamily,
     fontWeight: Number.parseInt(s.fontWeight, 10) || 400,
     italic,
+    ligatures: ligaturesEnabled(s),
     color,
     glyphs,
     opacity: 1,

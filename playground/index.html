@@ -12,7 +12,15 @@
         src: url('/InterVariable.ttf');
         font-weight: 100 900;
       }
+      /* Test asset with GSUB liga (fi fl ff ffi ffl); Inter has none. */
+      @font-face {
+        font-family: 'DejaVu Serif Play';
+        src: url('/DejaVuSerif.ttf');
+      }
       :root { color-scheme: dark; }
+      #stage p.liga {
+        max-width: none; font-size: 40px; line-height: 1.25; margin: 0;
+      }
       * { box-sizing: border-box; }
       body {
         margin: 0;
@@ -412,6 +420,17 @@
         </p>
       </section>
 
+      <section data-vr="ligatures">
+        <h2>Ligatures</h2>
+        <p class="liga">fi fl ffi ffl office waffle affluent</p>
+        <p class="liga" style="font-family: 'DejaVu Serif Play', serif;">
+          fi fl ffi ffl office waffle affluent
+        </p>
+        <p class="liga" style="font-family: 'DejaVu Serif Play', serif; font-variant-ligatures: none;">
+          fi fl ffi ffl office waffle affluent
+        </p>
+      </section>
+
       <section data-vr="emoji">
         <h2>Emoji &amp; fallback glyphs</h2>
         <p>Ship it 🚀 — 👩‍🚀 flags 🇦🇺, kanji 漢字, math ∑∫, arrows → ←</p>
@@ -595,6 +614,7 @@
       <div class="row"><span>boxes</span><b id="s-boxes">0</b></div>
       <div class="row"><span>glyphs</span><b id="s-glyphs">0</b></div>
       <div class="row"><span>fallback</span><b id="s-fallback">0</b></div>
+      <div class="row"><span>ligatures</span><b id="s-ligatures">0</b></div>
       <div class="row"><span>images</span><b id="s-images">0</b></div>
       <div class="row"><span>uploads</span><b id="s-uploads">0</b></div>
       <div class="row"><span>batches</span><b id="s-batches">0</b></div>

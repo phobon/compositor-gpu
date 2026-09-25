@@ -28,6 +28,18 @@ export interface ParsedFont {
   descender: number
   glyphForCodePoint(cp: number): number
   glyph(index: number): GlyphBands
+  /**
+   * Longest default ligature (GSUB `liga`/`clig`) whose component glyph ids
+   * start at `ids[i]`, or null. `len` counts components, `by` is the
+   * ligature glyph id.
+   */
+  ligatureAt(ids: number[], i: number): { len: number; by: number } | null
+}
+
+/** A ligature: full component glyph ids -> the ligature glyph id. */
+export interface Ligature {
+  seq: number[]
+  by: number
 }
 
 const BAND_COUNT = 16
@@ -51,6 +63,8 @@ export interface FontHandle {
   descender: number
   /** Weight-axis range, present only for variable fonts with a `wght` axis. */
   wght?: { min: number; def: number; max: number }
+  /** Default ligatures keyed by first component, longest first. */
+  ligatures: Map<number, Ligature[]>
 }
 
 // @types/opentype.js predates variable-font support, so reach the runtime API
@@ -69,6 +83,50 @@ const variationOf = (font: opentype.Font): VariationApi =>
 const fvarAxes = (font: opentype.Font): FvarAxis[] =>
   (font.tables as unknown as { fvar?: { axes: FvarAxis[] } }).fvar?.axes ?? []
 
+interface LigatureApi {
+  getLigatures(
+    feature: string,
+    script?: string,
+    lang?: string
+  ): { sub: number[]; by: number }[]
+}
+
+/**
+ * The font's default-on ligatures (`liga`, `clig`) from GSUB, for the
+ * default script and `latn` (some fonts register `liga` only under `latn`).
+ * Contextual (`calt`) and discretionary (`dlig`) ligatures are not included.
+ */
+function readLigatures(font: opentype.Font): Map<number, Ligature[]> {
+  const out = new Map<number, Ligature[]>()
+  const seen = new Set<string>()
+  const api = font.substitution as unknown as LigatureApi | undefined
+  if (!api || typeof api.getLigatures !== 'function') return out
+  for (const feature of ['liga', 'clig']) {
+    for (const script of [undefined, 'latn']) {
+      let list: { sub: number[]; by: number }[] = []
+      try {
+        list = api.getLigatures(feature, script) ?? []
+      } catch {
+        continue // no GSUB, or no such script/feature
+      }
+      for (const { sub, by } of list) {
+        const first = sub[0]
+        if (first === undefined || sub.length < 2) continue
+        const key = sub.join(',')
+        if (seen.has(key)) continue
+        seen.add(key)
+        const bucket = out.get(first) ?? []
+        bucket.push({ seq: sub.slice(), by })
+        out.set(first, bucket)
+      }
+    }
+  }
+  for (const bucket of out.values()) {
+    bucket.sort((a, b) => b.seq.length - a.seq.length)
+  }
+  return out
+}
+
 /** Parse a font file once. Cheap to keep; instances share its tables. */
 export function loadFontFile(buffer: ArrayBuffer): FontHandle {
   const font = opentype.parse(buffer)
@@ -81,7 +139,8 @@ export function loadFontFile(buffer: ArrayBuffer): FontHandle {
     descender: (font.descender ?? -upm * 0.2) / upm,
     wght: axis
       ? { min: axis.minValue, def: axis.defaultValue, max: axis.maxValue }
-      : undefined
+      : undefined,
+    ligatures: readLigatures(font)
   }
 }
 
@@ -127,13 +186,31 @@ export function makeInstance(
     return result
   }
 
+  const ligatureAt = (
+    ids: number[],
+    i: number
+  ): { len: number; by: number } | null => {
+    const first = ids[i]
+    if (first === undefined) return null
+    const bucket = handle.ligatures.get(first)
+    if (!bucket) return null
+    for (const { seq, by } of bucket) {
+      if (i + seq.length > ids.length) continue
+      let k = 1
+      while (k < seq.length && ids[i + k] === seq[k]) k++
+      if (k === seq.length) return { len: seq.length, by }
+    }
+    return null
+  }
+
   return {
     fontId,
     unitsPerEm: upm,
     ascender: handle.ascender,
     descender: handle.descender,
     glyphForCodePoint,
-    glyph
+    glyph,
+    ligatureAt
   }
 }
 

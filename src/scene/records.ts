@@ -152,6 +152,9 @@ export interface GlyphRun {
   /** Numeric font-weight (normal=400, bold=700). */
   fontWeight: number
   italic: boolean
+  /** False when the element disables common ligatures
+   * (`font-variant-ligatures: none | no-common-ligatures`, `"liga" 0`). */
+  ligatures: boolean
   color: RGBA
   glyphs: Glyph[]
   /** Multiplier applied by the pass. The reader writes 1: an element's

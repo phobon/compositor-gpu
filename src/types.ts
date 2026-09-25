@@ -53,6 +53,8 @@ export interface CompositorStats {
   glyphs: number
   /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
   fallback: number
+  /** Ligature glyphs formed (GSUB liga/clig) in the last text upload. */
+  ligatures: number
   /** Layers re-uploaded in the most recent frame (0..3). */
   uploads: number
   /** Draw batches issued in the most recent frame. */

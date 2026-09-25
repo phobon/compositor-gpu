@@ -30,6 +30,7 @@ mkdirSync(goldenDir, { recursive: true })
 const SECTIONS = [
   'text',
   'decorations',
+  'ligatures',
   'emoji',
   'boxes',
   'shadows',
@@ -176,7 +177,7 @@ async function main(): Promise<void> {
       )
     }
     console.log(
-      `[visual] compositor active — boxes=${stats.boxes} glyphs=${stats.glyphs} images=${stats.images}`
+      `[visual] compositor active — boxes=${stats.boxes} glyphs=${stats.glyphs} images=${stats.images} ligatures=${stats.ligatures}`
     )
 
     for (const name of sections) {

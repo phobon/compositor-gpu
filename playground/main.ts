@@ -64,6 +64,7 @@ async function boot(): Promise<void> {
       $('s-boxes').textContent = String(s.boxes)
       $('s-glyphs').textContent = String(s.glyphs)
       $('s-fallback').textContent = String(s.fallback)
+      $('s-ligatures').textContent = String(s.ligatures)
       $('s-images').textContent = String(s.images)
       $('s-uploads').textContent = String(s.uploads)
       $('s-batches').textContent = String(s.batches)

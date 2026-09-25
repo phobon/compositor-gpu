@@ -14,7 +14,9 @@
 - [x] Validate the Slug shader in-browser; fix winding sign + band selection
 - [x] Analytic anti-aliasing (signed sub-pixel coverage + 3-tap vertical AA)
 - [x] Resolve FontFace → bytes at runtime in `prepare()`
-- [ ] Real shaped glyph ids (cmap + browser shaping) for ligatures/bidi
+- [x] Ligatures via GSUB `liga`/`clig` matching (fi/fl/ffi/ffl); honours
+      `font-variant-ligatures` / `"liga" 0`
+- [ ] `calt` contextual alternates (Inter arrows), `dlig`; bidi verification
 - [x] On-demand per-glyph band upload with an LRU
 - [x] Match per-element font-weight/style to a registered face (family +
       nearest-weight + italic resolution; multiple static faces)

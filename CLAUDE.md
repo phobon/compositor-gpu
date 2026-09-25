@@ -161,9 +161,12 @@ provenance. Pipeline:
 
 1. `dom/textRuns.ts` ranges over each **grapheme** (`Intl.Segmenter`) in a text
    node and takes its client rect — this is how the browser's shaping, kerning,
-   bidi and line breaking are inherited for free. `glyphId` is currently the
-   grapheme's **first code point**, not a real glyph index; `SlugText` remaps it
-   through the font cmap. Ligatures are therefore approximate.
+   bidi and line breaking are inherited for free. `glyphId` is the
+   grapheme's **first code point**; `SlugText` remaps it through the font cmap.
+   Ligatures: `font.ts` builds a `liga`/`clig` lookup from GSUB and the
+   rasterizer draws the ligature glyph over adjacent, abutting, same-line
+   component graphemes (Chrome splits a ligature's advance across them), so
+   fi/fl/ffi match the browser; `calt` contextual alternates are not applied.
 2. `font.ts` (opentype.js) flattens each outline to quadratics normalised into
    the glyph's own tight bbox `[0,1]²`, **y-up**, and buckets them into 16
    horizontal bands. It reads `glyph.path` (font units, y-up) — *not*

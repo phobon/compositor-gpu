@@ -28,7 +28,8 @@ function graphemes(text: string): string[] {
  * Extract per-glyph geometry from a single text node by ranging over each
  * grapheme and reading its client rect. This inherits the browser's shaping,
  * kerning, bidi and line breaks — the whole point of "replicating the HTML
- * text". Ligatures make per-grapheme rects approximate; acceptable for v1.
+ * text". Chrome splits a ligature's advance across its graphemes' rects;
+ * the Slug backend merges those back into the ligature glyph.
  *
  * NOTE: getClientRects here is a forced layout read. The caller MUST batch all
  * of these before any GPU write in a frame (see observer/sync).
@@ -99,11 +100,21 @@ export function readTextNode(
     fontStack: s.fontFamily,
     fontWeight,
     italic,
+    ligatures: ligaturesEnabled(s),
     color,
     glyphs,
     opacity: 1,
     z: 0
   }
+}
+
+/** Whether the browser applies the font's common ligatures (liga/clig). */
+export function ligaturesEnabled(
+  s: Pick<CSSStyleDeclaration, 'fontVariantLigatures' | 'fontFeatureSettings'>
+): boolean {
+  const v = s.fontVariantLigatures ?? ''
+  if (v === 'none' || v.includes('no-common-ligatures')) return false
+  return !/["']liga["']\s+(0|off)\b/.test(s.fontFeatureSettings ?? '')
 }
 
 export interface FontMetrics {

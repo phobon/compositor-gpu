@@ -30,6 +30,9 @@ importers:
       '@webgpu/types':
         specifier: ^0.1.51
         version: 0.1.74
+      dejavu-fonts-ttf:
+        specifier: ^2.37.3
+        version: 2.37.3
       pixelmatch:
         specifier: ^7.2.0
         version: 7.2.0
@@ -726,6 +729,9 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  dejavu-fonts-ttf@2.37.3:
+    resolution: {integrity: sha512-f1hd7jJbeQa1VWcw+K2KrTXS50zTMaHpVC4XIKJpNcDeYR5ajMtj/iLlQDYNvLOKamUB3ARVVCf79lNwNVztSQ==}
 
   diff@8.0.4:
     resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
@@ -1482,6 +1488,8 @@ snapshots:
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
+
+  dejavu-fonts-ttf@2.37.3: {}
 
   diff@8.0.4: {}
 
