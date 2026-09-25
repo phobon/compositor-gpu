@@ -1,7 +1,7 @@
 {
   "name": "compositor-gpu",
   "version": "0.0.1",
-  "description": "Mirror a live DOM onto the GPU — boxes, images, and Slug-rendered text — kept in step with the page.",
+  "description": "Mirror a live DOM onto the GPU \u2014 boxes, images, and Slug-rendered text \u2014 kept in step with the page.",
   "type": "module",
   "license": "MIT",
   "author": "Bonobo",
@@ -9,7 +9,9 @@
     "type": "git",
     "url": "https://github.com/phobon/compositor-gpu.git"
   },
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/util/env.ts"
+  ],
   "main": "./dist/compositor-gpu.js",
   "module": "./dist/compositor-gpu.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +34,8 @@
     "lint:fix": "biome check --write src",
     "format": "biome format --write .",
     "test:visual": "tsx test/visual/run.ts",
-    "test:perf": "tsx test/perf/run.ts"
+    "test:perf": "tsx test/perf/run.ts",
+    "test:site": "tsx test/site/run.ts"
   },
   "dependencies": {
     "opentype.js": "^2.0.0",

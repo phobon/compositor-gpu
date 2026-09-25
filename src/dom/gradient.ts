@@ -1,4 +1,4 @@
-import type { Gradient, GradientStop, RGBA, Rect } from '../scene/records'
+import type { Gradient, GradientStop, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
 

@@ -1,5 +1,5 @@
 import type { Layer } from '../types'
-import { type DrawBatch, buildBatches, unionRect } from './batches'
+import { buildBatches, type DrawBatch, unionRect } from './batches'
 import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
 import type { OpacityGroup } from './stacking'
 

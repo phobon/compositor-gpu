@@ -88,7 +88,7 @@ export function readTextNode(
   startIndex: number
 ): GlyphRun | null {
   const text = node.nodeValue
-  if (!text || !text.trim()) {
+  if (!text?.trim()) {
     return null
   }
   // Hidden text paints nothing (and so no decorations); a descendant

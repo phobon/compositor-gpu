@@ -15,9 +15,19 @@ export interface AtlasRect {
   h: number
 }
 
+/** A source `add()` can pack: a live `<img>` (revalidated on grow) or an
+ * already-rasterised canvas (e.g. an SVG rasterised at display size — always
+ * treated as live, since its pixels only change when the caller mints a new
+ * canvas under a new key). */
+export type AtlasSource = HTMLImageElement | HTMLCanvasElement | OffscreenCanvas
+/** A source `add()` can copy pixels from — an `AtlasSource`, or an
+ * `ImageBitmap` decoded off an `HTMLImageElement` to sidestep density
+ * correction (see `ImagePass`'s bitmap cache). */
+export type AtlasCopySource = AtlasSource | ImageBitmap
+
 interface Entry {
   rect: AtlasRect
-  source: HTMLImageElement
+  source: AtlasSource
 }
 
 /** Stable key for a static image source: URL + natural size. */
@@ -139,10 +149,11 @@ export class ImageAtlas {
     for (const [k, e] of this.entries) {
       const img = e.source
       const live =
-        img.complete &&
-        img.naturalWidth === e.rect.w &&
-        img.naturalHeight === e.rect.h &&
-        key(img, e.rect.w, e.rect.h) === k
+        !(img instanceof HTMLImageElement) ||
+        (img.complete &&
+          img.naturalWidth === e.rect.w &&
+          img.naturalHeight === e.rect.h &&
+          key(img, e.rect.w, e.rect.h) === k)
       if (!live) {
         this.entries.delete(k)
         continue
@@ -163,20 +174,34 @@ export class ImageAtlas {
   }
 
   /**
-   * Pack + upload `source` (natural size `w`x`h`) if it fits, returning its
-   * rect in atlas px, or null when it's ineligible or the atlas is full —
-   * the caller should fall back to a standalone texture. Idempotent: a
-   * source already in the atlas returns its existing rect without
-   * re-uploading pixels.
+   * Pack + upload `source` (size `w`x`h`) if it fits, returning its rect in
+   * atlas px, or null when it's ineligible or the atlas is full — the caller
+   * should fall back to a standalone texture. Idempotent: a source already
+   * in the atlas (by key) returns its existing rect without re-uploading
+   * pixels. `explicitKey` lets a caller key a canvas source itself (e.g. an
+   * SVG rasterised at display size, keyed by `src@WxH`) — a canvas has no
+   * URL of its own to derive one from. `trackSource`, when given, is what
+   * gets recorded for later `grow()` revalidation instead of `source` — an
+   * `ImageBitmap` is transient (the caller closes it right after this call),
+   * so a bitmap-backed entry tracks the originating `<img>` instead; `grow()`
+   * already drops an entry it can't revalidate against rather than
+   * re-copying from the wrong pixels, so this never reintroduces the crop
+   * `source` was decoded to avoid.
    */
-  add(source: HTMLImageElement, w: number, h: number): AtlasRect | null {
+  add(
+    source: AtlasCopySource,
+    w: number,
+    h: number,
+    explicitKey?: string,
+    trackSource?: AtlasSource
+  ): AtlasRect | null {
     if (w <= 0 || h <= 0) {
       return null
     }
     if (Math.max(w, h) > MAX_ENTRY_SIZE) {
       return null
     }
-    const k = key(source, w, h)
+    const k = explicitKey ?? key(source as HTMLImageElement, w, h)
     const hit = this.entries.get(k)
     if (hit) {
       return hit.rect
@@ -194,14 +219,25 @@ export class ImageAtlas {
       return null
     }
     this.device.queue.copyExternalImageToTexture(
-      { source },
+      { source: source as GPUCopyExternalImageSource },
       { texture: this.texture as GPUTexture, origin: [spot.x, spot.y] },
       [w, h]
     )
     const rect: AtlasRect = { x: spot.x, y: spot.y, w, h }
-    this.entries.set(k, { rect, source })
+    this.entries.set(k, {
+      rect,
+      source: trackSource ?? (source as AtlasSource)
+    })
     this.mipsDirty = true
     return rect
+  }
+
+  /** Pure lookup: the rect already packed under `explicitKey`, or null if
+   * nothing has been packed for it yet. Never packs or copies — used by a
+   * caller (e.g. `ImagePass`'s async bitmap cache) that must not trigger a
+   * synchronous copy before it has real pixels to copy from. */
+  get(explicitKey: string): AtlasRect | null {
+    return this.entries.get(explicitKey)?.rect ?? null
   }
 
   /** Regenerate the mip chain if the atlas changed since the last flush

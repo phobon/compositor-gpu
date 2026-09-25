@@ -43,6 +43,20 @@ spans whole paragraphs and blocked every merge), and shadow records use a
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
+**Site harness**: `npm run test:site -- --url <url>` (`test/site/run.ts`)
+checks DOM-vs-GPU parity on an arbitrary real page instead of the playground.
+It builds a self-contained ES bundle of `src/index.ts` (typegpu/opentype.js
+bundled in, cached by `src/` mtime), injects it via a routed same-origin
+script so a default `script-src 'self'` CSP still allows it, mounts a
+compositor over `--root` (default `body`), and diffs DOM-only vs GPU-only
+screenshots at each `--scroll` offset (default `0,600,1200`, clamped to page
+height). With no `--url` it targets the playground's own `?vr` mode; against
+a page that already mounts the library itself, `--bundle-url` skips injection
+and expects `window.__site`. Console errors/warnings, uncaught exceptions,
+and any `SlugText` faces that failed to resolve (CORS/404 on an `@font-face`
+`url()`) are collected and printed in a final summary; parity is informational
+unless `--parity-max` is passed.
+
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
 bundles `src/index.ts` as an ES library with `typegpu` and `opentype.js`
 external. `@/*` aliases `src/*` in both tsconfig and vite.
@@ -157,6 +171,14 @@ Conventions each pass must follow:
   their own texture. `ImagePass.draw` collapses consecutive atlas-backed
   instances into one call. `draw()` returns the number of GPU draws issued
   (`stats().draws`). Mip generation lives in `gpu/mips.ts`.
+- **Inline SVG and SVG images.** An inline `<svg>` root becomes one
+  ImageRecord (`dom/svg.ts`: cloned, computed `color`/`fill`/`stroke` baked
+  in, serialised to a `data:` URL, cached by FNV-1a hash of markup+size); its
+  subtree is never walked. SVG sources are rasterised at DISPLAY size, never
+  natural size (a 2560² gatsby sizer took seconds). Plain `<img>` sources go
+  through `createImageBitmap` because `naturalWidth` is density-corrected for
+  `srcset` images while the decoded bitmap is not. Borders are per side
+  (`border.widths`/`colors`, mitred in the shader).
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
   list carries `push`/`pop` markers at its cuts; `Renderer` renders the range

@@ -9,17 +9,17 @@ import type {
 } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import {
-  type OpacityGroup,
-  type StackingContext,
   assignPaintOrder,
   contextZIndex,
-  createsStackingContext
+  createsStackingContext,
+  type OpacityGroup,
+  type StackingContext
 } from '../scene/stacking'
 import type { Layer } from '../types'
 import { disposeBackgrounds, readBackgroundImage } from './backgrounds'
 import {
-  type Decoration,
   buildDecorationBoxes,
+  type Decoration,
   propagateDecorations
 } from './decorations'
 import {
@@ -41,14 +41,15 @@ import {
   setReadSpace,
   toDocRect
 } from './styles'
+import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
 import { contentHeight, readTextNode } from './textRuns'
 import {
-  type Mat2,
-  type Placement,
   affine,
   composeIndividual,
   composeLinear,
   hasTransform,
+  type Mat2,
+  type Placement,
   rectPlacement,
   solveLocalSize,
   solveTranslation,
@@ -481,6 +482,7 @@ export class SceneReader {
   /** Drop pending asset callbacks and the element tree. */
   destroy(): void {
     disposeBackgrounds(this)
+    disposeSvgImages(this)
     this.tree = null
     this.nodes = new WeakMap()
   }
@@ -550,6 +552,9 @@ export class SceneReader {
     const decor = layers.has('text')
       ? propagateDecorations(el, s, parentDecor)
       : null
+    // An inline svg root paints as one rasterised image; nothing inside its
+    // subtree gets its own record (see svg.ts).
+    const svgRoot = isInlineSvgRoot(el)
 
     let own = NO_RECORDS
     if (layers.has('boxes')) {
@@ -573,6 +578,21 @@ export class SceneReader {
         el.tagName === 'VIDEO')
     ) {
       const rec = readImageRecord(el, s, rect, scene.allocId(), clip, place)
+      if (rec) {
+        own = own.length ? [...own, rec] : [rec]
+      }
+    }
+    if (layers.has('images') && svgRoot) {
+      const rec = readSvgRecord(
+        el as SVGSVGElement,
+        s,
+        rect,
+        scene.allocId(),
+        clip,
+        place,
+        this,
+        () => this.onAsset(el)
+      )
       if (rec) {
         own = own.length ? [...own, rec] : [rec]
       }
@@ -626,7 +646,14 @@ export class SceneReader {
       ctxZ: isContext ? contextZIndex(s) : 0,
       childClip,
       alpha,
-      fragmented: display === 'inline' || display === 'contents',
+      // A svg root is a replaced element regardless of its computed
+      // display (browsers default it to inline): its measured rect always
+      // bounds its rasterised content, so it stays a usable partial-read
+      // boundary (see selectBoundaries) instead of forcing mutations inside
+      // it to escalate to its parent.
+      fragmented: svgRoot
+        ? false
+        : display === 'inline' || display === 'contents',
       float: s.float !== 'none',
       lin,
       decor,
@@ -634,51 +661,53 @@ export class SceneReader {
     }
     this.nodes.set(el, node)
 
-    for (const child of el.childNodes) {
-      if (child.nodeType === Node.ELEMENT_NODE) {
-        const kid = this.readNode(
-          child as Element,
-          node,
-          childClip,
-          false,
-          lin,
-          decor,
-          cb
-        )
-        if (kid) {
-          node.kids.push(kid)
-        }
-        setReadSpace(space) // a fixed child switched it
-      } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
-        const run = readTextNode(
-          child as Text,
-          s,
-          scene.allocId(),
-          0, // fontId resolved by the text backend in a later stage
-          0
-        )
-        if (run) {
-          if (lin) {
-            transformGlyphs(run.glyphs, lin, s)
+    if (!svgRoot) {
+      for (const child of el.childNodes) {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          const kid = this.readNode(
+            child as Element,
+            node,
+            childClip,
+            false,
+            lin,
+            decor,
+            cb
+          )
+          if (kid) {
+            node.kids.push(kid)
           }
-          run.clip = childClip
-          if (decor?.length) {
-            const d = buildDecorationBoxes(run, decor, childClip, () =>
-              scene.allocId()
-            )
-            if (d.under.length) {
-              run.decorations = d.under
+          setReadSpace(space) // a fixed child switched it
+        } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
+          const run = readTextNode(
+            child as Text,
+            s,
+            scene.allocId(),
+            0, // fontId resolved by the text backend in a later stage
+            0
+          )
+          if (run) {
+            if (lin) {
+              transformGlyphs(run.glyphs, lin, s)
             }
-            if (d.over.length) {
-              run.decorationsOver = d.over
+            run.clip = childClip
+            if (decor?.length) {
+              const d = buildDecorationBoxes(run, decor, childClip, () =>
+                scene.allocId()
+              )
+              if (d.under.length) {
+                run.decorations = d.under
+              }
+              if (d.over.length) {
+                run.decorationsOver = d.over
+              }
             }
+            node.kids.push(run)
           }
-          node.kids.push(run)
         }
       }
-    }
-    if (layers.has('boxes') || layers.has('text')) {
-      this.readPseudos(node, s, place, display)
+      if (layers.has('boxes') || layers.has('text')) {
+        this.readPseudos(node, s, place, display)
+      }
     }
     if (space === 'viewport') {
       tagViewport(node)

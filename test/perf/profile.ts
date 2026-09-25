@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser } from 'playwright'
-import { type ViteDevServer, createServer } from 'vite'
+import { createServer, type ViteDevServer } from 'vite'
 import { launchWithFallback } from '../lib/browser'
 
 const here = dirname(fileURLToPath(import.meta.url))

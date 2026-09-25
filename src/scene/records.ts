@@ -69,7 +69,15 @@ export interface BoxRecord {
   fill: RGBA
   /** First background-image layer when it is a gradient; drawn over fill. */
   gradient?: Gradient | null
-  border: { width: number; color: RGBA } | null
+  /**
+   * Per-side border, [top, right, bottom, left] (CSS order). A side with
+   * style none/hidden has width 0; every other style is drawn solid. Null
+   * when no side paints.
+   */
+  border: {
+    widths: [number, number, number, number]
+    colors: [RGBA, RGBA, RGBA, RGBA]
+  } | null
   /**
    * Outer box-shadow: when set, the box pass draws this record as a blurred
    * rounded rect of `fill` (the shadow colour) — `rect`/`local`/`radius`

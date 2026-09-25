@@ -79,6 +79,21 @@ export const GpuCompositor = ({ enabled = false, onGlyph }) => {
 Enable it with `?gpu=1` (see the drop-in on `/duo`), so the default page is
 untouched and turning the flag off leaves it pixel-identical.
 
+## Measuring parity on your site
+
+`npm run test:site -- --url <url>` checks DOM-vs-GPU parity on a real page
+without integrating anything first: it builds a self-contained bundle, injects
+it, mounts a compositor, and screenshots DOM-only vs GPU-only at a few scroll
+offsets (`--scroll 0,600,1200` by default). Useful flags: `--root "#app"` to
+scope the mirrored subtree, `--only-layers boxes,text` to match your `layers`
+option, `--replace` to test `mode: 'replace'`. It prints console
+errors/warnings, uncaught exceptions, and any font faces that failed to
+resolve — usually a CORS or 404 on an `@font-face` `url()`, since `fonts:
+'auto'` fetches those from the page. If your CSP blocks the harness's own
+injected `<script type="module">`, mount the library yourself (as above) and
+run with `--bundle-url`, which skips injection and expects `window.__site` to
+already hold your compositor.
+
 ## Notes
 - Dynamic `import()` keeps TypeGPU/opentype out of the SSR bundle and off the
   critical path.
@@ -88,3 +103,12 @@ untouched and turning the flag off leaves it pixel-identical.
   `fps`, …) — wire it into a debug overlay behind the same flag.
 - The submodule pins a commit; bump it with `git -C compositor-gpu pull` then
   commit the pointer in mds-home, exactly like `MDS-web-ui`.
+
+## Note on `typegpu` and `process.env`
+
+`typegpu` reads `globalThis.process.env.NODE_ENV` when it is first imported.
+Bundlers replace the bare `process.env.NODE_ENV` form only, so in a browser
+without a `process` global the import would throw. `compositor-gpu` installs a
+minimal shim (`src/util/env.ts`) before importing `typegpu`, so importing
+`compositor-gpu` first is enough; if your app imports `typegpu` directly
+elsewhere, make sure `compositor-gpu` is imported before it.

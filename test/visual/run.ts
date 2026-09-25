@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
 import type { Browser, ElementHandle, Page } from 'playwright'
 import { PNG } from 'pngjs'
-import { type ViteDevServer, createServer } from 'vite'
+import { createServer, type ViteDevServer } from 'vite'
 import { launchWithFallback } from '../lib/browser'
 
 const here = dirname(fileURLToPath(import.meta.url))

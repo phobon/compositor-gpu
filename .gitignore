@@ -8,3 +8,5 @@ test/visual/out/
 test/visual/golden/
 # perf harness output
 test/perf/out/
+# site-parity harness output (captures + the injected bundle)
+test/site/out/

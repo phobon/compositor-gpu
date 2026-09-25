@@ -3,8 +3,8 @@ import type {
   Corners,
   Gradient,
   ImageRecord,
-  RGBA,
   Rect,
+  RGBA,
   Space
 } from '../scene/records'
 import { parseColor } from '../util/color'
@@ -163,17 +163,15 @@ export function readBox(
   }
 
   const fill = parseColor(s.backgroundColor)
-  const borderWidth = px(s.borderTopWidth)
-  const borderColor = parseColor(s.borderTopColor)
+  const border = readBorder(s)
   const hasFill = fill.a > 0.001
-  const hasBorder = borderWidth > 0 && borderColor.a > 0.001
   if (rect.width <= 0 || rect.height <= 0) {
     return null
   }
 
   // First background-image layer, when it is a gradient (url() layers are
   // image records, handled elsewhere). Resolved against the padding box
-  // (background-origin: padding-box), inset by the same uniform border width
+  // (background-origin: padding-box), inset per side by the border widths
   // the shader uses, so the two agree.
   const lw = place.local.w
   const lh = place.local.h
@@ -183,16 +181,16 @@ export function readBox(
   if (bgi && bgi !== 'none') {
     const layer = firstBackgroundLayer(bgi)
     if (layer && !layer.startsWith('url(')) {
-      const inset = hasBorder ? borderWidth : 0
+      const [bt, br, bb, bl] = border ? border.widths : [0, 0, 0, 0]
       gradient = parseGradient(layer, {
-        x: inset,
-        y: inset,
-        width: Math.max(0, lw - 2 * inset),
-        height: Math.max(0, lh - 2 * inset)
+        x: bl,
+        y: bt,
+        width: Math.max(0, lw - bl - br),
+        height: Math.max(0, lh - bt - bb)
       })
     }
   }
-  if (!hasFill && !hasBorder && !gradient) {
+  if (!hasFill && !border && !gradient) {
     return null
   }
 
@@ -205,10 +203,37 @@ export function readBox(
     radius: readCorners(s, localRect),
     fill,
     gradient,
-    border: hasBorder ? { width: borderWidth, color: borderColor } : null,
+    border,
     opacity: 1,
     z: 0
   }
+}
+
+const NO_BORDER_STYLE = new Set(['none', 'hidden'])
+
+/**
+ * The four border sides, [top, right, bottom, left], or null when none
+ * paints. `none`/`hidden` zero a side's width; a transparent side keeps
+ * its width (it still insets the padding box) but paints nothing. Every
+ * other style (dashed, dotted, double, groove, ...) is drawn solid.
+ */
+function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
+  const side = (width: string, style: string) =>
+    NO_BORDER_STYLE.has(style) ? 0 : px(width)
+  const widths: [number, number, number, number] = [
+    side(s.borderTopWidth, s.borderTopStyle),
+    side(s.borderRightWidth, s.borderRightStyle),
+    side(s.borderBottomWidth, s.borderBottomStyle),
+    side(s.borderLeftWidth, s.borderLeftStyle)
+  ]
+  const colors: [RGBA, RGBA, RGBA, RGBA] = [
+    parseColor(s.borderTopColor),
+    parseColor(s.borderRightColor),
+    parseColor(s.borderBottomColor),
+    parseColor(s.borderLeftColor)
+  ]
+  const paints = widths.some((w, i) => w > 0 && (colors[i]?.a ?? 0) > 0.001)
+  return paints ? { widths, colors } : null
 }
 
 const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])
@@ -234,6 +259,29 @@ export function clipRectFor(s: CSSStyleDeclaration, r: Rect): Rect | null {
   }
 }
 
+const EMPTY_SVG = /<svg[^>]*>\s*<\/svg>/i
+
+/**
+ * True for a `data:image/svg+xml` URI whose markup has no drawing elements —
+ * just an empty `<svg>` root (gatsby-plugin-image's transparent sizer image,
+ * emitted at natural sizes like 2560x2560 that would otherwise be rasterised
+ * for nothing). Any other SVG, and any non-svg/non-data URI, is false.
+ */
+export function isEmptySvgDataUri(src: string): boolean {
+  const m =
+    /^data:image\/svg\+xml(?:;charset=[^;,]*)?(;base64)?,([\s\S]*)$/i.exec(src)
+  if (!m) {
+    return false
+  }
+  let markup: string
+  try {
+    markup = m[1] ? atob(m[2] as string) : decodeURIComponent(m[2] as string)
+  } catch {
+    return false
+  }
+  return EMPTY_SVG.test(markup)
+}
+
 /**
  * Build an ImageRecord for a replaced element (<img>, <canvas>, <video>), or
  * null when it isn't ready to sample. Canvas and video are marked dynamic so
@@ -257,6 +305,11 @@ export function readImageRecord(
   if (el.tagName === 'IMG') {
     const img = el as HTMLImageElement
     if (!img.complete || img.naturalWidth === 0) {
+      return null
+    }
+    if (isEmptySvgDataUri(img.currentSrc || img.src)) {
+      // gatsby-plugin-image's transparent sizer: `<svg ...></svg>` with no
+      // drawing elements at all — fully transparent, nothing to paint.
       return null
     }
     source = img

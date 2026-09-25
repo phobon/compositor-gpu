@@ -13,7 +13,7 @@
 // Only `text-decoration-style: solid` is drawn faithfully; dotted, dashed,
 // wavy and double all render as a plain solid line (no dash/wave pattern,
 // no second stroke) — a known gap, not a bug.
-import type { BoxRecord, Glyph, GlyphRun, RGBA, Rect } from '../scene/records'
+import type { BoxRecord, Glyph, GlyphRun, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
 import { fontMetrics, measureGlyphInk } from './textRuns'
 import { type Placement, placementAabb, subPlacement } from './transform'

@@ -3,7 +3,7 @@ import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 48 // 12 * vec4f
+const FLOATS_PER_BOX = 64 // 16 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
@@ -16,8 +16,8 @@ struct Box {
   xf1    : vec4f,   // tx, ty (doc space), w, h (local size, CSS px)
   radius : vec4f,   // tl, tr, br, bl
   fill   : vec4f,   // sRGB rgba
-  border : vec4f,   // sRGB rgba
-  params : vec4f,   // borderWidth, opacity, z, space (1 = viewport)
+  bc0    : vec4f,   // top border colour, sRGB rgba
+  params : vec4f,   // (unused), opacity, z, space (1 = viewport)
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
@@ -25,6 +25,10 @@ struct Box {
   sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
                     // element box (outer) or the shadow box (inset)
   shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
+  bw     : vec4f,   // border widths top, right, bottom, left
+  bc1    : vec4f,   // right border colour
+  bc2    : vec4f,   // bottom border colour
+  bc3    : vec4f,   // left border colour
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 // Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
@@ -154,7 +158,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   // Shadow records' quads are padded by sh0.y; pad = 0 for plain boxes.
   let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
   let aa = max(fwidth(d), 1e-4);
-  let bw = b.params.x;
+  let bw = b.bw; // top, right, bottom, left
   let opacity = b.params.y;
 
   // Derivatives must sit in uniform control flow: take the inner mask's
@@ -187,34 +191,57 @@ fn fs(in : VOut) -> @location(0) vec4f {
     return vec4f(b.fill.rgb * sa, sa) * opacity;
   }
 
+  // Padding box: the border box inset per side, centre-relative.
+  let half = in.half - vec2f(b.sh0.y);
+  let ic = vec2f(bw.w - bw.y, bw.x - bw.z) * 0.5;
+  let ih = max(half - vec2f(bw.w + bw.y, bw.x + bw.z) * 0.5, vec2f(0.0));
+  // Inner radii (CSS: r minus the adjacent widths, a circular
+  // approximation of the elliptical inner corner).
+  let ir = max(b.radius - vec4f(max(bw.x, bw.w), max(bw.x, bw.y),
+                                max(bw.z, bw.y), max(bw.z, bw.w)), vec4f(0.0));
+  // Uniform widths: the outer SDF offset inward, as the ring always was.
+  let uniform = all(bw.xxx == bw.yzw);
+  let dIn = select(sd_round_box(in.local - ic, ih, ir), d + bw.x, uniform);
   let outerCov = 1.0 - smoothstep(-aa, aa, d);
-  let fillCov  = 1.0 - smoothstep(-aa, aa, d + bw);
+  let fillCov  = 1.0 - smoothstep(-aa, aa, dIn);
   let borderCov = clamp(outerCov - fillCov, 0.0, 1.0);
+
+  // Border side: the smallest distance into the ring, normalised by that
+  // side's width — the CSS mitre from the outer to the inner corner.
+  // Zero-width sides never win.
+  let dist = vec4f(in.local.y + half.y, half.x - in.local.x,
+                   half.y - in.local.y, in.local.x + half.x);
+  let nd = select(dist / max(bw, vec4f(1e-6)), vec4f(1e9), bw <= vec4f(0.0));
+  var bc = b.bc0;
+  var best = nd.x;
+  if (nd.y < best) { bc = b.bc1; best = nd.y; }
+  if (nd.z < best) { bc = b.bc2; best = nd.z; }
+  if (nd.w < best) { bc = b.bc3; }
 
   // Background: gradient over fill, source-over, kept premultiplied.
   var bgp = b.fill.rgb * b.fill.a;
   var bga = b.fill.a;
   if (b.grad.x > 0.5) {
-    // Gradient box = padding box, centred like the border box.
-    let size = max(b.xf1.zw - vec2f(2.0 * bw), vec2f(0.0));
+    // Gradient box = padding box.
+    let size = ih * 2.0;
+    let gp = in.local - ic;
     var t = 0.0;
     if (b.grad.x < 1.5) {
       let ang = b.grad.y;
       let dir = vec2f(sin(ang), -cos(ang));
       let len = abs(size.x * sin(ang)) + abs(size.y * cos(ang));
-      t = dot(in.local, dir) / max(len, 1e-4) + 0.5;
+      t = dot(gp, dir) / max(len, 1e-4) + 0.5;
     } else {
       let c = (b.gradc.xy - vec2f(0.5)) * size;
-      t = length((in.local - c) / max(b.gradc.zw, vec2f(1e-4)));
+      t = length((gp - c) / max(b.gradc.zw, vec2f(1e-4)));
     }
     let g = gradient_at(t, u32(b.grad.z), u32(b.grad.w));
     bgp = g.rgb * g.a + bgp * (1.0 - g.a);
     bga = g.a + bga * (1.0 - g.a);
   }
 
-  let rgb = (bgp * fillCov +
-             b.border.rgb * b.border.a * borderCov) * opacity;
-  let a = (bga * fillCov + b.border.a * borderCov) * opacity;
+  let rgb = (bgp * fillCov + bc.rgb * bc.a * borderCov) * opacity;
+  let a = (bga * fillCov + bc.a * borderCov) * opacity;
   return vec4f(rgb, a); // premultiplied
 }
 `
@@ -355,11 +382,13 @@ export class BoxPass implements RenderPass {
       d[o++] = b.fill.g
       d[o++] = b.fill.b
       d[o++] = b.fill.a
-      d[o++] = b.border?.color.r ?? 0
-      d[o++] = b.border?.color.g ?? 0
-      d[o++] = b.border?.color.b ?? 0
-      d[o++] = b.border?.color.a ?? 0
-      d[o++] = b.border?.width ?? 0
+      const bd = b.border
+      const top = bd?.colors[0]
+      d[o++] = top?.r ?? 0
+      d[o++] = top?.g ?? 0
+      d[o++] = top?.b ?? 0
+      d[o++] = top?.a ?? 0
+      d[o++] = 0
       d[o++] = b.opacity
       d[o++] = b.z
       d[o++] = b.space === 'viewport' ? 1 : 0
@@ -411,6 +440,17 @@ export class BoxPass implements RenderPass {
         for (let k = 0; k < 12; k++) {
           d[o++] = 0
         }
+      }
+      // Shadow records ignore `border`: zero widths keep the ring empty.
+      for (let k = 0; k < 4; k++) {
+        d[o++] = sh || !bd ? 0 : (bd.widths[k] ?? 0)
+      }
+      for (let k = 1; k < 4; k++) {
+        const c = bd?.colors[k]
+        d[o++] = c?.r ?? 0
+        d[o++] = c?.g ?? 0
+        d[o++] = c?.b ?? 0
+        d[o++] = c?.a ?? 0
       }
     }
     this.shared.device.queue.writeBuffer(

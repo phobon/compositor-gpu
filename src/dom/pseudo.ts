@@ -36,8 +36,8 @@ import {
   ligaturesEnabled
 } from './textRuns'
 import {
-  type Placement,
   applyAffine,
+  type Placement,
   placementAabb,
   subPlacement
 } from './transform'
@@ -476,7 +476,8 @@ function ordinal(li: Element, cache: OrdinalCache): number {
     const isOl = list.tagName === 'OL'
     const reversed = isOl && (list as HTMLOListElement).reversed
     const startAttr = isOl ? list.getAttribute('start') : null
-    const parsed = startAttr === null ? Number.NaN : Number.parseInt(startAttr)
+    const parsed =
+      startAttr === null ? Number.NaN : Number.parseInt(startAttr, 10)
     const start = Number.isFinite(parsed) ? parsed : reversed ? items.length : 1
     const step = reversed ? -1 : 1
     let n: number | null = null
@@ -626,7 +627,9 @@ export function readMarker(
       radius: [rr, rr, rr, rr],
       fill: stroke ? { r: 0, g: 0, b: 0, a: 0 } : color,
       gradient: null,
-      border: stroke ? { width: 1, color } : null,
+      border: stroke
+        ? { widths: [1, 1, 1, 1], colors: [color, color, color, color] }
+        : null,
       opacity: 1,
       z: 0,
       clip

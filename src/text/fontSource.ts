@@ -166,6 +166,17 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
+/** `resolveFontBytes` result: bytes resolved plus faces that couldn't be —
+ * no matching @font-face src, or its url() didn't fetch. */
+export interface ResolveResult {
+  resolved: ResolvedFont[]
+  /** `"family weight[i]"` labels of faces that failed to resolve. */
+  failed: string[]
+}
+
+const faceLabel = (family: string, weight: number, italic: boolean): string =>
+  `${family} ${weight}${italic ? 'i' : ''}`
+
 /**
  * Resolve FontFace objects to their raw bytes at runtime.
  *
@@ -177,14 +188,15 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer | null> {
  */
 export async function resolveFontBytes(
   faces: FontFace[]
-): Promise<ResolvedFont[]> {
+): Promise<ResolveResult> {
   if (faces.length === 0) {
-    return []
+    return { resolved: [], failed: [] }
   }
   const rules = collectFaceRules()
   const seen = new Set<string>()
   const bufByUrl = new Map<string, Promise<ArrayBuffer | null>>()
-  const results: ResolvedFont[] = []
+  const resolved: ResolvedFont[] = []
+  const failed: string[] = []
 
   for (const face of faces) {
     const family = unquote(face.family).toLowerCase()
@@ -201,6 +213,7 @@ export async function resolveFontBytes(
       log.info(
         `font: no @font-face src for ${family} ${weight}${italic ? 'i' : ''}`
       )
+      failed.push(faceLabel(family, weight, italic))
       continue
     }
     let bufP = bufByUrl.get(url)
@@ -210,12 +223,13 @@ export async function resolveFontBytes(
     }
     const buffer = await bufP
     if (!buffer) {
+      failed.push(faceLabel(family, weight, italic))
       continue
     }
-    results.push({
+    resolved.push({
       buffer,
       descriptor: { family: face.family, weight, italic }
     })
   }
-  return results
+  return { resolved, failed }
 }

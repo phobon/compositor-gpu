@@ -10,9 +10,9 @@ import type { TextBackend } from '../textRasterizer'
 import {
   type FontHandle,
   type GlyphBands,
-  type ParsedFont,
   loadFontFile,
-  makeInstance
+  makeInstance,
+  type ParsedFont
 } from './font'
 import { SLUG_WGSL } from './shaders'
 
@@ -67,6 +67,10 @@ export class SlugText implements TextBackend {
   fallbackCount = 0
   /** Ligature glyphs formed in the last upload (components merged). */
   ligatureCount = 0
+  /** `"family weight[i]"` labels of faces `prepare()` couldn't resolve (no
+   * matching @font-face src, or its url() didn't fetch). Runs using them
+   * fall back to the Canvas 2D atlas. */
+  readonly failedFaces: string[] = []
 
   private pipeline: GPURenderPipeline
   private layout: GPUBindGroupLayout
@@ -229,7 +233,12 @@ export class SlugText implements TextBackend {
       log.info('SlugText.prepare: no fonts provided')
       return
     }
-    const resolved = await resolveFontBytes(faces)
+    const { resolved, failed } = await resolveFontBytes(faces)
+    for (const label of failed) {
+      if (!this.failedFaces.includes(label)) {
+        this.failedFaces.push(label)
+      }
+    }
     for (const { buffer, descriptor } of resolved) {
       if (this.loadedKeys.has(faceKey(descriptor))) {
         continue
@@ -242,8 +251,18 @@ export class SlugText implements TextBackend {
             (err as Error).message
           }`
         )
+        this.failedFaces.push(
+          `${descriptor.family ?? '(any)'} ${descriptor.weight}${
+            descriptor.italic ? 'i' : ''
+          }`
+        )
       }
     }
+  }
+
+  /** Registered faces (static + variable sources), for `stats().faces`. */
+  get faceCount(): number {
+    return this.faces.length + this.variableSources.length
   }
 
   /**

@@ -57,6 +57,8 @@ export interface CompositorStats {
   fallback: number
   /** Ligature glyphs formed (GSUB liga/clig) in the last text upload. */
   ligatures: number
+  /** Slug faces registered (static + variable sources). */
+  faces: number
   /** Layers re-uploaded in the most recent frame (0..3). */
   uploads: number
   /** Draw batches issued in the most recent frame. */

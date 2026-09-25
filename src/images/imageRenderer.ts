@@ -2,8 +2,45 @@ import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
-import { reportShaderErrors } from '../util/log'
-import { ImageAtlas, MAX_ENTRY_SIZE } from './imageAtlas'
+import { log, reportShaderErrors } from '../util/log'
+import {
+  type AtlasRect,
+  type AtlasSource,
+  ImageAtlas,
+  MAX_ENTRY_SIZE
+} from './imageAtlas'
+
+/** Rasterised-SVG canvases stay bounded: past this many entries the whole
+ * cache is dropped rather than evicted one at a time (`ImagePass.svgCache`). */
+const SVG_CACHE_LIMIT = 64
+/** Rasterised SVG canvases are clamped to this on a side — well above any
+ * on-screen display size, floor against a degenerate 0px layout box. */
+const SVG_RASTER_MAX = 2048
+const SVG_RASTER_MIN = 1
+
+/**
+ * True for an `<img>` source whose current URL is an SVG: a `data:image/svg`
+ * URI, or a path ending in `.svg` (case-insensitive, query/hash ignored).
+ * Browsers rasterise these at their *natural* size (which for an inline SVG
+ * with explicit `width`/`height` can be arbitrarily large, e.g.
+ * gatsby-plugin-image's 2560x2560 transparent sizer) — the image pass
+ * re-rasterises them itself at display size instead of trusting that.
+ */
+export function isSvgSource(src: string): boolean {
+  const s = src.toLowerCase()
+  if (s.startsWith('data:image/svg')) {
+    return true
+  }
+  const cut = Math.min(
+    s.indexOf('?') === -1 ? s.length : s.indexOf('?'),
+    s.indexOf('#') === -1 ? s.length : s.indexOf('#')
+  )
+  return s.slice(0, cut).endsWith('.svg')
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(v, lo), hi)
+}
 
 // rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
 // xf1(4) + atlas(4)
@@ -133,6 +170,19 @@ interface Cached {
  * `MAX_ENTRY_SIZE`) falls back to its own cached texture and bind group,
  * one draw per image as before. object-fit/position maps to the quad rect
  * and/or UV sub-rect, and the element's border radius clips the fragment.
+ *
+ * A plain `<img>` is never uploaded straight from the element: for a
+ * responsive `srcset`/`sizes` image, `naturalWidth`/`naturalHeight` are
+ * density-corrected (e.g. 1366w shown at 1280 CSS px) while the decoded
+ * bitmap is the raw 1366², so copying `[naturalWidth, naturalHeight]` from
+ * the element crops its top-left corner instead of scaling it down.
+ * `createImageBitmap(img)` decodes the real pixel size (its own
+ * `.width`/`.height`, uncorrected), so the copy is done from the bitmap
+ * instead, once per source key (`bitmapCache`/`pendingBitmaps`). Until that
+ * resolves the record draws nothing (a zero instance, index alignment
+ * preserved); `onReady` re-triggers a frame once it does. SVG-rasterised
+ * canvases and canvas/video sources are already decoded at their true size
+ * and skip this.
  */
 export class ImagePass implements RenderPass {
   readonly layer = 'images' as const
@@ -143,9 +193,22 @@ export class ImagePass implements RenderPass {
   private capacity = 0
   private data = new Float32Array(0)
   private cache = new WeakMap<CanvasImageSource, Cached>()
+  /** Rasterised-SVG canvases, keyed by `currentSrc@WxH` so a resize (a new
+   * display size) re-rasterises rather than stretching a stale one. Bounded:
+   * cleared wholesale past `SVG_CACHE_LIMIT` entries. */
+  private svgCache = new Map<
+    string,
+    { source: OffscreenCanvas | HTMLCanvasElement; w: number; h: number }
+  >()
   /** Aligned with scene.images: null (not ready), 'atlas' (shared bind
    * group), or a standalone per-instance bind group. */
   private draws: (GPUBindGroup | null | 'atlas')[] = []
+
+  /** Source keys with a `createImageBitmap()` in flight — fetched once. */
+  private pendingBitmaps = new Set<string>()
+  /** Source keys whose `createImageBitmap()` rejected (tainted/cross-origin)
+   * — logged once, never retried. */
+  private failedBitmaps = new Set<string>()
 
   private readonly atlas: ImageAtlas
   private atlasBindGroup: GPUBindGroup | null = null
@@ -156,7 +219,10 @@ export class ImagePass implements RenderPass {
   // texture (standalone or atlas — they're all the same fixed format).
   private readonly mips: MipGenerator
 
-  constructor(private readonly shared: Shared) {
+  constructor(
+    private readonly shared: Shared,
+    private readonly onReady: () => void
+  ) {
     this.atlas = new ImageAtlas(shared.device)
     this.mips = new MipGenerator(shared.device)
     const { device, frameLayout } = shared
@@ -216,20 +282,27 @@ export class ImagePass implements RenderPass {
     this.capacity = cap
   }
 
-  private textureFor(rec: ImageRecord): Cached | null {
-    const src = rec.source
-    const [w, h] = naturalSize(src)
+  /** `source`/`w`/`h` are already resolved (an SVG source has already been
+   * rasterised to a canvas at display size by the caller); `key` identifies
+   * it for cache invalidation — the caller's explicit key for a rasterised
+   * canvas, or `srcKey(source)` for a plain `<img>`/`<video>`/`<canvas>`. */
+  private textureFor(
+    source: CanvasImageSource,
+    w: number,
+    h: number,
+    dynamic: boolean,
+    key: string
+  ): Cached | null {
     if (w === 0 || h === 0) {
       return null
     }
-    const key = srcKey(src)
     const { device } = this.shared
-    const cached = this.cache.get(src)
+    const cached = this.cache.get(source)
     if (cached && cached.src === key && cached.w === w && cached.h === h) {
       // Dynamic sources (<video>, <canvas>) change every frame — re-copy pixels.
-      if (rec.dynamic) {
+      if (dynamic) {
         device.queue.copyExternalImageToTexture(
-          { source: src as GPUCopyExternalImageSource },
+          { source: source as GPUCopyExternalImageSource },
           { texture: cached.texture },
           [w, h]
         )
@@ -240,7 +313,7 @@ export class ImagePass implements RenderPass {
 
     // Dynamic sources re-copy every frame, so a mip chain would just be
     // stale most of the time; only static sources get one.
-    const mipLevelCount = rec.dynamic ? 1 : mipLevelCountFor(Math.max(w, h))
+    const mipLevelCount = dynamic ? 1 : mipLevelCountFor(Math.max(w, h))
     const texture = device.createTexture({
       size: [w, h],
       format: 'rgba8unorm',
@@ -251,7 +324,7 @@ export class ImagePass implements RenderPass {
         GPUTextureUsage.RENDER_ATTACHMENT
     })
     device.queue.copyExternalImageToTexture(
-      { source: src as GPUCopyExternalImageSource },
+      { source: source as GPUCopyExternalImageSource },
       { texture },
       [w, h]
     )
@@ -265,7 +338,125 @@ export class ImagePass implements RenderPass {
       w,
       h
     }
-    this.cache.set(src, entry)
+    this.cache.set(source, entry)
+    return entry
+  }
+
+  /** Kick off `createImageBitmap(img)` for `key` if it isn't already pending
+   * or known to fail — deduped by source key, so a source seen again before
+   * the first fetch resolves is a no-op. On resolve, packs/uploads the
+   * bitmap's *own* pixel size (never `img.naturalWidth/Height`, which can be
+   * density-corrected relative to the decoded bitmap) into the atlas or a
+   * standalone texture, closes the bitmap, and calls `onReady` so a pending
+   * frame re-uploads this record with real data. On reject (tainted/CORS
+   * source), logs once and never retries. */
+  private requestBitmap(img: HTMLImageElement, key: string): void {
+    if (this.pendingBitmaps.has(key) || this.failedBitmaps.has(key)) {
+      return
+    }
+    this.pendingBitmaps.add(key)
+    createImageBitmap(img)
+      .then((bitmap) => {
+        this.pendingBitmaps.delete(key)
+        const w = bitmap.width
+        const h = bitmap.height
+        if (w > 0 && h > 0) {
+          const spot =
+            Math.max(w, h) <= MAX_ENTRY_SIZE
+              ? this.atlas.add(bitmap, w, h, key, img)
+              : null
+          // Oversized, or the atlas is full (`add` already logs that once) —
+          // same fallback the generic non-bitmap path takes.
+          if (!spot) {
+            this.cacheBitmapTexture(img, bitmap, w, h, key)
+          }
+        }
+        bitmap.close()
+        this.onReady()
+      })
+      .catch((err) => {
+        this.pendingBitmaps.delete(key)
+        this.failedBitmaps.add(key)
+        log.warn(`ImagePass: createImageBitmap failed for ${key}`, err)
+      })
+  }
+
+  /** Upload a resolved `ImageBitmap` into a standalone `w`x`h` texture,
+   * cached under `img` the same way `textureFor` caches a live element —
+   * `img` is never dynamic here (SVG/canvas/video never reach this path),
+   * so there is no per-frame re-copy once cached. */
+  private cacheBitmapTexture(
+    img: HTMLImageElement,
+    bitmap: ImageBitmap,
+    w: number,
+    h: number,
+    key: string
+  ): void {
+    const { device } = this.shared
+    this.cache.get(img)?.texture.destroy()
+    const mipLevelCount = mipLevelCountFor(Math.max(w, h))
+    const texture = device.createTexture({
+      size: [w, h],
+      format: 'rgba8unorm',
+      mipLevelCount,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT
+    })
+    device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [
+      w,
+      h
+    ])
+    if (mipLevelCount > 1) {
+      this.mips.generate(texture, mipLevelCount)
+    }
+    this.cache.set(img, { view: texture.createView(), texture, src: key, w, h })
+  }
+
+  /** Rasterise an SVG `<img>` at display size `w`x`h` (device px) instead of
+   * uploading it at its natural size — the natural size of an SVG with
+   * explicit `width`/`height` attributes can be arbitrarily large (a
+   * transparent sizer image, a diagram meant to be shown tiny) and costs a
+   * full rasterisation + upload for pixels nothing ever samples. Cached by
+   * `currentSrc@WxH` so a later resize (different display size) rasterises
+   * again rather than stretching this one. */
+  private rasterizeSvg(
+    img: HTMLImageElement,
+    w: number,
+    h: number
+  ): {
+    source: OffscreenCanvas | HTMLCanvasElement
+    w: number
+    h: number
+  } | null {
+    const key = `${srcKey(img)}@${w}x${h}`
+    const hit = this.svgCache.get(key)
+    if (hit) {
+      return hit
+    }
+    if (this.svgCache.size > SVG_CACHE_LIMIT) {
+      this.svgCache.clear()
+    }
+    let canvas: OffscreenCanvas | HTMLCanvasElement
+    if (typeof OffscreenCanvas !== 'undefined') {
+      canvas = new OffscreenCanvas(w, h)
+    } else {
+      const el = document.createElement('canvas')
+      el.width = w
+      el.height = h
+      canvas = el
+    }
+    const ctx = (canvas as HTMLCanvasElement).getContext('2d') as
+      | CanvasRenderingContext2D
+      | OffscreenCanvasRenderingContext2D
+      | null
+    if (!ctx) {
+      return null
+    }
+    ctx.drawImage(img, 0, 0, w, h)
+    const entry = { source: canvas, w, h }
+    this.svgCache.set(key, entry)
     return entry
   }
 
@@ -287,24 +478,107 @@ export class ImagePass implements RenderPass {
         this.draws.push(null)
         continue
       }
-      const [nw, nh] = naturalSize(rec.source)
+      // An SVG <img> is rasterised at DISPLAY size (device px, clamped),
+      // never at its natural size — that can be arbitrarily large (a
+      // transparent sizer at 2560x2560, a diagram meant to be shown tiny)
+      // and rasterising + uploading it at full size stalls the main thread
+      // for nothing ever sampled. The rasterised canvas stands in as the
+      // upload source for the rest of this record; its size stands in as
+      // the "natural" size fit() and the atlas key use.
+      let uploadSource: CanvasImageSource = rec.source
+      let nw: number
+      let nh: number
+      let atlasKey: string | undefined
+      let spot: AtlasRect | null = null
+      let cached: Cached | null = null
+      if (
+        rec.source instanceof HTMLImageElement &&
+        isSvgSource(srcKey(rec.source))
+      ) {
+        const dpr = this.shared.dpr || 1
+        const w = clamp(
+          Math.ceil(rec.local.w * dpr),
+          SVG_RASTER_MIN,
+          SVG_RASTER_MAX
+        )
+        const h = clamp(
+          Math.ceil(rec.local.h * dpr),
+          SVG_RASTER_MIN,
+          SVG_RASTER_MAX
+        )
+        const raster = this.rasterizeSvg(rec.source, w, h)
+        if (!raster) {
+          d.fill(0, o, o + FLOATS_PER_IMAGE)
+          this.draws.push(null)
+          continue
+        }
+        uploadSource = raster.source
+        nw = raster.w
+        nh = raster.h
+        atlasKey = `${srcKey(rec.source)}@${w}x${h}`
+      } else if (rec.source instanceof HTMLImageElement) {
+        // Plain (non-SVG) <img>: naturalWidth/Height can be density-
+        // corrected relative to the decoded bitmap (a responsive srcset
+        // picked a denser candidate than 1 CSS px == 1 device px), so the
+        // real pixel size — and the texture/atlas entry itself — only exist
+        // once `createImageBitmap(img)` has resolved (see `requestBitmap`).
+        // Until then this record draws nothing; index alignment is kept.
+        const img = rec.source
+        const key = srcKey(img)
+        if (this.failedBitmaps.has(key)) {
+          d.fill(0, o, o + FLOATS_PER_IMAGE)
+          this.draws.push(null)
+          continue
+        }
+        const atlasRect = this.atlas.get(key)
+        const texCached = this.cache.get(img)
+        if (atlasRect) {
+          spot = atlasRect
+          nw = atlasRect.w
+          nh = atlasRect.h
+        } else if (texCached && texCached.src === key) {
+          cached = texCached
+          nw = texCached.w
+          nh = texCached.h
+        } else {
+          this.requestBitmap(img, key)
+          d.fill(0, o, o + FLOATS_PER_IMAGE)
+          this.draws.push(null)
+          continue
+        }
+      } else {
+        ;[nw, nh] = naturalSize(rec.source)
+      }
       if (nw === 0 || nh === 0) {
         d.fill(0, o, o + FLOATS_PER_IMAGE)
         this.draws.push(null)
         continue
       }
-      // Static <img>/background sources up to MAX_ENTRY_SIZE try the shared
-      // atlas first, so a texture is never allocated for them; anything
-      // else (dynamic, oversized, or an atlas that's full) falls back to
-      // its own cached texture and bind group.
-      const atlasEligible =
-        !rec.dynamic &&
-        rec.source instanceof HTMLImageElement &&
-        Math.max(nw, nh) <= MAX_ENTRY_SIZE
-      const spot = atlasEligible
-        ? this.atlas.add(rec.source as HTMLImageElement, nw, nh)
-        : null
-      const cached = spot ? null : this.textureFor(rec)
+      // Static background sources (rasterised SVG canvases) up to
+      // MAX_ENTRY_SIZE try the shared atlas first, so a texture is never
+      // allocated for them; anything else (dynamic, oversized, or an atlas
+      // that's full) falls back to its own cached texture and bind group.
+      // A plain <img> already has `spot`/`cached` from its bitmap cache
+      // above and skips this — its atlas/texture upload happened once, off
+      // the bitmap, when it resolved.
+      if (!spot && !cached) {
+        const atlasEligible =
+          !rec.dynamic &&
+          atlasKey !== undefined &&
+          Math.max(nw, nh) <= MAX_ENTRY_SIZE
+        spot = atlasEligible
+          ? this.atlas.add(uploadSource as AtlasSource, nw, nh, atlasKey)
+          : null
+        cached = spot
+          ? null
+          : this.textureFor(
+              uploadSource,
+              nw,
+              nh,
+              rec.dynamic ?? false,
+              atlasKey ?? srcKey(rec.source)
+            )
+      }
       if (!spot && !cached) {
         d.fill(0, o, o + FLOATS_PER_IMAGE)
         this.draws.push(null)

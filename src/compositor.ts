@@ -22,7 +22,7 @@ import { FrameScheduler } from './util/raf'
  */
 export async function createCompositor(
   options: CompositorOptions = {}
-): Promise<Compositor & { text: SlugText | null }> {
+): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
   const root = options.root ?? document.body
   const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
   const fallback = options.fallback ?? 'passthrough'
@@ -60,7 +60,16 @@ export async function createCompositor(
     renderer.addPass(new BoxPass(renderer.shared))
   }
   if (layers.has('images')) {
-    renderer.addPass(new ImagePass(renderer.shared))
+    // `scene`/`scheduler` are declared further down this function; this
+    // closes over those bindings lazily — `onReady` only fires once a
+    // `createImageBitmap()` resolves, well after both exist (see the
+    // `sync`/`reader` comment below for the same pattern).
+    renderer.addPass(
+      new ImagePass(renderer.shared, () => {
+        scene.markDirty('images')
+        scheduler.request()
+      })
+    )
   }
   let text: SlugText | null = null
   if (layers.has('text')) {
@@ -260,6 +269,7 @@ export async function createCompositor(
     active: true,
     canvas,
     text,
+    scene,
     stats: () => ({
       active: true,
       boxes: scene.boxes.length,
@@ -267,6 +277,7 @@ export async function createCompositor(
       glyphs: scene.glyphCount(),
       fallback: text?.fallbackCount ?? 0,
       ligatures: text?.ligatureCount ?? 0,
+      faces: text?.faceCount ?? 0,
       uploads: renderer.lastUploads,
       batches: renderer.lastBatches,
       draws: renderer.lastDraws,
@@ -313,11 +324,12 @@ export async function createCompositor(
   }
 }
 
-function inert(): Compositor & { text: null } {
+function inert(): Compositor & { text: null; scene: null } {
   return {
     active: false,
     canvas: null,
     text: null,
+    scene: null,
     stats: () => ({
       active: false,
       boxes: 0,
@@ -325,6 +337,7 @@ function inert(): Compositor & { text: null } {
       glyphs: 0,
       fallback: 0,
       ligatures: 0,
+      faces: 0,
       uploads: 0,
       batches: 0,
       draws: 0,

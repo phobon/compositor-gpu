@@ -1,6 +1,12 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": { "enabled": true },
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -8,19 +14,36 @@
     "lineWidth": 80
   },
   "javascript": {
-    "formatter": { "semicolons": "asNeeded", "quoteStyle": "single", "trailingCommas": "none" }
+    "formatter": {
+      "semicolons": "asNeeded",
+      "quoteStyle": "single",
+      "trailingCommas": "none"
+    }
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      "suspicious": { "noExplicitAny": "warn" },
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "warn"
+      },
       "style": {
-        "useBlockStatements": { "level": "error", "fix": "safe" }
+        "useBlockStatements": {
+          "level": "error",
+          "fix": "safe"
+        }
       }
     }
   },
   "files": {
-    "ignore": ["dist", "node_modules", "test/visual/out", "test/perf/out"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/test/visual/out",
+      "!**/test/perf/out",
+      "!**/test/site/out",
+      "!**/*.html"
+    ]
   }
 }

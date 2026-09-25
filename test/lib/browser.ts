@@ -1,7 +1,7 @@
 // Shared headless-Chromium launch: try the real GPU adapter first, fall back
 // to SwiftShader (software WebGPU) so the harnesses also run in a sandbox
 // with no GPU. Used by test/visual/run.ts and test/perf/run.ts.
-import { type Browser, type Page, chromium } from 'playwright'
+import { type Browser, chromium, type Page } from 'playwright'
 
 export const SWIFTSHADER_ARGS = [
   '--enable-unsafe-webgpu',
