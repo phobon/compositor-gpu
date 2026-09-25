@@ -77,10 +77,15 @@ export async function createCompositor(
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0
   let readMs = 0
+  const paintOnly = new Set<Element>()
 
+  // The viewport minus any classic scrollbar (innerWidth/Height include
+  // it, which would squeeze the mirror horizontally).
+  const viewW = (): number => document.documentElement.clientWidth
+  const viewH = (): number => document.documentElement.clientHeight
   const resizeCanvas = (): void => {
-    canvas.width = Math.floor(window.innerWidth * dpr)
-    canvas.height = Math.floor(window.innerHeight * dpr)
+    canvas.width = Math.floor(viewW() * dpr)
+    canvas.height = Math.floor(viewH() * dpr)
   }
   resizeCanvas()
 
@@ -93,10 +98,15 @@ export async function createCompositor(
     // the next take()).
     let cssAnimating = false
     const scopes = dirty.scopes as Set<Element>
-    for (const el of sync.animatingScopes()) {
+    // Paint-only animation scopes skip the partial read's rect check, but
+    // only when no mutation shares the frame (it could move them).
+    paintOnly.clear()
+    const mutated = scopes.size > 0
+    for (const el of sync.animatingScopes(paintOnly)) {
       scopes.add(el)
       cssAnimating = true
     }
+    if (mutated) paintOnly.clear()
     if (cssAnimating) flags |= Dirty.MUTATION
 
     if (flags & Dirty.LAYOUT) resizeCanvas()
@@ -106,7 +116,7 @@ export async function createCompositor(
       readMs = performance.now() - t0
     } else if (flags & Dirty.MUTATION) {
       const t0 = performance.now()
-      reader.partialRead(dirty.scopes)
+      reader.partialRead(dirty.scopes, paintOnly)
       readMs = performance.now() - t0
     }
 
@@ -115,8 +125,8 @@ export async function createCompositor(
       dt,
       scrollX: window.scrollX,
       scrollY: window.scrollY,
-      width: window.innerWidth,
-      height: window.innerHeight
+      width: viewW(),
+      height: viewH()
     }
 
     if (options.onGlyph) {
@@ -148,15 +158,11 @@ export async function createCompositor(
   const sync = new DomSync(root, () => scheduler.request())
 
   if (text) {
-    // 'auto' (and, for convenience, the default) discovers the document's
-    // registered faces; an explicit list resolves just those. Either way the
-    // bytes are fetched at runtime, then a re-read re-uploads the glyphs.
-    const faces =
-      options.fonts && options.fonts !== 'auto'
-        ? options.fonts
-        : options.fonts === 'auto'
-          ? Array.from(document.fonts)
-          : []
+    // 'auto' (the default) discovers the document's registered faces; an
+    // explicit list resolves just those. Either way the bytes are fetched
+    // at runtime, then a re-read re-uploads the glyphs.
+    const fonts = options.fonts ?? 'auto'
+    const faces = fonts === 'auto' ? Array.from(document.fonts) : fonts
     if (faces.length > 0) {
       void text.prepare(faces).then(() => {
         pendingReadFlags |= Dirty.STYLE
@@ -188,6 +194,23 @@ export async function createCompositor(
     }
   }
 
+  let destroyed = false
+  let lost = false
+  const stop = (): void => {
+    scheduler.stop()
+    sync.stop()
+    window.removeEventListener('resize', onResize)
+    window.removeEventListener('scroll', onScroll)
+    setSourceHidden(false)
+  }
+  // A lost device can't render again: give the page its own paint back.
+  void gpu.device.lost.then((info) => {
+    if (destroyed) return
+    log.error(`GPU device lost (${info.reason}): ${info.message}`)
+    lost = true
+    stop()
+  })
+
   log.info(`compositor ready — layers: ${[...layers].join(', ')}`)
 
   return {
@@ -213,30 +236,25 @@ export async function createCompositor(
       fps
     }),
     start() {
+      if (destroyed || lost) return
       scheduler.start()
       sync.start()
       window.addEventListener('resize', onResize)
       window.addEventListener('scroll', onScroll, { passive: true })
       if (mode === 'replace' && hideSource) setSourceHidden(true)
     },
-    stop() {
-      scheduler.stop()
-      sync.stop()
-      window.removeEventListener('resize', onResize)
-      window.removeEventListener('scroll', onScroll)
-      setSourceHidden(false)
-    },
+    stop,
     setSourceHidden,
     invalidate() {
+      if (destroyed || lost) return
       pendingReadFlags = Dirty.ALL
       scheduler.request()
     },
     destroy() {
-      scheduler.stop()
-      sync.stop()
-      window.removeEventListener('resize', onResize)
-      window.removeEventListener('scroll', onScroll)
-      setSourceHidden(false)
+      if (destroyed) return
+      destroyed = true
+      stop()
+      reader.destroy()
       renderer.destroy()
       gpu.root.destroy()
       canvas.remove()

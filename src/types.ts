@@ -32,7 +32,9 @@ export interface CompositorOptions {
   layers?: Layer[]
   /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
   hideSource?: boolean
-  /** Font discovery: 'auto' reads document.fonts, or pass explicit faces. */
+  /** Faces whose bytes the Slug text backend fetches: 'auto' (default)
+   * reads document.fonts; an explicit list resolves just those. Runs whose
+   * family has no resolved face are drawn by the Canvas 2D fallback atlas. */
   fonts?: 'auto' | FontFace[]
   /** What to do when WebGPU is unavailable. Default 'passthrough'. */
   fallback?: Fallback

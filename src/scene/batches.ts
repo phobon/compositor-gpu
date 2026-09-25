@@ -1,6 +1,6 @@
 import type { Layer } from '../types'
 import type { BoxRecord, GlyphRun, ImageRecord, Rect } from './records'
-import type { OpacityGroup } from './stacking'
+import { type OpacityGroup, padGlyphRect, textShadowPad } from './stacking'
 
 /**
  * One entry of the renderer's command list, walked in order:
@@ -210,13 +210,21 @@ export function buildBatches(
     const run = runs[i]
     if (!run) continue
     const count = run.glyphs.length
+    // Text shadows paint outside the glyph line boxes: pad each footprint
+    // so a shadowed run can't merge past a record its shadow overlaps.
+    const pad = textShadowPad(run)
+    const rects = pad
+      ? run.glyphs.map((g) => padGlyphRect(g, pad))
+      : run.glyphs.map((g) => g.rect)
     entries.push({
       layer: 'text',
       z: run.z,
       first: glyphBase,
       count,
-      rect: runRects[i] ?? { x: 0, y: 0, width: 0, height: 0 },
-      rects: run.glyphs.map((g) => g.rect)
+      rect: pad
+        ? unionRect(rects)
+        : (runRects[i] ?? { x: 0, y: 0, width: 0, height: 0 }),
+      rects
     })
     glyphBase += count
   }

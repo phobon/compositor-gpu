@@ -15,7 +15,7 @@ import {
   createsStackingContext
 } from '../scene/stacking'
 import type { Layer } from '../types'
-import { readBackgroundImage } from './backgrounds'
+import { disposeBackgrounds, readBackgroundImage } from './backgrounds'
 import {
   type Decoration,
   buildDecorationBoxes,
@@ -44,8 +44,9 @@ import {
   type Mat2,
   type Placement,
   affine,
+  composeIndividual,
   composeLinear,
-  parseTransform,
+  hasTransform,
   rectPlacement,
   solveLocalSize,
   solveTranslation,
@@ -200,7 +201,8 @@ export function flatten(
         c.items.push(kid)
         sink?.(kid)
       } else {
-        // Decoration lines paint under the glyphs they decorate.
+        // Underlines/overlines paint under the glyphs they decorate,
+        // line-through over them.
         if (kid.decorations) {
           for (const d of kid.decorations) {
             c.items.push(d)
@@ -209,6 +211,12 @@ export function flatten(
         }
         c.items.push(kid)
         sink?.(kid)
+        if (kid.decorationsOver) {
+          for (const d of kid.decorationsOver) {
+            c.items.push(d)
+            sink?.(d)
+          }
+        }
       }
     }
   }
@@ -321,8 +329,16 @@ export class SceneReader {
    * B and push later content — any change to their rects escalates.
    * Changes to the root's own size are caught by the root ResizeObserver,
    * which forces a full read.
+   *
+   * A boundary in `paintOnly` (the target of a running animation that can
+   * only change paint — see DomSync.animatingScopes) skips the rect and
+   * float checks: its measured AABB moves with its own transform while its
+   * margin box, and so everything outside it, stays put.
    */
-  partialRead(scopes: ReadonlySet<Element>): void {
+  partialRead(
+    scopes: ReadonlySet<Element>,
+    paintOnly?: ReadonlySet<Element>
+  ): void {
     beginRead()
     this.readElements = 0
     this.ordinals.clear()
@@ -357,11 +373,12 @@ export class SceneReader {
         p ? p.decor : null,
         p ? p.cb : null
       )
+      const trusted = paintOnly?.has(b) === true
       if (
         !fresh ||
         fresh.fragmented ||
-        !sameRect(old.rect, fresh.rect) ||
-        !sameFloats(old, fresh)
+        (!trusted &&
+          (!sameRect(old.rect, fresh.rect) || !sameFloats(old, fresh)))
       ) {
         this.readAll()
         return
@@ -379,6 +396,13 @@ export class SceneReader {
     }
     this.partialReads++
     this.rebuildScene()
+  }
+
+  /** Drop pending asset callbacks and the element tree. */
+  destroy(): void {
+    disposeBackgrounds(this)
+    this.tree = null
+    this.nodes = new WeakMap()
   }
 
   private readAll(): void {
@@ -407,12 +431,20 @@ export class SceneReader {
     this.readElements++
     const { scene, layers } = this
     const s = getComputedStyle(el)
+    // Nothing in a display:none subtree renders (descendants can't opt
+    // back in), so skip its per-glyph and pseudo reads entirely.
+    const display = s.display
+    if (display === 'none') return null
     const rect = toDocRect(el.getBoundingClientRect())
-    const lin = composeLinear(parentLin, parseTransform(s.transform))
+    const transformable = isTransformable(el, display)
+    const lin = composeLinear(
+      parentLin,
+      transformable ? composeIndividual(s) : null
+    )
     const place = lin
       ? transformedPlacement(el, lin, rect)
       : rectPlacement(rect)
-    const isContext = !isRoot && createsStackingContext(s)
+    const isContext = !isRoot && createsStackingContext(s, transformable)
     const alpha = isContext ? Math.max(0, readOpacity(s)) : 1
     const decor = layers.has('text')
       ? propagateDecorations(el, s, parentDecor)
@@ -448,6 +480,7 @@ export class SceneReader {
         s,
         scene.allocId(),
         clip,
+        this,
         () => this.onAsset(el),
         place
       )
@@ -466,9 +499,10 @@ export class SceneReader {
     // (children and text) is additionally clipped by its own overflow.
     const ownClip = clipRectFor(s, rect)
     const childClip = ownClip ? intersect(clip, ownClip) : clip
-    const display = s.display
     const cb =
-      parentCb === null || s.position !== 'static' || s.transform !== 'none'
+      parentCb === null ||
+      s.position !== 'static' ||
+      (transformable && hasTransform(s))
         ? paddingPlacement(s, place)
         : parentCb
 
@@ -515,9 +549,11 @@ export class SceneReader {
           if (lin) transformGlyphs(run.glyphs, lin, s)
           run.clip = childClip
           if (decor?.length) {
-            run.decorations = buildDecorationBoxes(run, decor, childClip, () =>
+            const d = buildDecorationBoxes(run, decor, childClip, () =>
               scene.allocId()
             )
+            if (d.under.length) run.decorations = d.under
+            if (d.over.length) run.decorationsOver = d.over
           }
           node.kids.push(run)
         }
@@ -595,6 +631,27 @@ export class SceneReader {
       }
     ]
   }
+}
+
+const XHTML = 'http://www.w3.org/1999/xhtml'
+const REPLACED = new Set([
+  'IMG',
+  'VIDEO',
+  'CANVAS',
+  'IFRAME',
+  'EMBED',
+  'OBJECT',
+  'INPUT',
+  'TEXTAREA',
+  'SELECT'
+])
+
+/** CSS transforms don't apply to non-replaced `display: inline` HTML
+ * boxes: their `transform` and individual transform properties are then
+ * treated as `none` (placement, stacking and containing block alike). */
+function isTransformable(el: Element, display: string): boolean {
+  if (display !== 'inline') return true
+  return el.namespaceURI !== XHTML || REPLACED.has(el.tagName)
 }
 
 /** First glyph in document order under `kids` (skipping positioned

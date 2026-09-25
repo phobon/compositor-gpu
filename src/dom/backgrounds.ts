@@ -1,28 +1,8 @@
 import type { ImageRecord, Rect } from '../scene/records'
-import { mapBackgroundPosition, px, readCorners } from './styles'
-import { type Placement, placementAabb, subPlacement } from './transform'
-
-/**
- * Split a CSS value list on top-level commas (commas inside parentheses,
- * e.g. `rgba(0,0,0,.5)` or `url(data:...,...)`, don't split).
- */
-function splitTopLevel(value: string): string[] {
-  const out: string[] = []
-  let depth = 0
-  let cur = ''
-  for (const ch of value) {
-    if (ch === '(') depth++
-    else if (ch === ')') depth--
-    if (ch === ',' && depth === 0) {
-      out.push(cur.trim())
-      cur = ''
-    } else {
-      cur += ch
-    }
-  }
-  out.push(cur.trim())
-  return out
-}
+import { splitTopLevel } from '../util/css'
+import { paddingPlacement } from './pseudo'
+import { mapBackgroundPosition, readCorners } from './styles'
+import { type Placement, placementAabb } from './transform'
 
 /**
  * The URL of the first `background-image` layer, or null when that layer
@@ -31,7 +11,7 @@ function splitTopLevel(value: string): string[] {
  */
 export function firstUrlLayer(backgroundImage: string): string | null {
   if (!backgroundImage || backgroundImage === 'none') return null
-  const first = splitTopLevel(backgroundImage)[0]
+  const first = splitTopLevel(backgroundImage, ',')[0]
   if (!first) return null
   const match = /^url\((.*)\)$/is.exec(first.trim())
   if (!match) return null
@@ -65,8 +45,24 @@ export function mapBackgroundRepeat(repeat: string): boolean {
   return repeat.trim() !== 'no-repeat'
 }
 
-/** url -> loaded <img>, cached across calls. */
+/** url -> <img> (loading, loaded or failed), cached across calls. */
 const cache = new Map<string, HTMLImageElement>()
+
+interface Waiter {
+  owner: object
+  onReady: () => void
+}
+
+/** url -> callbacks to run when it settles, one per waiting element (a
+ * re-read replaces the element's entry). Cleared on load or error. */
+const waiters = new Map<string, Map<Element, Waiter>>()
+
+function settle(url: string, loaded: boolean): void {
+  const w = waiters.get(url)
+  waiters.delete(url)
+  if (!w || !loaded) return
+  for (const { onReady } of w.values()) onReady()
+}
 
 /**
  * Returns the loaded image for `url` if it's ready to sample, else starts
@@ -74,41 +70,43 @@ const cache = new Map<string, HTMLImageElement>()
  * `src` so cross-origin images come back CORS-clean — WebGPU's
  * `copyExternalImageToTexture` refuses to upload a tainted image, which the
  * image pass can only surface as a logged failure, not a thrown error.
- * `onReady` fires once per url, the first time it finishes loading (or not
- * at all if it errors).
+ * While it loads, `onReady` is registered for (`owner`, `el`) and runs once
+ * when it finishes; nothing runs if it fails (a failed url stays cached and
+ * is not retried). `disposeBackgrounds(owner)` drops an owner's callbacks.
  */
 export function loadBackground(
   url: string,
-  onReady: (url: string) => void
+  owner: object,
+  el: Element,
+  onReady: () => void
 ): HTMLImageElement | null {
   let img = cache.get(url)
   if (!img) {
     img = new Image()
     img.crossOrigin = 'anonymous'
-    img.addEventListener('load', () => onReady(url), { once: true })
+    img.addEventListener('load', () => settle(url, true), { once: true })
+    img.addEventListener('error', () => settle(url, false), { once: true })
     img.src = url
     cache.set(url, img)
   }
-  if (img.complete && img.naturalWidth > 0) return img
+  if (img.complete) return img.naturalWidth > 0 ? img : null
+  let w = waiters.get(url)
+  if (!w) {
+    w = new Map()
+    waiters.set(url, w)
+  }
+  w.set(el, { owner, onReady })
   return null
 }
 
-/**
- * The padding-box placement for an element's border-box placement `place`,
- * given its computed border widths (inset in the local frame).
- */
-function paddingPlacement(s: CSSStyleDeclaration, place: Placement): Placement {
-  const bl = px(s.borderLeftWidth)
-  const bt = px(s.borderTopWidth)
-  const br = px(s.borderRightWidth)
-  const bb = px(s.borderBottomWidth)
-  return subPlacement(
-    place,
-    bl,
-    bt,
-    Math.max(0, place.local.w - bl - br),
-    Math.max(0, place.local.h - bt - bb)
-  )
+/** Drop every pending background callback registered by `owner`. */
+export function disposeBackgrounds(owner: object): void {
+  for (const [url, w] of waiters) {
+    for (const [el, waiter] of w) {
+      if (waiter.owner === owner) w.delete(el)
+    }
+    if (w.size === 0) waiters.delete(url)
+  }
 }
 
 /**
@@ -122,19 +120,22 @@ function paddingPlacement(s: CSSStyleDeclaration, place: Placement): Placement {
  * border-radius clip, so the clip ends up applied to the padding box too
  * — a minor approximation (the border ring itself isn't otherwise clipped
  * by the radius here anyway). `onReady` is called once the image finishes
- * loading, so the caller can re-read the element.
+ * loading, so the caller can re-read the element (see loadBackground for
+ * `owner`).
  */
 export function readBackgroundImage(
   el: Element,
   s: CSSStyleDeclaration,
   id: number,
   clip: Rect | null,
-  onReady: (url: string) => void,
+  owner: object,
+  onReady: () => void,
   place: Placement
 ): ImageRecord | null {
+  if (s.visibility !== 'visible') return null
   const url = firstUrlLayer(s.backgroundImage)
   if (!url) return null
-  const img = loadBackground(url, onReady)
+  const img = loadBackground(url, owner, el, onReady)
   if (!img) return null
   const pad = paddingPlacement(s, place)
   if (pad.local.w <= 0 || pad.local.h <= 0) return null

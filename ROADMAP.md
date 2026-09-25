@@ -39,6 +39,12 @@
 - [x] Sub-tree reconciliation: mutations re-read only their boundary subtree; escalates to a full read when the boundary's rect changes (persistent element tree, CPU-only re-flatten)
 
 ## Phase 3 — reach & polish
+- [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
+      leaks, `visibility`, inline transforms + `rotate/scale/translate`,
+      colour parsing, decoration order, animation scoping; docs reconciled
+- [ ] `position: fixed` / `sticky` scroll with the document (needs a
+      viewport-space record kind or a scroll-triggered re-read of those subtrees)
+- [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)
 - [x] Batch builder: grid-indexed members + per-glyph text footprints

@@ -7,6 +7,7 @@ import type {
   Rect
 } from '../scene/records'
 import { parseColor } from '../util/color'
+import { splitTopLevel } from '../util/css'
 import { firstBackgroundLayer, parseGradient } from './gradient'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
@@ -132,7 +133,7 @@ export function readBox(
   id: number,
   place: Placement
 ): BoxRecord | null {
-  if (s.visibility === 'hidden' || s.display === 'none') return null
+  if (s.visibility !== 'visible' || s.display === 'none') return null
 
   const fill = parseColor(s.backgroundColor)
   const borderWidth = px(s.borderTopWidth)
@@ -217,6 +218,7 @@ export function readImageRecord(
   clip: Rect | null,
   place: Placement
 ): ImageRecord | null {
+  if (s.visibility !== 'visible') return null
   let source: CanvasImageSource
   let dynamic = false
   if (el.tagName === 'IMG') {
@@ -270,25 +272,6 @@ export function shadowPad(blur: number): number {
   return Math.ceil(1.5 * Math.max(0, blur))
 }
 
-/** Split on commas / whitespace outside parentheses. */
-function splitOutside(value: string, sep: RegExp): string[] {
-  const out: string[] = []
-  let depth = 0
-  let cur = ''
-  for (const ch of value) {
-    if (ch === '(') depth++
-    else if (ch === ')') depth = Math.max(0, depth - 1)
-    if (depth === 0 && sep.test(ch)) {
-      if (cur.trim()) out.push(cur.trim())
-      cur = ''
-    } else {
-      cur += ch
-    }
-  }
-  if (cur.trim()) out.push(cur.trim())
-  return out
-}
-
 const LENGTH = /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i
 
 interface ShadowLayer {
@@ -305,7 +288,8 @@ function parseShadowLayer(layer: string): ShadowLayer | null {
   const lens: number[] = []
   let color = ''
   let inset = false
-  for (const tok of splitOutside(layer, /\s/)) {
+  for (const tok of splitTopLevel(layer, ' ')) {
+    if (!tok) continue
     if (tok === 'inset') inset = true
     else if (LENGTH.test(tok)) lens.push(Number.parseFloat(tok))
     else color = tok
@@ -359,12 +343,12 @@ export function readShadows(
 ): BoxRecord[] {
   const value = s.boxShadow
   if (!value || value === 'none') return []
-  if (s.visibility === 'hidden' || s.display === 'none') return []
+  if (s.visibility !== 'visible' || s.display === 'none') return []
   if (rect.width <= 0 || rect.height <= 0) return []
   const { w, h } = place.local
   const radius = readCorners(s, { x: 0, y: 0, width: w, height: h })
   const out: BoxRecord[] = []
-  const layers = splitOutside(value, /,/)
+  const layers = splitTopLevel(value, ',').filter(Boolean)
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = parseShadowLayer(layers[i] ?? '')
     if (!layer || layer.inset !== inset) continue

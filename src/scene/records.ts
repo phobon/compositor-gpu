@@ -146,6 +146,12 @@ export interface Glyph {
   glyphId: number
   /** The grapheme cluster itself (for the Canvas 2D fallback atlas). */
   text: string
+  /** Colour / emoji grapheme (drawn by the fallback atlas in its own
+   * colours). Classified once at read time. */
+  colour: boolean
+  /** Code points in `text`, variation selectors excluded (> 1 = a cluster
+   * Slug can't shape; drawn by the fallback atlas). */
+  codePoints: number
   fontId: number
   /** Computed font-size in CSS px (for baseline/ink placement). */
   fontSize: number
@@ -185,11 +191,14 @@ export interface GlyphRun {
   /** Global paint order (integer; back-to-front across all layers). */
   z: number
   /**
-   * text-decoration lines (underline / overline / line-through) for this
-   * run, one BoxRecord per line fragment, painted immediately BEFORE the
-   * run's glyphs (flatten emits them first). Filled by the reader.
+   * `underline` / `overline` boxes for this run, one BoxRecord per line
+   * fragment, painted immediately BEFORE the run's glyphs (flatten emits
+   * them first). Filled by the reader.
    */
   decorations?: BoxRecord[]
+  /** `line-through` boxes, painted immediately AFTER the run's glyphs
+   * (CSS paints line-through over the text). */
+  decorationsOver?: BoxRecord[]
   /**
    * `text-shadow` layers in CSS list order (the first is painted top-most;
    * all paint below the glyphs). Offsets and blur are CSS px in the glyph's

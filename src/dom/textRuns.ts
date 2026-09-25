@@ -1,5 +1,7 @@
 import type { Glyph, GlyphRun, TextShadow } from '../scene/records'
+import { isColorGrapheme } from '../text/glyphAtlas'
 import { parseColor } from '../util/color'
+import { splitTopLevel } from '../util/css'
 import { toDocRect } from './styles'
 
 // Grapheme segmenter (browser-native). Falls back to Array.from for old envs.
@@ -13,7 +15,8 @@ const segmenter =
 const CACHE_MAX = 4096
 const graphemeCache = new Map<string, string[]>()
 
-function graphemes(text: string): string[] {
+/** Grapheme clusters of `text` (cached, shared result: don't mutate). */
+export function graphemes(text: string): string[] {
   const hit = graphemeCache.get(text)
   if (hit) return hit
   const out = segmenter
@@ -21,6 +24,34 @@ function graphemes(text: string): string[] {
     : Array.from(text)
   if (graphemeCache.size >= CACHE_MAX) graphemeCache.clear()
   graphemeCache.set(text, out)
+  return out
+}
+
+/** A grapheme's fallback classification (see Glyph.colour/codePoints). */
+export interface GraphemeClass {
+  colour: boolean
+  codePoints: number
+}
+
+const classCache = new Map<string, GraphemeClass>()
+
+/** U+FE00–FE0F and U+E0100–E01EF. */
+function isVariationSelector(cp: number): boolean {
+  return (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)
+}
+
+/** Classify a grapheme once for the text backend: colour/emoji, and its
+ * code-point count without variation selectors. Cached (shared result). */
+export function graphemeClass(cell: string): GraphemeClass {
+  const hit = classCache.get(cell)
+  if (hit) return hit
+  let codePoints = 0
+  for (const ch of cell) {
+    if (!isVariationSelector(ch.codePointAt(0) ?? 0)) codePoints++
+  }
+  const out = { colour: isColorGrapheme(cell), codePoints }
+  if (classCache.size >= CACHE_MAX) classCache.clear()
+  classCache.set(cell, out)
   return out
 }
 
@@ -48,6 +79,9 @@ export function readTextNode(
 ): GlyphRun | null {
   const text = node.nodeValue
   if (!text || !text.trim()) return null
+  // Hidden text paints nothing (and so no decorations); a descendant
+  // element can still set `visibility: visible` for its own text.
+  if (s.visibility !== 'visible') return null
   const color = parseColor(s.color)
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const fontFamily = (s.fontFamily.split(',')[0] ?? '')
@@ -73,6 +107,7 @@ export function readTextNode(
     const r = range.getBoundingClientRect()
     if (r.width > 0 && r.height > 0) {
       const rect = toDocRect(r)
+      const cls = graphemeClass(cell)
       glyphs.push({
         index,
         rect,
@@ -81,6 +116,8 @@ export function readTextNode(
         local: { w: rect.width, h: rect.height },
         glyphId: cell.codePointAt(0) ?? 0,
         text: cell,
+        colour: cls.colour,
+        codePoints: cls.codePoints,
         fontId,
         fontSize,
         color,
@@ -123,10 +160,12 @@ export function readTextShadows(value: string, color: string): TextShadow[] {
   const hit = shadowCache.get(key)
   if (hit) return hit
   const out: TextShadow[] = []
-  for (const layer of splitTop(value, ',')) {
+  for (const layer of splitTopLevel(value, ',')) {
+    if (!layer) continue
     const lens: number[] = []
     let col = ''
-    for (const tok of splitTop(layer, ' ')) {
+    for (const tok of splitTopLevel(layer, ' ')) {
+      if (!tok) continue
       if (/^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i.test(tok)) {
         lens.push(Number.parseFloat(tok))
       } else {
@@ -145,25 +184,6 @@ export function readTextShadows(value: string, color: string): TextShadow[] {
   }
   if (shadowCache.size >= 256) shadowCache.clear()
   shadowCache.set(key, out)
-  return out
-}
-
-/** Split on `sep` outside parentheses, dropping empty parts. */
-function splitTop(value: string, sep: string): string[] {
-  const out: string[] = []
-  let depth = 0
-  let cur = ''
-  for (const ch of value) {
-    if (ch === '(') depth++
-    else if (ch === ')') depth = Math.max(0, depth - 1)
-    if (depth === 0 && ch === sep) {
-      if (cur.trim()) out.push(cur.trim())
-      cur = ''
-    } else {
-      cur += ch
-    }
-  }
-  if (cur.trim()) out.push(cur.trim())
   return out
 }
 
@@ -233,6 +253,7 @@ export function fontMetrics(s: FontStyleLike): FontMetrics {
     }
   }
   const out: FontMetrics = { height: ascent + descent, ascent, descent }
+  if (fontMetricsCache.size >= INK_CACHE_MAX) fontMetricsCache.clear()
   fontMetricsCache.set(font, out)
   return out
 }

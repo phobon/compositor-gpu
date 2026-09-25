@@ -29,9 +29,10 @@ export async function initGpu(
     log.warn('WebGPU not available; passthrough')
     return null
   }
+  let root: { destroy(): void; device: GPUDevice } | null = null
   try {
     // TypeGPU owns adapter+device negotiation and hands us a typed root.
-    const root = (await tgpu.init()) as unknown as {
+    root = (await tgpu.init()) as unknown as {
       destroy(): void
       device: GPUDevice
     }
@@ -55,6 +56,11 @@ export async function initGpu(
     return { root, device, canvas, context, format, viewFormat }
   } catch (err) {
     log.error('WebGPU init failed; passthrough', err)
+    try {
+      root?.destroy()
+    } catch {
+      // Already unusable; nothing more to release.
+    }
     return null
   }
 }

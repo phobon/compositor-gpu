@@ -61,11 +61,13 @@ export class GlyphAtlas {
   private dirty = false
   private warnedFull = false
 
+  // A web font finishing its load changes what the browser would draw for
+  // the same key; drop everything so the next upload re-rasterises.
+  private readonly onFontsLoaded = (): void => this.reset()
+
   constructor() {
-    // A web font finishing its load changes what the browser would draw for
-    // the same key; drop everything so the next upload re-rasterises.
     if (typeof document !== 'undefined' && document.fonts) {
-      document.fonts.addEventListener('loadingdone', () => this.reset())
+      document.fonts.addEventListener('loadingdone', this.onFontsLoaded)
     }
   }
 
@@ -285,10 +287,17 @@ export class GlyphAtlas {
     this.dirty = false
   }
 
+  /** Release the GPU texture, the canvas and the font-load listener. */
   destroy(): void {
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.removeEventListener('loadingdone', this.onFontsLoaded)
+    }
     this.texture?.destroy()
     this.texture = null
     this.view = null
+    this.ctx = null
+    this.canvas = null
+    this.entries.clear()
   }
 }
 

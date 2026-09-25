@@ -93,14 +93,27 @@ invalidations, updates buffers, and draws.
 | `dom/styles.ts` | Reads `getComputedStyle` and normalises the subset we paint (background, border-radius, colour, opacity, transform, clip, z-order). |
 | `dom/gradient.ts` | Reads CSS `linear-gradient` and `radial-gradient`, interpolates in premultiplied sRGB. |
 | `dom/backgrounds.ts` | Reads `background-image: url()`, `background-size` / `background-position`; handles async loading with scoped re-read. |
+| `dom/transform.ts` | Recovers each record's local (untransformed) size and 2×3 affine from the computed transform chain and the measured AABB; drives transformed boxes/images/glyphs and synthetic oblique. |
+| `dom/decorations.ts` | Reads `text-decoration`, propagates it across in-flow descendants, and turns it into per-line-fragment BoxRecords (with skip-ink) painted just before a run's glyphs. |
+| `dom/pseudo.ts` | Synthesises `::marker`/`::before`/`::after` records from computed pseudo style plus measured/Chrome-reported geometry; anchored into the host's local frame. |
+| `dom/gradient.ts` | Reads CSS `linear-gradient`/`radial-gradient`, interpolates stops in premultiplied sRGB for the box shader. |
 | `dom/textRuns.ts` | Extracts per-glyph geometry from text nodes using `Range.getClientRects()` / segmentation, mapped to font + colour. The heart of text fidelity. |
 | `dom/observer.ts` | Resize/Mutation/Intersection observers + scroll + `document.fonts.ready`; coalesces into invalidation flags. |
 | `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`) in document space. No GPU types here. |
 | `scene/scene.ts` | Holds records, assigns stable ids, produces instance buffers, tracks dirty ranges. |
+| `scene/stacking.ts` | Builds a simplified CSS stacking-context tree while walking and flattens it (Appendix E) into each record's integer paint order `z`; also produces opacity `OpacityGroup`s. |
+| `scene/batches.ts` | Merges boxes/images/text into cross-layer draw batches (splitting only where overlap forces it) and threads in push/pop markers for opacity groups. |
 | `text/textRasterizer.ts` | Interface a text backend must satisfy (`Slug` is the default impl; an MSDF impl can slot in). |
 | `text/slug/*` | Font outline extraction → banded curve data → GPU buffers; the Slug WGSL fragment shader. |
-| `boxes/boxRenderer.ts` | Instanced rounded-rect pass (backgrounds, borders). The simplest full vertical slice of the sync loop. |
-| `images/imageRenderer.ts` | Uploads `<img>` / background images to textures, draws textured quads. |
+| `text/glyphAtlas.ts` | Canvas-2D-rasterised fallback atlas (emoji, uncovered code points, multi-code-point clusters, unregistered faces), packed as a shared `rgba8unorm` texture. |
+| `text/atlasShader.ts` | Second pipeline in the text pass drawing textured quads from the fallback atlas, sharing one instance index space with Slug so cross-layer batches stay aligned. |
+| `text/fontSource.ts` | Resolves a `FontFace`/`@font-face` rule to its `url()` source and fetches the bytes at runtime for `SlugText.prepare()`. |
+| `boxes/boxRenderer.ts` | Instanced rounded-rect pass (backgrounds, borders, gradients, shadows). The simplest full vertical slice of the sync loop. |
+| `images/imageRenderer.ts` | Uploads `<img>` / `<canvas>` / `<video>` / background images to textures, draws textured quads; collapses consecutive atlas-backed instances into one draw. |
+| `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
+| `gpu/frame.ts` | Shared `Frame` uniform (viewport, scroll, time, dpr) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
+| `gpu/composite.ts` | Offscreen texture pool + pipeline that draws a completed opacity group's texture back into its parent target at the group's doc-space rect, scaled by group alpha. |
+| `gpu/mips.ts` | Mip-chain generation (fullscreen-triangle blit pipeline) for static image/atlas textures. |
 | `util/*` | rAF scheduler, logging, small math (mat, rect). |
 
 ---
@@ -162,8 +175,9 @@ rects is the whole trick behind "perfectly replicating the HTML text."
   and only re-read on invalidation. Never read inside the render loop.
 - Sub-pixel positioning and hinting differ across browsers; we accept the
   browser's rect as ground truth and centre the outline within it.
-- Emoji / colour fonts (COLR/CBDT) are out of scope for v1 — fall back to
-  leaving those glyphs in the DOM (don't hide them).
+- Emoji and other colour glyphs render via the Canvas 2D fallback atlas
+  (`text/glyphAtlas.ts`), not by leaving them in the DOM. What's out of scope
+  is native COLR/CBDT rasterisation inside Slug's own outline shader.
 
 ---
 
@@ -174,9 +188,12 @@ rects is the whole trick behind "perfectly replicating the HTML text."
   fill, border width/colour, opacity. This is the smallest end-to-end proof of
   the sync loop and lands first.
 - **Images.** `<img>`, `<canvas>`, `<video>`, and `background-image` become
-  textured quads. Images upload once to a texture; `object-fit` maps to UV;
-  `background-image: url()` supports `background-size` (cover/contain/auto) and
-  `background-position`. A shared atlas for many small images is a follow-up.
+  textured quads. `object-fit` maps to UV; `background-image: url()` supports
+  `background-size` (cover/contain/auto) and `background-position`. Static
+  images ≤1024px are packed into one shared mipmapped atlas
+  (`images/imageAtlas.ts`); `<canvas>`/`<video>` sources and larger images
+  keep their own texture, re-uploaded per frame when dynamic. `ImagePass`
+  collapses consecutive atlas-backed instances into one draw call.
 - **Stacking.** The walker builds a simplified CSS stacking-context tree
   (`scene/stacking.ts`: positioned+z-index, fixed/sticky, opacity<1,
   transform, isolation, filter, blend mode) and flattens it per Appendix E
@@ -200,15 +217,22 @@ on any observer fire ─► set dirty flags (LAYOUT | STYLE | CONTENT | MUTATION
                         request a frame (rAF), coalesced
 
 frame():
-  if LAYOUT|STYLE|CONTENT:  reader.fullRead()             // batched DOM reads
-                            scene.rebuildDirty()           // update records
-                            renderer.uploadDirtyInstances()// update GPU buffers
-  if MUTATION:              reader.partialRead(scopes)     // re-read boundaries
-                            (escalates to fullRead if a boundary's rect changed)
-                            scene.rebuildDirty()           // update records
-                            renderer.uploadDirtyInstances()// update GPU buffers
-  if SCROLL:                renderer.setScrollUniform()    // one uniform write
-  renderer.draw()                                          // one pass, submit
+  if LAYOUT|STYLE|CONTENT:  reader.fullRead()              // batched DOM reads,
+                                                            // rebuilds the scene
+  else if MUTATION:         reader.partialRead(scopes)      // re-read boundaries
+                            (escalates to a full read if a boundary's rect changed;
+                             running CSS transitions/animations add their parent
+                             scopes every frame while they run)
+  renderer.render(scene, ctx, dpr)                          // writes the Frame
+                                                            // uniform (viewport,
+                                                            // scroll, time, dpr),
+                                                            // uploads only dirty
+                                                            // layers, walks
+                                                            // scene.batches
+                                                            // (push/pop opacity
+                                                            // groups render
+                                                            // offscreen + composite)
+                                                            // and submits
 ```
 
 - **ResizeObserver** on the root (and key subtrees) → LAYOUT.
@@ -245,17 +269,39 @@ const compositor = await createCompositor({
 
 compositor.start()
 // ...
+compositor.invalidate()          // force a re-read + re-upload
+compositor.setSourceHidden(true) // toggle replace-mode hiding, reversibly
 compositor.stop()
 compositor.destroy()
 ```
 
 - **`mode: 'overlay'`** paints the GPU mirror over the page (for effects that
-  read the page as-is). **`mode: 'replace'`** hides the DOM's own painting
-  (`visibility`/colour tricks that preserve a11y & hit-testing) and shows only
-  the GPU version — the DomGL-style "your DOM, on the GPU" experience.
+  read the page as-is). **`mode: 'replace'`** sets the mirrored root's
+  `style.opacity` to `0` (saving and restoring the previous value) — layout,
+  focus, selection, hit-testing and the a11y tree are all untouched, only the
+  painted pixels disappear — and shows only the GPU version, the DomGL-style
+  "your DOM, on the GPU" experience. `hideSource: false` skips that opacity
+  flip (both DOM and GPU paint stacked).
+- **`fonts`**: omitted or `'auto'` discovers every face already registered on
+  `document.fonts`; an explicit `FontFace[]` resolves only those. Either way
+  the bytes are fetched at runtime from the face's `@font-face` `url()`
+  (`text/fontSource.ts`), not supplied inline.
 - Framework-agnostic. React/Gatsby usage is a thin client-only wrapper (see
   `INTEGRATION.md`).
 - Zero required peer deps beyond **TypeGPU**; no framework assumed.
+
+The returned `Compositor` also exposes:
+
+- **`canvas`** — the overlay `HTMLCanvasElement`, or `null` in passthrough/inert.
+- **`active`** — `true` once a real GPU pipeline is running (`false` in passthrough).
+- **`invalidate()`** — force a full re-read of the DOM and re-upload of every layer.
+- **`setSourceHidden(hidden)`** — toggle the `replace`-mode opacity flip directly.
+- **`stats()`** — live counts for debug overlays, returning a `CompositorStats`:
+  `active`, `boxes`, `images`, `glyphs`, `fallback` (atlas-drawn glyphs),
+  `ligatures`, `uploads` (layers re-uploaded), `batches`, `draws` (actual
+  `encoder.draw` calls, lower than `batches` when atlas-backed image instances
+  collapse into one call), `groups` (opacity groups composited), `readElements`,
+  `partialReads`, `readMs`, `uploadMs`, `encodeMs`, `fps`.
 
 ---
 
@@ -295,14 +341,24 @@ compositor.destroy()
   turning it off leaves the page pixel-identical.
 - **Visual regression** — screenshot the GPU layer vs. the DOM paint and diff
   (later; needs a browser harness).
-- No unit-test framework yet; correctness of the shader is validated visually
-  in-browser (WebGPU can't run in the cloud sandbox).
+- No unit-test framework; correctness of the shader is validated by the
+  visual-regression harness (`npm run test:visual`, Playwright + pixelmatch)
+  and offline WGSL validation with `naga`. Headless WebGPU does run in a
+  sandbox with no GPU: the harness tries the real adapter first and falls
+  back to SwiftShader.
 
 ---
 
 ## 11. Out of scope for v1
 
-Video textures; colour/emoji fonts; CSS filters/blend modes/mix-blend;
-3D transforms & perspective on boxes (text under perspective *is* supported by
-Slug); nested scroll containers with independent scroll; print; a WebGL2
-fallback path. All are tracked as v2+ in `ROADMAP.md`.
+Colour/emoji glyphs render fine — they go through the Canvas 2D fallback
+atlas (`text/glyphAtlas.ts`) like any other grapheme Slug can't draw. What's
+out of scope is *native* COLR/CBDT rasterisation inside Slug itself (drawing
+the colour layers from the font's own outlines rather than falling back to
+Canvas 2D).
+
+Also out of scope: CSS filters/blend modes/mix-blend; 3D transforms &
+perspective on boxes (text under perspective *is* supported by Slug, since it
+positions with a real 2×3 affine); nested scroll containers with independent
+scroll; print; a WebGL2 fallback path. All are tracked as v2+ in
+`ROADMAP.md`.

@@ -1,7 +1,7 @@
 // text-decoration lines (underline / overline / line-through): reading the
 // computed style, propagating it down the element tree, and building the
-// BoxRecords flatten() paints just before a run's glyphs (see records.ts:
-// GlyphRun.decorations).
+// BoxRecords flatten() paints around a run's glyphs (see records.ts:
+// GlyphRun.decorations / decorationsOver).
 //
 // CSS `text-decoration` is not inherited, but ancestor decorations keep
 // painting across in-flow descendant text (a decorating <a> underlines a
@@ -86,7 +86,9 @@ export function readOwnDecorations(
   let thicknessPx: number | null = null
   if (thicknessRaw && thicknessRaw !== 'auto') {
     const n = Number.parseFloat(thicknessRaw)
-    thicknessPx = Number.isFinite(n) ? n : null
+    // A percentage is of 1em (the decorating element's font-size).
+    const v = thicknessRaw.endsWith('%') ? (n / 100) * fontSize : n
+    thicknessPx = Number.isFinite(v) ? v : null
   }
   const { ascent, descent } = fontMetrics(s)
   const skipInk = s.textDecorationSkipInk !== 'none'
@@ -118,36 +120,55 @@ export function propagateDecorations(
   return parentDecor ? [...parentDecor, ...ownDecor] : ownDecor
 }
 
-/** Same-line grouping: consecutive glyphs whose rect.y agree within this. */
+/** Same-line grouping: glyphs whose local y (in the fragment's first
+ * glyph's frame) agree within this. */
 const LINE_EPS = 1
+
+/** A run's decoration boxes, split by paint position: underline and
+ * overline paint under the glyphs, line-through over them. */
+export interface DecorationBoxes {
+  under: BoxRecord[]
+  over: BoxRecord[]
+}
 
 /**
  * One BoxRecord per (decoration entry × line fragment) for a run, geometry
  * built in the FIRST glyph of each fragment's local frame (see CLAUDE.md /
  * transform.ts): cheap and exact for untransformed runs, and correct under
  * rotation/skew because the stroke is placed and sized in local space before
- * `xform` carries it to document space.
+ * `xform` carries it to document space. Line fragments are found in that
+ * frame too, so a rotated line isn't split per glyph.
  */
 export function buildDecorationBoxes(
   run: GlyphRun,
   decor: readonly Decoration[],
   clip: Rect | null,
   allocId: () => number
-): BoxRecord[] {
-  if (decor.length === 0) return []
+): DecorationBoxes {
+  const out: DecorationBoxes = { under: [], over: [] }
+  if (decor.length === 0) return out
   const glyphs = run.glyphs
-  const out: BoxRecord[] = []
   let start = 0
   for (let i = 1; i <= glyphs.length; i++) {
-    const prev = glyphs[i - 1] as Glyph
+    const g0 = glyphs[start] as Glyph
     const cur: Glyph | undefined = glyphs[i]
-    if (cur && Math.abs(cur.rect.y - prev.rect.y) < LINE_EPS) continue
+    if (cur && Math.abs(glyphLocalY(g0, cur)) < LINE_EPS) continue
     for (const d of decor) {
-      out.push(...fragmentBoxes(run, glyphs, start, i, d, clip, allocId))
+      const list = d.line === 'line-through' ? out.over : out.under
+      list.push(...fragmentBoxes(run, glyphs, start, i, d, clip, allocId))
     }
     start = i
   }
   return out
+}
+
+/** Local y of `g`'s top edge in `g0`'s local frame (see glyphLocalX). */
+function glyphLocalY(g0: Glyph, g: Glyph): number {
+  const [a, b, c, d, tx0, ty0] = g0.xform
+  const dx = g.xform[4] - tx0
+  const dy = g.xform[5] - ty0
+  const det = a * d - b * c
+  return det !== 0 ? (a * dy - b * dx) / det : dy
 }
 
 /** Local x of `g`'s left (advance-box) edge, in `g0`'s local frame: glyphs

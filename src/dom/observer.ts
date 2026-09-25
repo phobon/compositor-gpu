@@ -50,6 +50,61 @@ function isAdvancing(el: Element): boolean {
   return false
 }
 
+/** Properties (lowercased, hyphens removed) whose animation cannot change
+ * layout; any `*color` property also qualifies. */
+const PAINT_ONLY = new Set([
+  'transform',
+  'translate',
+  'rotate',
+  'scale',
+  'opacity',
+  'filter',
+  'backdropfilter',
+  'boxshadow',
+  'textshadow',
+  'visibility'
+])
+const KEYFRAME_META = new Set([
+  'offset',
+  'computedOffset',
+  'easing',
+  'composite'
+])
+
+function paintOnlyProperty(name: string): boolean {
+  const n = name.replace(/-/g, '').toLowerCase()
+  return PAINT_ONLY.has(n) || n.endsWith('color')
+}
+
+/** Can this animation only change paint (never layout)? False when it is
+ * unknown (not a CSS transition/animation, or a `transition: all`). */
+function animatesPaintOnly(a: Animation): boolean {
+  if (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) {
+    return paintOnlyProperty(a.transitionProperty)
+  }
+  if (typeof CSSAnimation !== 'undefined' && a instanceof CSSAnimation) {
+    const effect = a.effect as KeyframeEffect | null
+    if (!effect || typeof effect.getKeyframes !== 'function') return false
+    for (const kf of effect.getKeyframes()) {
+      for (const prop of Object.keys(kf)) {
+        if (!KEYFRAME_META.has(prop) && !paintOnlyProperty(prop)) return false
+      }
+    }
+    return true
+  }
+  return false
+}
+
+/** Are all of `el`'s unfinished animations paint-only? */
+function paintOnlyAnimations(el: Element): boolean {
+  if (typeof el.getAnimations !== 'function') return false
+  for (const a of el.getAnimations()) {
+    if (a.playState === 'finished' || a.playState === 'idle') continue
+    if (!animatesPaintOnly(a)) return false
+  }
+  return true
+}
+
 /** Could adding/removing this node change which stylesheets apply? */
 function carriesStylesheet(n: Node): boolean {
   if (n.nodeType !== Node.ELEMENT_NODE) return false
@@ -84,6 +139,11 @@ export class DomSync {
   private io: IntersectionObserver
   private started = false
   private animating = new Set<Element>()
+  /** Targets yielded as paint-only by the last animatingScopes() pass. */
+  private paintOnlyLast = new Set<Element>()
+  /** Paint-only targets that just settled: one final re-read of their own
+   * subtree on the next animatingScopes() pass. */
+  private settled = new Set<Element>()
 
   constructor(
     private readonly root: HTMLElement,
@@ -183,31 +243,56 @@ export class DomSync {
   /** Stop tracking `t`, with one final re-read of its end state. */
   private settle(t: Element): void {
     this.animating.delete(t)
+    if (this.paintOnlyLast.delete(t)) {
+      this.settled.add(t)
+      this.mark(Dirty.MUTATION)
+      return
+    }
     const p = t.parentElement
     if (p) this.scopes.add(p)
     this.mark(p ? Dirty.MUTATION : Dirty.STYLE)
   }
 
   /**
-   * Re-read scopes for running transitions/animations: each target's
-   * parent (the attribute-scope rule — the target's own margin box may
-   * change), or the target itself at the root. Targets whose animations
-   * are all paused stay tracked but yield nothing (a paused animation's
-   * resumption is a style/class mutation, which requests a frame).
+   * Re-read scopes for running transitions/animations. A target whose
+   * animations can only change paint (transform, opacity, filter, colours
+   * — see PAINT_ONLY) is its own scope and is added to `paintOnly`: its
+   * margin box can't move, so SceneReader.partialRead may skip the
+   * rect-change check for it. Otherwise the scope is the target's parent
+   * (the attribute-scope rule — the target's own margin box may change),
+   * or the target itself at the root. Targets whose animations are all
+   * paused stay tracked but yield nothing (a paused animation's resumption
+   * is a style/class mutation, which requests a frame).
    */
-  *animatingScopes(): Iterable<Element> {
+  *animatingScopes(paintOnly?: Set<Element>): Iterable<Element> {
+    for (const el of this.settled) {
+      if (!el.isConnected) continue
+      paintOnly?.add(el)
+      yield el
+    }
+    this.settled.clear()
+    this.paintOnlyLast.clear()
     for (const el of this.animating) {
       if (!el.isConnected) {
         this.animating.delete(el)
         continue
       }
-      if (isAdvancing(el)) yield el.parentElement ?? el
+      if (!isAdvancing(el)) continue
+      if (el !== this.root && paintOnlyAnimations(el)) {
+        this.paintOnlyLast.add(el)
+        paintOnly?.add(el)
+        yield el
+      } else {
+        yield el.parentElement ?? el
+      }
     }
   }
 
   start(): void {
     if (this.started) return
     this.started = true
+    // Nothing was observed while stopped: the tree may be stale.
+    this.dirty = Dirty.ALL
     for (const type of ANIM_START) {
       this.root.addEventListener(type, this.onAnimStart, true)
     }
@@ -230,8 +315,8 @@ export class DomSync {
       subtree: true,
       childList: true,
       characterData: true,
-      attributes: true,
-      attributeFilter: ['style', 'class']
+      // Any attribute can drive CSS (`data-*`, `aria-*`, `hidden`, `open`).
+      attributes: true
     })
     window.addEventListener('scroll', this.onScroll, { passive: true })
     window.addEventListener('resize', this.onResize, { passive: true })
@@ -263,6 +348,8 @@ export class DomSync {
       this.root.removeEventListener(type, this.onAnimationEnd, true)
     }
     this.animating.clear()
+    this.paintOnlyLast.clear()
+    this.settled.clear()
   }
 
   /** Read + clear the pending dirty flags and scopes for this frame. */

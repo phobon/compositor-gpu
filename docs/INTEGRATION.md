@@ -58,7 +58,12 @@ export const GpuCompositor = ({ enabled = false, onGlyph }) => {
     let compositor
     let cancelled = false
     import('compositor-gpu').then(async ({ createCompositor }) => {
-      compositor = await createCompositor({ layers: ['boxes', 'text'], onGlyph })
+      compositor = await createCompositor({
+        mode: 'overlay', // 'replace' also opacity-hides the DOM's own paint
+        layers: ['boxes', 'text'],
+        fonts: 'auto', // discovers document.fonts; pass FontFace[] to scope it
+        onGlyph
+      })
       if (cancelled) return compositor.destroy()
       compositor.start()
     })
@@ -77,6 +82,9 @@ untouched and turning the flag off leaves it pixel-identical.
 ## Notes
 - Dynamic `import()` keeps TypeGPU/opentype out of the SSR bundle and off the
   critical path.
-- WebGPU-absent browsers fall through to `passthrough` — the normal page.
+- WebGPU-absent browsers fall through to `passthrough` — the normal page
+  (`compositor.active` is `false`, `compositor.canvas` is `null`).
+- `compositor.stats()` returns live counts (`boxes`, `glyphs`, `draws`,
+  `fps`, …) — wire it into a debug overlay behind the same flag.
 - The submodule pins a commit; bump it with `git -C compositor-gpu pull` then
   commit the pointer in mds-home, exactly like `MDS-web-ui`.

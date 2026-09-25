@@ -28,7 +28,13 @@ import type { BoxRecord, Glyph, GlyphRun, Rect } from '../scene/records'
 import { contextZIndex, createsStackingContext } from '../scene/stacking'
 import { parseColor } from '../util/color'
 import { px, readBox, readOpacity, readShadows } from './styles'
-import { type FontStyleLike, fontMetrics, ligaturesEnabled } from './textRuns'
+import {
+  type FontStyleLike,
+  fontMetrics,
+  graphemeClass,
+  graphemes,
+  ligaturesEnabled
+} from './textRuns'
 import {
   type Placement,
   applyAffine,
@@ -246,16 +252,6 @@ export function parseContent(value: string, el: Element): string | null {
 
 // ---- text layout -----------------------------------------------------
 
-const segmenter =
-  typeof Intl !== 'undefined' && 'Segmenter' in Intl
-    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-    : null
-
-function graphemes(text: string): string[] {
-  if (segmenter) return Array.from(segmenter.segment(text), (x) => x.segment)
-  return Array.from(text)
-}
-
 let ctx: CanvasRenderingContext2D | null | undefined
 
 function measureCtx(): CanvasRenderingContext2D | null {
@@ -383,6 +379,7 @@ function buildRun(
         local: p.local,
         glyphId: cell.text.codePointAt(0) ?? 0,
         text: cell.text,
+        ...graphemeClass(cell.text),
         fontId: 0,
         fontSize,
         color,
@@ -544,7 +541,7 @@ export function readMarker(
 ): PseudoOut | null {
   const { el, s, place, clip, alloc } = host
   const ms = getComputedStyle(el, '::marker')
-  if (ms.visibility === 'hidden' || ms.display === 'none') return null
+  if (ms.visibility !== 'visible' || ms.display === 'none') return null
   const content = parseContent(ms.content, el)
   const type = s.listStyleType
   const outside = s.listStylePosition !== 'inside'
@@ -644,7 +641,7 @@ export function readBeforeAfter(
   if (text === null) return null
   const display = ps.display
   if (display === 'none' || display === 'contents') return null
-  if (ps.visibility === 'hidden') return null
+  if (ps.visibility !== 'visible') return null
 
   const i = insets(ps)
   const padX = i.pl + i.pr + i.bl + i.br
@@ -785,7 +782,7 @@ export function readBeforeAfter(
     if (run) items.push(run)
   }
   if (items.length === 0) return null
-  const context = createsStackingContext(ps)
+  const context = createsStackingContext(ps, display !== 'inline')
     ? {
         z: contextZIndex(ps),
         alpha: Math.max(0, readOpacity(ps)),

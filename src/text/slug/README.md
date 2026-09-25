@@ -27,14 +27,17 @@ Per pixel: transform to em space, pick the band by `em.y`, walk that band's
 curves, accumulate a winding number from scanline crossings to the right, and
 convert to coverage.
 
-## Remaining work (v1)
-1. **Analytic anti-aliasing** — replace the nonzero hard coverage with the
-   reference's sub-pixel coverage (horizontal distance to each crossing).
-2. **Font byte resolution** — `prepare()` should fetch a `FontFace`'s source and
-   call `loadFontBuffer`; today the caller supplies bytes explicitly.
-3. **Real cmap + shaping ids** — `glyphId` currently carries a code point; wire
-   it to the browser-shaped glyph indices for ligatures/contextual forms.
-4. **On-demand glyph upload** — build band/curve data lazily per glyph instead
-   of a fixed code-point set, with an LRU.
-5. **In-browser validation** — the shader has never executed (no WebGPU in the
-   build sandbox); expect to debug winding sign + band selection first.
+`prepare()` resolves each `FontFace`'s `@font-face` `url()` and fetches the
+bytes at runtime (`text/fontSource.ts`); it is not a stub.
+
+## Remaining gaps
+1. **`calt`/`dlig`** — contextual alternates and discretionary ligatures
+   aren't applied (only `liga`/`clig`, e.g. Inter's arrow ligatures fall
+   through unmerged).
+2. **Combining sequences** — multi-code-point grapheme clusters Slug can't
+   shape itself fall back to the Canvas 2D atlas rather than being drawn as
+   composed Slug outlines.
+3. **Paint order within a batch** — `draw()` always issues the Slug pipeline
+   before the atlas pipeline for a batch's glyph range, so an atlas
+   (fallback) glyph always paints over a Slug glyph in the same batch
+   regardless of each glyph's actual `z` order.

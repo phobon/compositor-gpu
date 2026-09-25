@@ -1,37 +1,12 @@
 import type { Gradient, GradientStop, RGBA, Rect } from '../scene/records'
 import { parseColor } from '../util/color'
+import { splitTopLevel } from '../util/css'
 
 /** Colour parser used for stop colours; injectable so tests can stub it. */
 export type ColorParser = (css: string) => RGBA
 
 /** Max stops per gradient (the shader's evaluation loop assumes this). */
 export const MAX_STOPS = 8
-
-/**
- * Split `s` on `sep` characters that are outside parentheses and quotes.
- * Pieces are trimmed; empty pieces are kept so callers can detect them.
- */
-function splitTopLevel(s: string, sep: string): string[] {
-  const out: string[] = []
-  let depth = 0
-  let quote = ''
-  let start = 0
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    if (quote) {
-      if (ch === '\\') i++
-      else if (ch === quote) quote = ''
-    } else if (ch === '"' || ch === "'") quote = ch
-    else if (ch === '(') depth++
-    else if (ch === ')') depth = Math.max(0, depth - 1)
-    else if (ch === sep && depth === 0) {
-      out.push(s.slice(start, i).trim())
-      start = i + 1
-    }
-  }
-  out.push(s.slice(start).trim())
-  return out
-}
 
 /**
  * First layer of a computed `background-image` list, or null for `none` /
@@ -216,11 +191,27 @@ function downsample(stops: GradientStop[]): GradientStop[] {
   return out
 }
 
+const INTERPOLATION_RE =
+  /(^|\s)in\s+[a-z][a-z0-9-]*(\s+(shorter|longer|increasing|decreasing)\s+hue)?(?=\s|$)/i
+
+/**
+ * Drop a `in <colorspace> [<hue-interpolation> hue]` clause from the
+ * gradient's first argument (removing the argument when nothing else is
+ * left). Approximation: stops are still interpolated in sRGB.
+ */
+function stripInterpolation(args: string[]): string[] {
+  const head = args[0]
+  if (head === undefined || !INTERPOLATION_RE.test(head)) return args
+  const rest = head.replace(INTERPOLATION_RE, ' ').trim()
+  return rest ? [rest, ...args.slice(1)] : args.slice(1)
+}
+
 function parseLinear(
-  args: string[],
+  all: string[],
   rect: Rect,
   parse: ColorParser
 ): Gradient | null {
+  const args = stripInterpolation(all)
   let angle = Math.PI // default: to bottom
   let rest = args
   const head = (args[0] ?? '').toLowerCase()
@@ -290,10 +281,11 @@ function parsePosition(toks: string[], rect: Rect): [number, number] | null {
 }
 
 function parseRadial(
-  args: string[],
+  all: string[],
   rect: Rect,
   parse: ColorParser
 ): Gradient | null {
+  const args = stripInterpolation(all)
   let rest = args
   let shape = ''
   let size = 'farthest-corner'
@@ -374,7 +366,9 @@ function parseRadial(
 /**
  * Parse one computed `background-image` layer into a Gradient resolved
  * against `rect` (the gradient box), or null when it isn't a supported
- * gradient (url(), repeating-*, conic-*, malformed, < 2 stops).
+ * gradient (url(), repeating-*, conic-*, malformed, < 2 stops). A
+ * colour-interpolation clause (`in oklab`) is accepted but ignored: stops
+ * are interpolated in sRGB, an approximation.
  */
 export function parseGradient(
   layer: string,

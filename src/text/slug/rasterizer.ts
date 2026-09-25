@@ -5,15 +5,11 @@ import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
 import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlasShader'
 import { resolveFontBytes } from '../fontSource'
-import {
-  ATLAS_PAD,
-  type AtlasEntry,
-  GlyphAtlas,
-  isColorGrapheme
-} from '../glyphAtlas'
+import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyphAtlas'
 import type { TextBackend } from '../textRasterizer'
 import {
   type FontHandle,
+  type GlyphBands,
   type ParsedFont,
   loadFontFile,
   makeInstance
@@ -56,8 +52,11 @@ interface FaceEntry {
  * use, into a fixed pool of resident slots with LRU eviction — so coverage is
  * not limited to a pre-baked character set and memory tracks what is visible.
  *
- * Fonts are supplied as bytes (FontFace doesn't expose its parsed bytes); the
- * WGSL is validated in the playground — WebGPU can't run headless.
+ * Fonts are supplied as bytes: `prepare()` resolves each `FontFace`'s
+ * `@font-face` `url()` and fetches them at runtime (`text/fontSource.ts`),
+ * since `FontFace` itself doesn't expose its parsed bytes. The WGSL is
+ * validated by the visual-regression harness (headless WebGPU via
+ * SwiftShader) and offline with `naga`.
  */
 export class SlugText implements TextBackend {
   readonly name = 'slug'
@@ -130,6 +129,8 @@ export class SlugText implements TextBackend {
   private frameId = 0
   private overflowed = false
   private warnedBudget = false
+  /** Glyph keys refused for exceeding MAX_CURVES (drawn via the atlas). */
+  private readonly refused = new Set<number>()
   private readonly bandScratch = new Float32Array(BAND_COUNT * 4)
   private readonly curveScratch = new Float32Array(MAX_CURVES * CURVE_FLOATS)
 
@@ -385,6 +386,9 @@ export class SlugText implements TextBackend {
       return hit
     }
 
+    const gb = face.font.glyph(glyphIndex)
+    if (this.refuse(key, gb.curves.length, glyphIndex)) return -1
+
     let slot: number
     if (this.nextFree < SLOT_COUNT) {
       slot = this.nextFree++
@@ -400,30 +404,41 @@ export class SlugText implements TextBackend {
       slot = victim
     }
 
-    if (!this.writeSlot(slot, face.font, glyphIndex)) return -1
+    this.writeSlot(slot, gb)
     this.slotFrame[slot] = this.frameId
     this.cache.set(key, slot)
     return slot
   }
 
-  /** Upload one glyph's bands + curves into a slot. False if over budget. */
-  private writeSlot(
-    slot: number,
-    font: ParsedFont,
-    glyphIndex: number
-  ): boolean {
-    const gb = font.glyph(glyphIndex)
-    if (gb.curves.length > MAX_CURVES) {
-      if (!this.warnedBudget) {
-        this.warnedBudget = true
-        log.info(
-          `SlugText: glyph ${glyphIndex} exceeds MAX_CURVES (${
-            gb.curves.length
-          } > ${MAX_CURVES}); skipped`
-        )
-      }
-      return false
+  /**
+   * True when a glyph can't be resident (more than MAX_CURVES curves).
+   * Remembered per key so the check and the log happen once; callers route
+   * refused glyphs to the fallback atlas (see `fits`).
+   */
+  private refuse(key: number, curves: number, glyphIndex: number): boolean {
+    if (this.refused.has(key)) return true
+    if (curves <= MAX_CURVES) return false
+    this.refused.add(key)
+    if (!this.warnedBudget) {
+      this.warnedBudget = true
+      log.info(
+        `SlugText: glyph ${glyphIndex} exceeds MAX_CURVES (${curves} > ${MAX_CURVES}); drawn via the fallback atlas`
+      )
     }
+    return true
+  }
+
+  /** Can this glyph be drawn by Slug (resident, or within the budget)? */
+  private fits(face: FaceEntry, glyphIndex: number): boolean {
+    const key = face.idx * (1 << 20) + glyphIndex
+    if (this.cache.has(key)) return true
+    if (this.refused.has(key)) return false
+    const n = face.font.glyph(glyphIndex).curves.length
+    return !this.refuse(key, n, glyphIndex)
+  }
+
+  /** Upload one glyph's bands + curves (≤ MAX_CURVES) into a slot. */
+  private writeSlot(slot: number, gb: GlyphBands): void {
     const curveBase = slot * MAX_CURVES
     const b = this.bandScratch
     for (let i = 0; i < BAND_COUNT; i++) {
@@ -472,7 +487,6 @@ export class SlugText implements TextBackend {
       )
     }
     this.slotBBox[slot] = gb.bbox
-    return true
   }
 
   private ensureGlyphCapacity(n: number): void {
@@ -647,7 +661,9 @@ export class SlugText implements TextBackend {
       ids.length = nGlyphs
       for (let j = 0; j < nGlyphs; j++) {
         const g = glyphs[j] as Glyph
-        ids[j] = face ? this.slugGlyph(face, g.text, g.glyphId) : 0
+        const id = face ? this.slugGlyph(face, g) : 0
+        // Over the curve budget: the atlas draws it instead.
+        ids[j] = id > 0 && face && !this.fits(face, id) ? 0 : id
       }
       // Components of a ligature already drawn by an earlier instance.
       let consumed = 0
@@ -673,7 +689,7 @@ export class SlugText implements TextBackend {
         if (gi > 0 && font && run.ligatures) {
           const lig = font.ligatureAt(ids, j)
           const right = lig ? ligatureRight(glyphs, j, lig.len) : null
-          if (lig && right !== null) {
+          if (lig && right !== null && face && this.fits(face, lig.by)) {
             gi = lig.by
             w = right
             consumed = lig.len - 1
@@ -880,17 +896,12 @@ export class SlugText implements TextBackend {
   /**
    * Slug glyph index for a grapheme, or 0 when it must fall back: colour /
    * emoji, a multi-code-point cluster we can't shape (variation selectors
-   * aside), or a code point the face has no glyph for.
+   * aside), or a code point the face has no glyph for. The first two are
+   * classified once at read time (`Glyph.colour` / `Glyph.codePoints`).
    */
-  private slugGlyph(face: FaceEntry, text: string, cp: number): number {
-    if (isColorGrapheme(text)) return 0
-    let n = 0
-    for (const ch of text) {
-      const c = ch.codePointAt(0) ?? 0
-      if (!isVariationSelector(c)) n++
-    }
-    if (n > 1) return 0
-    return this.glyphIndex(face, cp)
+  private slugGlyph(face: FaceEntry, g: Glyph): number {
+    if (g.colour || g.codePoints > 1) return 0
+    return this.glyphIndex(face, g.glyphId)
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
@@ -980,11 +991,6 @@ const NO_SHADOWS: readonly TextShadow[] = []
 /** Device-px blur for the shadow atlas key, quantised to 1/2 px. */
 function shadowBlurPx(blur: number, dpr: number): number {
   return Math.max(0.5, Math.round(blur * dpr * 2) / 2)
-}
-
-/** U+FE00–FE0F and U+E0100–E01EF. */
-function isVariationSelector(cp: number): boolean {
-  return (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)
 }
 
 /** Stable key for a face descriptor: family (ci) + weight + italic. */

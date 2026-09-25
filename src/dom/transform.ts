@@ -42,6 +42,111 @@ export function parseTransform(s: string): Mat2 | null {
   return lin
 }
 
+/** The transform-related computed properties (`translate` / `rotate` /
+ * `scale` may be missing in older engines). */
+export interface TransformStyle {
+  transform: string
+  translate?: string
+  rotate?: string
+  scale?: string
+}
+
+const set = (v: string | undefined): boolean => !!v && v !== 'none'
+
+/** Does the style apply any transform (`transform` or an individual
+ * `translate` / `rotate` / `scale` property)? */
+export function hasTransform(s: TransformStyle): boolean {
+  return set(s.transform) || set(s.translate) || set(s.rotate) || set(s.scale)
+}
+
+const ANGLE = /^(-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(deg|rad|turn|grad)$/i
+
+function angleRad(tok: string): number | null {
+  const m = ANGLE.exec(tok)
+  if (!m) return null
+  const n = Number.parseFloat(m[1] ?? '')
+  const unit = (m[2] ?? '').toLowerCase()
+  if (unit === 'deg') return (n * Math.PI) / 180
+  if (unit === 'grad') return (n * Math.PI) / 200
+  if (unit === 'turn') return n * 2 * Math.PI
+  return n
+}
+
+/**
+ * Linear part of a computed `rotate` value (`30deg`, `z 30deg`, `x 30deg`,
+ * `1 1 0 30deg`), or null for none/identity/unparsable. A rotation about
+ * any axis is projected to its 2D part, like matrix3d in parseTransform.
+ */
+function parseRotate(v: string | undefined): Mat2 | null {
+  if (!set(v)) return null
+  const toks = (v as string).trim().split(/\s+/)
+  const theta = angleRad(toks[toks.length - 1] ?? '')
+  if (theta === null || theta === 0) return null
+  let x = 0
+  let y = 0
+  let z = 1
+  if (toks.length === 2) {
+    const axis = toks[0]
+    x = axis === 'x' ? 1 : 0
+    y = axis === 'y' ? 1 : 0
+    z = axis === 'z' ? 1 : 0
+    if (x + y + z === 0) return null
+  } else if (toks.length === 4) {
+    x = Number.parseFloat(toks[0] ?? '')
+    y = Number.parseFloat(toks[1] ?? '')
+    z = Number.parseFloat(toks[2] ?? '')
+    const len = Math.hypot(x, y, z)
+    if (!Number.isFinite(len) || len === 0) return null
+    x /= len
+    y /= len
+    z /= len
+  } else if (toks.length !== 1) {
+    return null
+  }
+  // rotate3d(x, y, z, θ): the upper-left 2×2 of its matrix.
+  const c = Math.cos(theta)
+  const sn = Math.sin(theta)
+  const t = 1 - c
+  return [
+    1 + t * (x * x - 1),
+    z * sn + x * y * t,
+    -z * sn + x * y * t,
+    1 + t * (y * y - 1)
+  ]
+}
+
+/** One computed `scale` component (a number, or a percentage). */
+function scaleFactor(tok: string | undefined): number {
+  if (tok === undefined) return Number.NaN
+  const n = Number.parseFloat(tok)
+  return tok.endsWith('%') ? n / 100 : n
+}
+
+/** Linear part of a computed `scale` value (`1.2`, `1.2 0.8`, with an
+ * optional z factor that is dropped), or null for none/identity. */
+function parseScale(v: string | undefined): Mat2 | null {
+  if (!set(v)) return null
+  const toks = (v as string).trim().split(/\s+/)
+  const sx = scaleFactor(toks[0])
+  const sy = toks.length > 1 ? scaleFactor(toks[1]) : sx
+  if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null
+  if (sx === 1 && sy === 1) return null
+  return [sx, 0, 0, sy]
+}
+
+/**
+ * Linear part of an element's full transform: CSS applies
+ * `translate · rotate · scale · transform` (all about the same origin).
+ * `translate` has no linear part — the translation is always solved from
+ * the measured AABB — so it only matters to `hasTransform`.
+ */
+export function composeIndividual(s: TransformStyle): Mat2 | null {
+  return composeLinear(
+    composeLinear(parseRotate(s.rotate), parseScale(s.scale)),
+    parseTransform(s.transform)
+  )
+}
+
 /** parent · own, treating null as identity (null result = identity). */
 export function composeLinear(
   parent: Mat2 | null,

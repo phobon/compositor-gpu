@@ -119,13 +119,26 @@ export class ImageAtlas {
   /** Re-create the texture one step bigger (2048 -> 4096, capped at
    * `device.limits.maxTextureDimension2D`) and re-upload every live entry
    * at its existing coordinates — packing state is untouched, only the
-   * backing texture grows. False if already at the cap. */
+   * backing texture grows. An entry whose live `<img>` no longer shows
+   * what it was keyed by (`src` or natural size changed) is dropped rather
+   * than re-copied with the wrong pixels; its space is not reclaimed.
+   * False if already at the cap. */
   private grow(): boolean {
     const max = this.maxSize()
     if (this.size >= max) return false
     const newSize = Math.min(this.size * 2, max)
     const texture = this.createTexture(newSize)
-    for (const e of this.entries.values()) {
+    for (const [k, e] of this.entries) {
+      const img = e.source
+      const live =
+        img.complete &&
+        img.naturalWidth === e.rect.w &&
+        img.naturalHeight === e.rect.h &&
+        key(img, e.rect.w, e.rect.h) === k
+      if (!live) {
+        this.entries.delete(k)
+        continue
+      }
       this.device.queue.copyExternalImageToTexture(
         { source: e.source },
         { texture, origin: [e.rect.x, e.rect.y] },

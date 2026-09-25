@@ -1,16 +1,16 @@
 import { FRAME_WGSL } from '../../gpu/frame'
 
 /**
- * Slug fragment shader (SCAFFOLD).
+ * Slug fragment shader.
  *
  * Provenance: adapted from Eric Lengyel's Slug reference shaders, released to
  * the public domain (US patent 10,373,352 disclaimed March 2026; reference
- * code MIT). This is a STRUCTURAL port: per pixel we transform to em space,
- * pick the band by em.y, and accumulate a winding number from the quadratic
- * curves crossing the pixel's scanline to the right. The reference's analytic
- * sub-pixel coverage and robust root handling must be finished and validated
- * in a real browser (WebGPU can't run in the build sandbox), so v1 uses a
- * nonzero-winding hard coverage as a placeholder.
+ * code MIT). Per pixel we transform to em space, pick the band by em.y, and
+ * accumulate signed sub-pixel analytic coverage from the quadratic curves
+ * crossing the pixel's scanline — the horizontal distance to each crossing,
+ * not a hard nonzero-winding test — with a 3-tap vertical supersample for
+ * anti-aliasing. Validated by the visual-regression harness (`npm run
+ * test:visual`) plus offline WGSL validation with `naga`.
  *
  * Bind group 1:
  *   0 glyphs : per-instance {rect, offset, color, gref, clip, xf0, xf1}

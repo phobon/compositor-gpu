@@ -8,7 +8,8 @@
 // contexts (ascending), then in-flow content in tree order, then z-index:0
 // child contexts (incl. positioned z-index:auto, step 6) in tree order, then
 // positive z-index child contexts (ascending).
-import type { Rect, SceneRecord } from './records'
+import { hasTransform } from '../dom/transform'
+import type { Glyph, GlyphRun, Rect, SceneRecord } from './records'
 
 export interface StackingContext {
   /** Declared stacking level (the CSS z-index this context was created
@@ -55,17 +56,31 @@ function isContext(item: Item): item is StackingContext {
  * such an element's positioned descendants should instead escape into the
  * parent context; we accept that inaccuracy rather than model the distinct
  * "auto" case.
+ *
+ * `transformable` is false for a non-replaced `display: inline` element:
+ * CSS ignores its `transform` / `translate` / `rotate` / `scale` (and so
+ * `will-change: transform`), which then create no context.
  */
-export function createsStackingContext(s: CSSStyleDeclaration): boolean {
+export function createsStackingContext(
+  s: CSSStyleDeclaration,
+  transformable = true
+): boolean {
   // Any positioned element: a real context when z-index is set, and the
   // documented z=0 pseudo-context (Appendix E step 6) when it's auto.
   if (s.position !== 'static') return true
   if (Number.parseFloat(s.opacity) < 1) return true
-  if (s.transform !== 'none') return true
+  if (transformable && hasTransform(s)) return true
   if (s.isolation === 'isolate') return true
   if (s.mixBlendMode !== 'normal') return true
   if (s.filter !== 'none') return true
-  if (/(^|,)\s*(transform|opacity)\s*(,|$)/.test(s.willChange)) return true
+  const wc = s.willChange
+  if (/(^|,)\s*opacity\s*(,|$)/.test(wc)) return true
+  if (
+    transformable &&
+    /(^|,)\s*(transform|translate|rotate|scale)\s*(,|$)/.test(wc)
+  ) {
+    return true
+  }
   return false
 }
 
@@ -91,22 +106,57 @@ function growExtent(e: Extent, r: Rect): void {
   e.maxY = Math.max(e.maxY, r.y + r.height)
 }
 
+/**
+ * Local-frame padding [x, y] that covers a run's `text-shadow` layers
+ * around each glyph: the max over layers of `|offset| + 1.5·blur` (the
+ * blur's 3σ tail) per axis. Null when the run has no shadows.
+ */
+export function textShadowPad(run: GlyphRun): [number, number] | null {
+  const shadows = run.textShadows
+  if (!shadows || shadows.length === 0) return null
+  let px = 0
+  let py = 0
+  for (const s of shadows) {
+    px = Math.max(px, Math.abs(s.ox) + 1.5 * s.blur)
+    py = Math.max(py, Math.abs(s.oy) + 1.5 * s.blur)
+  }
+  return [px, py]
+}
+
+/** `g.rect` grown by `extra` + a local-frame pad (see textShadowPad); a
+ * rotated/skewed glyph takes the larger pad on both axes. */
+export function padGlyphRect(
+  g: Glyph,
+  pad: readonly [number, number] | null,
+  extra = 0
+): Rect {
+  let px = pad ? pad[0] : 0
+  let py = pad ? pad[1] : 0
+  if (pad && (g.xform[1] !== 0 || g.xform[2] !== 0)) {
+    px = py = Math.max(px, py)
+  }
+  px += extra
+  py += extra
+  const q = g.rect
+  return {
+    x: q.x - px,
+    y: q.y - py,
+    width: q.width + 2 * px,
+    height: q.height + 2 * py
+  }
+}
+
 /** Extend `e` by a record's paint bounds. Glyph line boxes are padded by
- * a quarter em: the ink box can overshoot a tight line-height. */
+ * a quarter em (the ink box can overshoot a tight line-height) plus the
+ * run's text-shadow extent. */
 function growByRecord(e: Extent, r: SceneRecord): void {
   if (r.kind !== 'text') {
     growExtent(e, r.rect)
     return
   }
+  const pad = textShadowPad(r)
   for (const g of r.glyphs) {
-    const p = g.fontSize * 0.25
-    const q = g.rect
-    growExtent(e, {
-      x: q.x - p,
-      y: q.y - p,
-      width: q.width + 2 * p,
-      height: q.height + 2 * p
-    })
+    growExtent(e, padGlyphRect(g, pad, g.fontSize * 0.25))
   }
 }
 
