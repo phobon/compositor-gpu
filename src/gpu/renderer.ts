@@ -48,7 +48,9 @@ function skipGroup(
 ): number {
   for (let j = i + 1; j < list.length; j++) {
     const b = list[j]
-    if (b && b.kind === 'pop' && b.group === group) return j
+    if (b && b.kind === 'pop' && b.group === group) {
+      return j
+    }
   }
   return list.length
 }
@@ -223,7 +225,9 @@ export class Renderer {
     const list = scene.batches
     for (let i = 0; i < list.length; i++) {
       const batch = list[i]
-      if (!batch) continue
+      if (!batch) {
+        continue
+      }
       if (batch.kind === 'push') {
         const parent = stack[stack.length - 1] ?? main
         const g = scene.groups[batch.group]
@@ -240,7 +244,9 @@ export class Renderer {
         rp = this.beginPass(encoder, child, 'clear')
       } else if (batch.kind === 'pop') {
         const top = stack[stack.length - 1]
-        if (!top || top.group !== batch.group || !top.pooled) continue
+        if (!top || top.group !== batch.group || !top.pooled) {
+          continue
+        }
         rp.end()
         stack.pop()
         const parent = stack[stack.length - 1] ?? main
@@ -250,7 +256,9 @@ export class Renderer {
         groups++
       } else {
         const pass = this.passByLayer.get(batch.layer)
-        if (!pass) continue
+        if (!pass) {
+          continue
+        }
         draws += pass.draw(rp, batch.first, batch.count)
         batches++
       }
@@ -289,7 +297,9 @@ export class Renderer {
     )
     const w = x1 - x0
     const h = y1 - y0
-    if (w <= 0 || h <= 0) return null
+    if (w <= 0 || h <= 0) {
+      return null
+    }
     const pooled = this.composite.acquire(w, h)
     const ox = parent.ox + x0 / parent.sx
     const oy = parent.oy + y0 / parent.sy
@@ -322,9 +332,13 @@ export class Renderer {
   }
 
   destroy(): void {
-    for (const pass of this.passes) pass.destroy()
+    for (const pass of this.passes) {
+      pass.destroy()
+    }
     this.frameBuffer.destroy()
-    for (const f of this.groupFrames) f.buffer.destroy()
+    for (const f of this.groupFrames) {
+      f.buffer.destroy()
+    }
     this.composite.destroy()
   }
 }

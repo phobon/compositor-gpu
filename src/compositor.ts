@@ -47,23 +47,30 @@ export async function createCompositor(
   const gpu = await initGpu(canvas)
   if (!gpu) {
     canvas.remove()
-    if (fallback === 'throw')
+    if (fallback === 'throw') {
       throw new Error('[compositor-gpu] WebGPU unavailable')
+    }
     return inert()
   }
 
   const dpr = options.devicePixelRatio ?? window.devicePixelRatio ?? 1
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
-  if (layers.has('boxes')) renderer.addPass(new BoxPass(renderer.shared))
-  if (layers.has('images')) renderer.addPass(new ImagePass(renderer.shared))
+  if (layers.has('boxes')) {
+    renderer.addPass(new BoxPass(renderer.shared))
+  }
+  if (layers.has('images')) {
+    renderer.addPass(new ImagePass(renderer.shared))
+  }
   let text: SlugText | null = null
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)
     renderer.addPass(text)
   }
   gpu.device.popErrorScope().then((e) => {
-    if (e) log.error('GPU validation error during setup:', e.message)
+    if (e) {
+      log.error('GPU validation error during setup:', e.message)
+    }
   })
 
   const scene = new Scene()
@@ -106,10 +113,16 @@ export async function createCompositor(
       scopes.add(el)
       cssAnimating = true
     }
-    if (mutated) paintOnly.clear()
-    if (cssAnimating) flags |= Dirty.MUTATION
+    if (mutated) {
+      paintOnly.clear()
+    }
+    if (cssAnimating) {
+      flags |= Dirty.MUTATION
+    }
 
-    if (flags & Dirty.LAYOUT) resizeCanvas()
+    if (flags & Dirty.LAYOUT) {
+      resizeCanvas()
+    }
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
       const t0 = performance.now()
       reader.fullRead()
@@ -131,27 +144,37 @@ export async function createCompositor(
 
     if (options.onGlyph) {
       for (const run of scene.runs) {
-        for (const g of run.glyphs) options.onGlyph(g, ctx)
+        for (const g of run.glyphs) {
+          options.onGlyph(g, ctx)
+        }
       }
       // Only glyph offsets changed: re-upload just the text layer.
       scene.markDirty('text')
     }
     // A live <video>/<canvas> changes without a DOM mutation: re-upload just the
     // image layer (which re-copies its texture) and keep the loop running.
-    if (scene.hasDynamic) scene.markDirty('images')
+    if (scene.hasDynamic) {
+      scene.markDirty('images')
+    }
     options.onFrame?.(ctx)
 
     // The swapchain texture can't be created at 0x0 (e.g. before the canvas
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
     // re-requests one once the viewport has a size.
     if (canvas.width === 0 || canvas.height === 0) {
-      if (animating || scene.hasDynamic || cssAnimating) scheduler.request()
+      if (animating || scene.hasDynamic || cssAnimating) {
+        scheduler.request()
+      }
       return
     }
 
-    if (dt > 0) fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
+    if (dt > 0) {
+      fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
+    }
     renderer.render(scene, ctx, dpr)
-    if (animating || scene.hasDynamic || cssAnimating) scheduler.request()
+    if (animating || scene.hasDynamic || cssAnimating) {
+      scheduler.request()
+    }
   }
 
   const scheduler = new FrameScheduler(frame)
@@ -184,7 +207,9 @@ export async function createCompositor(
   let sourceHidden = false
   let savedOpacity = ''
   const setSourceHidden = (hidden: boolean): void => {
-    if (hidden === sourceHidden || !(root instanceof HTMLElement)) return
+    if (hidden === sourceHidden || !(root instanceof HTMLElement)) {
+      return
+    }
     sourceHidden = hidden
     if (hidden) {
       savedOpacity = root.style.opacity
@@ -205,7 +230,9 @@ export async function createCompositor(
   }
   // A lost device can't render again: give the page its own paint back.
   void gpu.device.lost.then((info) => {
-    if (destroyed) return
+    if (destroyed) {
+      return
+    }
     log.error(`GPU device lost (${info.reason}): ${info.message}`)
     lost = true
     stop()
@@ -236,22 +263,30 @@ export async function createCompositor(
       fps
     }),
     start() {
-      if (destroyed || lost) return
+      if (destroyed || lost) {
+        return
+      }
       scheduler.start()
       sync.start()
       window.addEventListener('resize', onResize)
       window.addEventListener('scroll', onScroll, { passive: true })
-      if (mode === 'replace' && hideSource) setSourceHidden(true)
+      if (mode === 'replace' && hideSource) {
+        setSourceHidden(true)
+      }
     },
     stop,
     setSourceHidden,
     invalidate() {
-      if (destroyed || lost) return
+      if (destroyed || lost) {
+        return
+      }
       pendingReadFlags = Dirty.ALL
       scheduler.request()
     },
     destroy() {
-      if (destroyed) return
+      if (destroyed) {
+        return
+      }
       destroyed = true
       stop()
       reader.destroy()

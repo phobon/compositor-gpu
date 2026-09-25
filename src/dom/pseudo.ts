@@ -104,7 +104,9 @@ function insets(s: CSSStyleDeclaration): Insets {
 
 /** A computed length in px, or null for `auto` / anything not px. */
 function pxOrNull(v: string): number | null {
-  if (!v.endsWith('px')) return null
+  if (!v.endsWith('px')) {
+    return null
+  }
   const n = Number.parseFloat(v)
   return Number.isFinite(n) ? n : null
 }
@@ -138,7 +140,9 @@ function docToLocal(frame: Placement, x: number, y: number): [number, number] {
   const det = a * d - b * c
   const dx = x - tx
   const dy = y - ty
-  if (det === 0) return [dx, dy]
+  if (det === 0) {
+    return [dx, dy]
+  }
   return [(d * dx - c * dy) / det, (a * dy - b * dx) / det]
 }
 
@@ -186,7 +190,9 @@ const HEX = /[0-9a-fA-F]/
  */
 export function parseContent(value: string, el: Element): string | null {
   const v = value.trim()
-  if (!v || v === 'none' || v === 'normal') return null
+  if (!v || v === 'none' || v === 'normal') {
+    return null
+  }
   let out = ''
   let i = 0
   while (i < v.length) {
@@ -204,9 +210,13 @@ export function parseContent(value: string, el: Element): string | null {
           }
           if (hex) {
             out += String.fromCodePoint(Number.parseInt(hex, 16) || 0xfffd)
-            if (v[i] === ' ') i++
+            if (v[i] === ' ') {
+              i++
+            }
           } else if (i < v.length) {
-            if (v[i] !== '\n') out += v[i]
+            if (v[i] !== '\n') {
+              out += v[i]
+            }
             i++
           }
         } else {
@@ -228,19 +238,24 @@ export function parseContent(value: string, el: Element): string | null {
         let args = ''
         for (; i < v.length; i++) {
           const c = v[i] as string
-          if (c === '(') depth++
-          else if (c === ')') {
+          if (c === '(') {
+            depth++
+          } else if (c === ')') {
             depth--
             if (depth === 0) {
               i++
               break
             }
           }
-          if (depth > 0 && !(depth === 1 && c === '(')) args += c
+          if (depth > 0 && !(depth === 1 && c === '(')) {
+            args += c
+          }
         }
         if (name === 'attr') {
           const attr = args.trim().split(/[\s,]+/)[0] ?? ''
-          if (attr) out += el.getAttribute(attr) ?? ''
+          if (attr) {
+            out += el.getAttribute(attr) ?? ''
+          }
         }
       }
     } else {
@@ -388,7 +403,9 @@ function buildRun(
     }
     index++
   }
-  if (glyphs.length === 0) return null
+  if (glyphs.length === 0) {
+    return null
+  }
   const italic = s.fontStyle === 'italic' || s.fontStyle.startsWith('oblique')
   return {
     kind: 'text',
@@ -421,13 +438,19 @@ function boxRecords(
   clip: Rect | null,
   alloc: () => number
 ): BoxRecord[] {
-  if (w <= 0 || h <= 0) return []
+  if (w <= 0 || h <= 0) {
+    return []
+  }
   const place = subPlacement(frame, x, y, w, h)
   const rect = placementAabb(place)
   const out = readShadows(s, rect, place, alloc)
   const box = readBox(s, rect, alloc(), place)
-  if (box) out.push(box)
-  for (const r of out) r.clip = clip
+  if (box) {
+    out.push(box)
+  }
+  for (const r of out) {
+    r.clip = clip
+  }
   return out
 }
 
@@ -438,13 +461,17 @@ export type OrdinalCache = Map<Element, Map<Element, number>>
 
 function ordinal(li: Element, cache: OrdinalCache): number {
   const list = li.parentElement
-  if (!list) return 1
+  if (!list) {
+    return 1
+  }
   let map = cache.get(list)
   if (!map) {
     map = new Map()
     const items: Element[] = []
     for (const c of list.children) {
-      if (getComputedStyle(c).display === 'list-item') items.push(c)
+      if (getComputedStyle(c).display === 'list-item') {
+        items.push(c)
+      }
     }
     const isOl = list.tagName === 'OL'
     const reversed = isOl && (list as HTMLOListElement).reversed
@@ -464,7 +491,9 @@ function ordinal(li: Element, cache: OrdinalCache): number {
 }
 
 function alpha(n: number, upper: boolean): string {
-  if (n < 1) return String(n)
+  if (n < 1) {
+    return String(n)
+  }
   let s = ''
   let k = n
   while (k > 0) {
@@ -492,7 +521,9 @@ const ROMAN: [number, string][] = [
 ]
 
 function roman(n: number, upper: boolean): string {
-  if (n < 1 || n > 3999) return String(n)
+  if (n < 1 || n > 3999) {
+    return String(n)
+  }
   let s = ''
   let k = n
   for (const [v, r] of ROMAN) {
@@ -541,7 +572,9 @@ export function readMarker(
 ): PseudoOut | null {
   const { el, s, place, clip, alloc } = host
   const ms = getComputedStyle(el, '::marker')
-  if (ms.visibility !== 'visible' || ms.display === 'none') return null
+  if (ms.visibility !== 'visible' || ms.display === 'none') {
+    return null
+  }
   const content = parseContent(ms.content, el)
   const type = s.listStyleType
   const outside = s.listStylePosition !== 'inside'
@@ -555,7 +588,9 @@ export function readMarker(
     content === null &&
     (type === 'disc' || type === 'circle' || type === 'square')
   if (symbol) {
-    if (!host.boxes) return null
+    if (!host.boxes) {
+      return null
+    }
     // ListMarker::RelativeSymbolMarkerRect / InlineMarginsForOutside, with
     // Chrome's integer font ascent.
     const ascent = Math.round(m.ascent)
@@ -599,13 +634,17 @@ export function readMarker(
     return { items: [box], context: null }
   }
 
-  if (!host.text) return null
+  if (!host.text) {
+    return null
+  }
   let text = content
   if (text === null) {
     const quoted = /^["']/.test(type) ? parseContent(type, el) : null
     text = quoted ?? counterText(type, ordinal(el, cache))
   }
-  if (!text) return null
+  if (!text) {
+    return null
+  }
   const used = pxOrNull(ms.width)
   const tabular = ms.fontVariantNumeric.includes('tabular-nums')
   const laid = layoutLine(text, ms, used, tabular)
@@ -638,10 +677,16 @@ export function readBeforeAfter(
   const { el, s, place, clip, alloc } = host
   const ps = getComputedStyle(el, which)
   const text = parseContent(ps.content, el)
-  if (text === null) return null
+  if (text === null) {
+    return null
+  }
   const display = ps.display
-  if (display === 'none' || display === 'contents') return null
-  if (ps.visibility !== 'visible') return null
+  if (display === 'none' || display === 'contents') {
+    return null
+  }
+  if (ps.visibility !== 'visible') {
+    return null
+  }
 
   const i = insets(ps)
   const padX = i.pl + i.pr + i.bl + i.br
@@ -761,8 +806,11 @@ export function readBeforeAfter(
     const ta = ps.textAlign
     const justifyCenter = isFlex && ps.justifyContent === 'center'
     if (inlineBaseline === null) {
-      if (ta === 'center' || justifyCenter) ax = (cw - tw) / 2
-      else if (ta === 'right' || ta === 'end') ax = cw - tw
+      if (ta === 'center' || justifyCenter) {
+        ax = (cw - tw) / 2
+      } else if (ta === 'right' || ta === 'end') {
+        ax = cw - tw
+      }
     }
     let baseline = inlineBaseline
     if (baseline === null) {
@@ -779,9 +827,13 @@ export function readBeforeAfter(
       clip,
       alloc
     )
-    if (run) items.push(run)
+    if (run) {
+      items.push(run)
+    }
   }
-  if (items.length === 0) return null
+  if (items.length === 0) {
+    return null
+  }
   const context = createsStackingContext(ps, display !== 'inline')
     ? {
         z: contextZIndex(ps),

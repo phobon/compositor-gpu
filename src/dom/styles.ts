@@ -85,15 +85,23 @@ export function readCorners(s: CSSStyleDeclaration, rect: Rect): Corners {
  * fraction without knowing the free space here, so it's clamped to 0 or 1
  * by sign (an approximation). */
 function positionComponent(token: string): number | null {
-  if (token === 'center') return 0.5
-  if (token === 'left' || token === 'top') return 0
-  if (token === 'right' || token === 'bottom') return 1
+  if (token === 'center') {
+    return 0.5
+  }
+  if (token === 'left' || token === 'top') {
+    return 0
+  }
+  if (token === 'right' || token === 'bottom') {
+    return 1
+  }
   if (token.endsWith('%')) {
     const n = Number.parseFloat(token)
     return Number.isFinite(n) ? n / 100 : null
   }
   const n = Number.parseFloat(token)
-  if (!Number.isFinite(n)) return null
+  if (!Number.isFinite(n)) {
+    return null
+  }
   return n <= 0 ? 0 : 1
 }
 
@@ -106,7 +114,9 @@ export function mapBackgroundPosition(
   fallback: [number, number] = [0, 0]
 ): [number, number] {
   const tokens = position.trim().split(/\s+/).filter(Boolean)
-  if (tokens.length < 2) return fallback
+  if (tokens.length < 2) {
+    return fallback
+  }
   const x = positionComponent(tokens[0] ?? '') ?? fallback[0]
   const y = positionComponent(tokens[1] ?? '') ?? fallback[1]
   return [x, y]
@@ -133,14 +143,18 @@ export function readBox(
   id: number,
   place: Placement
 ): BoxRecord | null {
-  if (s.visibility !== 'visible' || s.display === 'none') return null
+  if (s.visibility !== 'visible' || s.display === 'none') {
+    return null
+  }
 
   const fill = parseColor(s.backgroundColor)
   const borderWidth = px(s.borderTopWidth)
   const borderColor = parseColor(s.borderTopColor)
   const hasFill = fill.a > 0.001
   const hasBorder = borderWidth > 0 && borderColor.a > 0.001
-  if (rect.width <= 0 || rect.height <= 0) return null
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null
+  }
 
   // First background-image layer, when it is a gradient (url() layers are
   // image records, handled elsewhere). Resolved against the padding box
@@ -163,7 +177,9 @@ export function readBox(
       })
     }
   }
-  if (!hasFill && !hasBorder && !gradient) return null
+  if (!hasFill && !hasBorder && !gradient) {
+    return null
+  }
 
   return {
     kind: 'box',
@@ -218,27 +234,37 @@ export function readImageRecord(
   clip: Rect | null,
   place: Placement
 ): ImageRecord | null {
-  if (s.visibility !== 'visible') return null
+  if (s.visibility !== 'visible') {
+    return null
+  }
   let source: CanvasImageSource
   let dynamic = false
   if (el.tagName === 'IMG') {
     const img = el as HTMLImageElement
-    if (!img.complete || img.naturalWidth === 0) return null
+    if (!img.complete || img.naturalWidth === 0) {
+      return null
+    }
     source = img
   } else if (el.tagName === 'VIDEO') {
     const v = el as HTMLVideoElement
-    if (v.readyState < 2 || v.videoWidth === 0) return null
+    if (v.readyState < 2 || v.videoWidth === 0) {
+      return null
+    }
     source = v
     dynamic = true
   } else if (el.tagName === 'CANVAS') {
     const c = el as HTMLCanvasElement
-    if (c.width === 0 || c.height === 0) return null
+    if (c.width === 0 || c.height === 0) {
+      return null
+    }
     source = c
     dynamic = true
   } else {
     return null
   }
-  if (rect.width <= 0 || rect.height <= 0) return null
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null
+  }
   const of = s.objectFit
   return {
     kind: 'image',
@@ -289,12 +315,20 @@ function parseShadowLayer(layer: string): ShadowLayer | null {
   let color = ''
   let inset = false
   for (const tok of splitTopLevel(layer, ' ')) {
-    if (!tok) continue
-    if (tok === 'inset') inset = true
-    else if (LENGTH.test(tok)) lens.push(Number.parseFloat(tok))
-    else color = tok
+    if (!tok) {
+      continue
+    }
+    if (tok === 'inset') {
+      inset = true
+    } else if (LENGTH.test(tok)) {
+      lens.push(Number.parseFloat(tok))
+    } else {
+      color = tok
+    }
   }
-  if (lens.length < 2) return null
+  if (lens.length < 2) {
+    return null
+  }
   return {
     color,
     ox: lens[0] ?? 0,
@@ -342,27 +376,41 @@ export function readShadows(
   inset = false
 ): BoxRecord[] {
   const value = s.boxShadow
-  if (!value || value === 'none') return []
-  if (s.visibility !== 'visible' || s.display === 'none') return []
-  if (rect.width <= 0 || rect.height <= 0) return []
+  if (!value || value === 'none') {
+    return []
+  }
+  if (s.visibility !== 'visible' || s.display === 'none') {
+    return []
+  }
+  if (rect.width <= 0 || rect.height <= 0) {
+    return []
+  }
   const { w, h } = place.local
   const radius = readCorners(s, { x: 0, y: 0, width: w, height: h })
   const out: BoxRecord[] = []
   const layers = splitTopLevel(value, ',').filter(Boolean)
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = parseShadowLayer(layers[i] ?? '')
-    if (!layer || layer.inset !== inset) continue
+    if (!layer || layer.inset !== inset) {
+      continue
+    }
     const color = parseColor(layer.color || s.color)
-    if (color.a <= 0.001) continue
+    if (color.a <= 0.001) {
+      continue
+    }
     if (inset) {
       const rec = insetShadow(s, place, radius, layer, color, alloc())
-      if (rec) out.push(rec)
+      if (rec) {
+        out.push(rec)
+      }
       continue
     }
     const { ox, oy, blur, spread } = layer
     const sw = w + 2 * spread
     const sh = h + 2 * spread
-    if (sw <= 0 || sh <= 0) continue
+    if (sw <= 0 || sh <= 0) {
+      continue
+    }
     const pad = shadowPad(blur)
     const x0 = ox - spread - pad
     const y0 = oy - spread - pad
@@ -422,7 +470,9 @@ function insetShadow(
   const bb = px(s.borderBottomWidth)
   const pw = place.local.w - bl - br
   const ph = place.local.h - bt - bb
-  if (pw <= 0 || ph <= 0) return null
+  if (pw <= 0 || ph <= 0) {
+    return null
+  }
   const { ox, oy, blur, spread } = layer
   const [tl, tr, brr, bll] = radius
   const pr: Corners = [

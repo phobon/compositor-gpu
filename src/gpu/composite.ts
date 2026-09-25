@@ -143,7 +143,9 @@ export class GroupCompositor {
     this.frame++
     this.data.length = 0
     if (this.ensureCapacity(maxGroups)) {
-      for (const t of this.pool) t.bindGroup = null
+      for (const t of this.pool) {
+        t.bindGroup = null
+      }
     }
     for (let i = this.pool.length - 1; i >= 0; i--) {
       const t = this.pool[i]
@@ -158,8 +160,12 @@ export class GroupCompositor {
   acquire(w: number, h: number): GroupTarget {
     let best: GroupTarget | null = null
     for (const t of this.pool) {
-      if (t.inUse || t.width < w || t.height < h) continue
-      if (!best || t.width * t.height < best.width * best.height) best = t
+      if (t.inUse || t.width < w || t.height < h) {
+        continue
+      }
+      if (!best || t.width * t.height < best.width * best.height) {
+        best = t
+      }
     }
     if (!best) {
       const width = Math.ceil(w / SIZE_STEP) * SIZE_STEP
@@ -204,7 +210,9 @@ export class GroupCompositor {
     const index = this.data.length / FLOATS_PER_COMP
     const buffer = this.buffer
     target.inUse = false
-    if (!buffer || index >= this.capacity) return
+    if (!buffer || index >= this.capacity) {
+      return
+    }
     this.data.push(...rect, w / target.width, h / target.height, alpha, 0)
     if (!target.bindGroup) {
       target.bindGroup = this.device.createBindGroup({
@@ -223,15 +231,21 @@ export class GroupCompositor {
 
   /** Upload this frame's composite instances. Call before submit. */
   flush(): void {
-    if (this.data.length === 0 || !this.buffer) return
+    if (this.data.length === 0 || !this.buffer) {
+      return
+    }
     this.device.queue.writeBuffer(this.buffer, 0, new Float32Array(this.data))
   }
 
   /** Grow the instance buffer; true when it was recreated. */
   private ensureCapacity(n: number): boolean {
-    if (n <= this.capacity && this.buffer) return false
+    if (n <= this.capacity && this.buffer) {
+      return false
+    }
     let cap = Math.max(this.capacity, 4)
-    while (cap < n) cap *= 2
+    while (cap < n) {
+      cap *= 2
+    }
     this.buffer?.destroy()
     this.buffer = this.device.createBuffer({
       label: 'composite-instances',
@@ -243,7 +257,9 @@ export class GroupCompositor {
   }
 
   destroy(): void {
-    for (const t of this.pool) t.texture.destroy()
+    for (const t of this.pool) {
+      t.texture.destroy()
+    }
     this.pool.length = 0
     this.buffer?.destroy()
   }

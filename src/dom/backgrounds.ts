@@ -10,11 +10,17 @@ import { type Placement, placementAabb } from './transform'
  * layer is painted — later layers are a follow-up.
  */
 export function firstUrlLayer(backgroundImage: string): string | null {
-  if (!backgroundImage || backgroundImage === 'none') return null
+  if (!backgroundImage || backgroundImage === 'none') {
+    return null
+  }
   const first = splitTopLevel(backgroundImage, ',')[0]
-  if (!first) return null
+  if (!first) {
+    return null
+  }
   const match = /^url\((.*)\)$/is.exec(first.trim())
-  if (!match) return null
+  if (!match) {
+    return null
+  }
   let inner = (match[1] ?? '').trim()
   if (
     (inner.startsWith('"') && inner.endsWith('"')) ||
@@ -32,9 +38,15 @@ export function mapBackgroundSize(
   size: string
 ): 'fill' | 'contain' | 'cover' | 'none' {
   const s = size.trim()
-  if (s === 'cover') return 'cover'
-  if (s === 'contain') return 'contain'
-  if (s === 'auto' || s === 'auto auto' || s === '') return 'none'
+  if (s === 'cover') {
+    return 'cover'
+  }
+  if (s === 'contain') {
+    return 'contain'
+  }
+  if (s === 'auto' || s === 'auto auto' || s === '') {
+    return 'none'
+  }
   return 'fill'
 }
 
@@ -60,8 +72,12 @@ const waiters = new Map<string, Map<Element, Waiter>>()
 function settle(url: string, loaded: boolean): void {
   const w = waiters.get(url)
   waiters.delete(url)
-  if (!w || !loaded) return
-  for (const { onReady } of w.values()) onReady()
+  if (!w || !loaded) {
+    return
+  }
+  for (const { onReady } of w.values()) {
+    onReady()
+  }
 }
 
 /**
@@ -89,7 +105,9 @@ export function loadBackground(
     img.src = url
     cache.set(url, img)
   }
-  if (img.complete) return img.naturalWidth > 0 ? img : null
+  if (img.complete) {
+    return img.naturalWidth > 0 ? img : null
+  }
   let w = waiters.get(url)
   if (!w) {
     w = new Map()
@@ -103,9 +121,13 @@ export function loadBackground(
 export function disposeBackgrounds(owner: object): void {
   for (const [url, w] of waiters) {
     for (const [el, waiter] of w) {
-      if (waiter.owner === owner) w.delete(el)
+      if (waiter.owner === owner) {
+        w.delete(el)
+      }
     }
-    if (w.size === 0) waiters.delete(url)
+    if (w.size === 0) {
+      waiters.delete(url)
+    }
   }
 }
 
@@ -132,13 +154,21 @@ export function readBackgroundImage(
   onReady: () => void,
   place: Placement
 ): ImageRecord | null {
-  if (s.visibility !== 'visible') return null
+  if (s.visibility !== 'visible') {
+    return null
+  }
   const url = firstUrlLayer(s.backgroundImage)
-  if (!url) return null
+  if (!url) {
+    return null
+  }
   const img = loadBackground(url, owner, el, onReady)
-  if (!img) return null
+  if (!img) {
+    return null
+  }
   const pad = paddingPlacement(s, place)
-  if (pad.local.w <= 0 || pad.local.h <= 0) return null
+  if (pad.local.w <= 0 || pad.local.h <= 0) {
+    return null
+  }
   return {
     kind: 'image',
     id,

@@ -121,8 +121,12 @@ export interface ElNode {
 export type ElKid = ElNode | GlyphRun | BoxRecord
 
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
-  if (!a) return b
-  if (!b) return a
+  if (!a) {
+    return b
+  }
+  if (!b) {
+    return a
+  }
   const x1 = Math.max(a.x, b.x)
   const y1 = Math.max(a.y, b.y)
   const x2 = Math.min(a.x + a.width, b.x + b.width)
@@ -146,9 +150,13 @@ function sameRect(a: Rect, b: Rect): boolean {
 
 /** Push the rects of every float in `node`'s subtree (incl. itself). */
 function collectFloats(node: ElNode, out: Rect[]): void {
-  if (node.float) out.push(node.rect)
+  if (node.float) {
+    out.push(node.rect)
+  }
   for (const kid of node.kids) {
-    if (kid.kind === 'element') collectFloats(kid, out)
+    if (kid.kind === 'element') {
+      collectFloats(kid, out)
+    }
   }
 }
 
@@ -159,11 +167,15 @@ function sameFloats(a: ElNode, b: ElNode): boolean {
   floatsB.length = 0
   collectFloats(a, floatsA)
   collectFloats(b, floatsB)
-  if (floatsA.length !== floatsB.length) return false
+  if (floatsA.length !== floatsB.length) {
+    return false
+  }
   for (let i = 0; i < floatsA.length; i++) {
     const fa = floatsA[i]
     const fb = floatsB[i]
-    if (!fa || !fb || !sameRect(fa, fb)) return false
+    if (!fa || !fb || !sameRect(fa, fb)) {
+      return false
+    }
   }
   return true
 }
@@ -254,12 +266,20 @@ export function selectBoundaries<E extends Linked<E>>(
     let b: E | null = null
     let cur: E | null = scope
     while (cur) {
-      if (!b && usable(cur)) b = cur
-      if (cur === root) break
+      if (!b && usable(cur)) {
+        b = cur
+      }
+      if (cur === root) {
+        break
+      }
       cur = cur.parentElement
     }
-    if (!cur) continue // not under root
-    if (!b) return null
+    if (!cur) {
+      continue // not under root
+    }
+    if (!b) {
+      return null
+    }
     found.add(b)
   }
   const out: E[] = []
@@ -271,12 +291,16 @@ export function selectBoundaries<E extends Linked<E>>(
         nested = true
         break
       }
-      if (p === root) break
+      if (p === root) {
+        break
+      }
       p = p.parentElement
     }
     if (!nested) {
       out.push(b)
-      if (out.length > max) return null
+      if (out.length > max) {
+        return null
+      }
     }
   }
   return out
@@ -355,7 +379,9 @@ export class SceneReader {
       this.readAll()
       return
     }
-    if (bounds.length === 0) return
+    if (bounds.length === 0) {
+      return
+    }
 
     for (const b of bounds) {
       const old = this.nodes.get(b)
@@ -413,7 +439,9 @@ export class SceneReader {
   private rebuildScene(): void {
     const scene = this.scene
     scene.clear()
-    if (this.tree) scene.groups = flatten(this.tree, (r) => scene.add(r))
+    if (this.tree) {
+      scene.groups = flatten(this.tree, (r) => scene.add(r))
+    }
     scene.sort()
   }
 
@@ -427,14 +455,18 @@ export class SceneReader {
     parentDecor: Decoration[] | null,
     parentCb: Placement | null
   ): ElNode | null {
-    if (SKIP_TAGS.has(el.tagName)) return null
+    if (SKIP_TAGS.has(el.tagName)) {
+      return null
+    }
     this.readElements++
     const { scene, layers } = this
     const s = getComputedStyle(el)
     // Nothing in a display:none subtree renders (descendants can't opt
     // back in), so skip its per-glyph and pseudo reads entirely.
     const display = s.display
-    if (display === 'none') return null
+    if (display === 'none') {
+      return null
+    }
     const rect = toDocRect(el.getBoundingClientRect())
     const transformable = isTransformable(el, display)
     const lin = composeLinear(
@@ -454,7 +486,9 @@ export class SceneReader {
     if (layers.has('boxes')) {
       // Outer shadows paint under the element's own background.
       const shadows = readShadows(s, rect, place, () => scene.allocId())
-      for (const sh of shadows) sh.clip = clip
+      for (const sh of shadows) {
+        sh.clip = clip
+      }
       const box = readBox(s, rect, scene.allocId(), place)
       if (box) {
         box.clip = clip
@@ -491,8 +525,12 @@ export class SceneReader {
     if (layers.has('boxes') && s.boxShadow.includes('inset')) {
       // Inset shadows paint above the backgrounds, below the content.
       const inset = readShadows(s, rect, place, () => scene.allocId(), true)
-      for (const sh of inset) sh.clip = clip
-      if (inset.length) own = [...own, ...inset]
+      for (const sh of inset) {
+        sh.clip = clip
+      }
+      if (inset.length) {
+        own = [...own, ...inset]
+      }
     }
 
     // An element's own box is clipped by its ancestors; its content
@@ -536,7 +574,9 @@ export class SceneReader {
           decor,
           cb
         )
-        if (kid) node.kids.push(kid)
+        if (kid) {
+          node.kids.push(kid)
+        }
       } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
         const run = readTextNode(
           child as Text,
@@ -546,14 +586,20 @@ export class SceneReader {
           0
         )
         if (run) {
-          if (lin) transformGlyphs(run.glyphs, lin, s)
+          if (lin) {
+            transformGlyphs(run.glyphs, lin, s)
+          }
           run.clip = childClip
           if (decor?.length) {
             const d = buildDecorationBoxes(run, decor, childClip, () =>
               scene.allocId()
             )
-            if (d.under.length) run.decorations = d.under
-            if (d.over.length) run.decorationsOver = d.over
+            if (d.under.length) {
+              run.decorations = d.under
+            }
+            if (d.over.length) {
+              run.decorationsOver = d.over
+            }
           }
           node.kids.push(run)
         }
@@ -590,25 +636,38 @@ export class SceneReader {
     const head: ElKid[] = []
     if (display === 'list-item') {
       const marker = readMarker(host, firstGlyph(node.kids), this.ordinals)
-      if (marker) head.push(...this.pseudoKids(node, marker))
+      if (marker) {
+        head.push(...this.pseudoKids(node, marker))
+      }
     }
     const before = readBeforeAfter(host, '::before', firstGlyph(node.kids))
-    if (before) head.push(...this.pseudoKids(node, before))
+    if (before) {
+      head.push(...this.pseudoKids(node, before))
+    }
     const after = readBeforeAfter(host, '::after', lastGlyph(node.kids))
-    if (head.length) node.kids.unshift(...head)
-    if (after) node.kids.push(...this.pseudoKids(node, after))
+    if (head.length) {
+      node.kids.unshift(...head)
+    }
+    if (after) {
+      node.kids.push(...this.pseudoKids(node, after))
+    }
   }
 
   /** A pseudo's records as kids; a positioned one (a stacking context)
    * is wrapped in a synthetic context node. */
   private pseudoKids(node: ElNode, out: PseudoOut): ElKid[] {
     const ctx = out.context
-    if (!ctx) return out.items
+    if (!ctx) {
+      return out.items
+    }
     const own: OwnRecord[] = []
     const kids: ElKid[] = []
     for (const r of out.items) {
-      if (r.kind === 'box' && kids.length === 0) own.push(r)
-      else kids.push(r)
+      if (r.kind === 'box' && kids.length === 0) {
+        own.push(r)
+      } else {
+        kids.push(r)
+      }
     }
     return [
       {
@@ -650,7 +709,9 @@ const REPLACED = new Set([
  * boxes: their `transform` and individual transform properties are then
  * treated as `none` (placement, stacking and containing block alike). */
 function isTransformable(el: Element, display: string): boolean {
-  if (display !== 'inline') return true
+  if (display !== 'inline') {
+    return true
+  }
   return el.namespaceURI !== XHTML || REPLACED.has(el.tagName)
 }
 
@@ -660,10 +721,14 @@ function firstGlyph(kids: readonly ElKid[]): GlyphRef | null {
   for (const kid of kids) {
     if (kid.kind === 'text') {
       const g = kid.glyphs[0]
-      if (g) return { g, run: kid }
+      if (g) {
+        return { g, run: kid }
+      }
     } else if (kid.kind === 'element' && !kid.pseudo) {
       const r = firstGlyph(kid.kids)
-      if (r) return r
+      if (r) {
+        return r
+      }
     }
   }
   return null
@@ -673,13 +738,19 @@ function firstGlyph(kids: readonly ElKid[]): GlyphRef | null {
 function lastGlyph(kids: readonly ElKid[]): GlyphRef | null {
   for (let i = kids.length - 1; i >= 0; i--) {
     const kid = kids[i]
-    if (!kid) continue
+    if (!kid) {
+      continue
+    }
     if (kid.kind === 'text') {
       const g = kid.glyphs[kid.glyphs.length - 1]
-      if (g) return { g, run: kid }
+      if (g) {
+        return { g, run: kid }
+      }
     } else if (kid.kind === 'element' && !kid.pseudo) {
       const r = lastGlyph(kid.kids)
-      if (r) return r
+      if (r) {
+        return r
+      }
     }
   }
   return null
@@ -722,7 +793,9 @@ function transformGlyphs(
     const r = g.rect
     let size = solveLocalSize(lin, r.width, r.height)
     if (!size) {
-      if (fallbackH < 0) fallbackH = contentHeight(s)
+      if (fallbackH < 0) {
+        fallbackH = contentHeight(s)
+      }
       const w = solveWidthGivenHeight(lin, fallbackH, r.width, r.height)
       size = [w ?? r.width, fallbackH]
     }

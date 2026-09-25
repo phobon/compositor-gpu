@@ -17,7 +17,9 @@ mkdirSync(outDir, { recursive: true })
 
 function parseN(argv: string[]): number {
   const idx = argv.indexOf('--n')
-  if (idx === -1) return 400
+  if (idx === -1) {
+    return 400
+  }
   const v = Number(argv[idx + 1])
   return Number.isFinite(v) && v > 0 ? v : 400
 }
@@ -48,7 +50,9 @@ interface CpuProfile {
 function labelFor(cf: CallFrame): string {
   const url = cf.url
   const name = cf.functionName || '(anonymous)'
-  if (!url) return `(native) ${name}`
+  if (!url) {
+    return `(native) ${name}`
+  }
   const srcIdx = url.indexOf('/src/')
   if (srcIdx !== -1) {
     return `${url.slice(srcIdx + 1)}:${cf.lineNumber + 1} ${name}`
@@ -65,7 +69,11 @@ function isNativeApi(name: string): string | null {
     'measureText',
     'Segmenter'
   ]
-  for (const n of natives) if (name.includes(n)) return n
+  for (const n of natives) {
+    if (name.includes(n)) {
+      return n
+    }
+  }
   return null
 }
 
@@ -81,7 +89,9 @@ async function main(): Promise<void> {
     })
     await server.listen()
     const url = server.resolvedUrls?.local[0]
-    if (!url) throw new Error('vite dev server produced no resolved URL')
+    if (!url) {
+      throw new Error('vite dev server produced no resolved URL')
+    }
     console.log(`[profile] vite dev server at ${url}`)
 
     const { browser: b, usedSwiftshader } = await launchWithFallback(
@@ -140,7 +150,9 @@ async function main(): Promise<void> {
     for (let i = 0; i < samples.length; i++) {
       const id = samples[i]
       const dt = (deltas[i] ?? 0) / 1000
-      if (id === undefined) continue
+      if (id === undefined) {
+        continue
+      }
       selfMs.set(id, (selfMs.get(id) ?? 0) + dt)
     }
     const nodeById = new Map(profile.nodes.map((nd) => [nd.id, nd]))
@@ -148,7 +160,9 @@ async function main(): Promise<void> {
     const byLabel = new Map<string, number>()
     for (const [id, ms] of selfMs) {
       const node = nodeById.get(id)
-      if (!node) continue
+      if (!node) {
+        continue
+      }
       const label = labelFor(node.callFrame)
       byLabel.set(label, (byLabel.get(label) ?? 0) + ms)
     }
@@ -162,9 +176,13 @@ async function main(): Promise<void> {
     const nativeMs = new Map<string, number>()
     for (const [id, ms] of selfMs) {
       const node = nodeById.get(id)
-      if (!node) continue
+      if (!node) {
+        continue
+      }
       const api = isNativeApi(node.callFrame.functionName)
-      if (api) nativeMs.set(api, (nativeMs.get(api) ?? 0) + ms)
+      if (api) {
+        nativeMs.set(api, (nativeMs.get(api) ?? 0) + ms)
+      }
     }
 
     const lines: string[] = []

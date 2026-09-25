@@ -18,11 +18,15 @@ const graphemeCache = new Map<string, string[]>()
 /** Grapheme clusters of `text` (cached, shared result: don't mutate). */
 export function graphemes(text: string): string[] {
   const hit = graphemeCache.get(text)
-  if (hit) return hit
+  if (hit) {
+    return hit
+  }
   const out = segmenter
     ? Array.from(segmenter.segment(text), (s) => s.segment)
     : Array.from(text)
-  if (graphemeCache.size >= CACHE_MAX) graphemeCache.clear()
+  if (graphemeCache.size >= CACHE_MAX) {
+    graphemeCache.clear()
+  }
   graphemeCache.set(text, out)
   return out
 }
@@ -44,13 +48,19 @@ function isVariationSelector(cp: number): boolean {
  * code-point count without variation selectors. Cached (shared result). */
 export function graphemeClass(cell: string): GraphemeClass {
   const hit = classCache.get(cell)
-  if (hit) return hit
+  if (hit) {
+    return hit
+  }
   let codePoints = 0
   for (const ch of cell) {
-    if (!isVariationSelector(ch.codePointAt(0) ?? 0)) codePoints++
+    if (!isVariationSelector(ch.codePointAt(0) ?? 0)) {
+      codePoints++
+    }
   }
   const out = { colour: isColorGrapheme(cell), codePoints }
-  if (classCache.size >= CACHE_MAX) classCache.clear()
+  if (classCache.size >= CACHE_MAX) {
+    classCache.clear()
+  }
   classCache.set(cell, out)
   return out
 }
@@ -78,10 +88,14 @@ export function readTextNode(
   startIndex: number
 ): GlyphRun | null {
   const text = node.nodeValue
-  if (!text || !text.trim()) return null
+  if (!text || !text.trim()) {
+    return null
+  }
   // Hidden text paints nothing (and so no decorations); a descendant
   // element can still set `visibility: visible` for its own text.
-  if (s.visibility !== 'visible') return null
+  if (s.visibility !== 'visible') {
+    return null
+  }
   const color = parseColor(s.color)
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const fontFamily = (s.fontFamily.split(',')[0] ?? '')
@@ -128,7 +142,9 @@ export function readTextNode(
     index += 1
   }
   range.detach?.()
-  if (glyphs.length === 0) return null
+  if (glyphs.length === 0) {
+    return null
+  }
   return {
     kind: 'text',
     id: runId,
@@ -155,26 +171,38 @@ const shadowCache = new Map<string, TextShadow[]>()
  * Cached per (value, colour); the result is shared, so treat it as read-only.
  */
 export function readTextShadows(value: string, color: string): TextShadow[] {
-  if (!value || value === 'none') return NO_SHADOWS
+  if (!value || value === 'none') {
+    return NO_SHADOWS
+  }
   const key = `${value}|${color}`
   const hit = shadowCache.get(key)
-  if (hit) return hit
+  if (hit) {
+    return hit
+  }
   const out: TextShadow[] = []
   for (const layer of splitTopLevel(value, ',')) {
-    if (!layer) continue
+    if (!layer) {
+      continue
+    }
     const lens: number[] = []
     let col = ''
     for (const tok of splitTopLevel(layer, ' ')) {
-      if (!tok) continue
+      if (!tok) {
+        continue
+      }
       if (/^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i.test(tok)) {
         lens.push(Number.parseFloat(tok))
       } else {
         col = tok
       }
     }
-    if (lens.length < 2) continue
+    if (lens.length < 2) {
+      continue
+    }
     const c = parseColor(col || color)
-    if (c.a <= 0.001) continue
+    if (c.a <= 0.001) {
+      continue
+    }
     out.push({
       color: c,
       ox: lens[0] ?? 0,
@@ -182,7 +210,9 @@ export function readTextShadows(value: string, color: string): TextShadow[] {
       blur: Math.max(0, lens[2] ?? 0)
     })
   }
-  if (shadowCache.size >= 256) shadowCache.clear()
+  if (shadowCache.size >= 256) {
+    shadowCache.clear()
+  }
   shadowCache.set(key, out)
   return out
 }
@@ -192,7 +222,9 @@ export function ligaturesEnabled(
   s: Pick<CSSStyleDeclaration, 'fontVariantLigatures' | 'fontFeatureSettings'>
 ): boolean {
   const v = s.fontVariantLigatures ?? ''
-  if (v === 'none' || v.includes('no-common-ligatures')) return false
+  if (v === 'none' || v.includes('no-common-ligatures')) {
+    return false
+  }
   return !/["']liga["']\s+(0|off)\b/.test(s.fontFeatureSettings ?? '')
 }
 
@@ -236,7 +268,9 @@ export function fontMetrics(s: FontStyleLike): FontMetrics {
   const fontSize = Number.parseFloat(s.fontSize) || 16
   const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
   const hit = fontMetricsCache.get(font)
-  if (hit !== undefined) return hit
+  if (hit !== undefined) {
+    return hit
+  }
   const measureCtx = ensureMeasureCtx()
   let ascent = fontSize * 0.8
   let descent = fontSize * 0.2
@@ -253,7 +287,9 @@ export function fontMetrics(s: FontStyleLike): FontMetrics {
     }
   }
   const out: FontMetrics = { height: ascent + descent, ascent, descent }
-  if (fontMetricsCache.size >= INK_CACHE_MAX) fontMetricsCache.clear()
+  if (fontMetricsCache.size >= INK_CACHE_MAX) {
+    fontMetricsCache.clear()
+  }
   fontMetricsCache.set(font, out)
   return out
 }
@@ -334,7 +370,9 @@ function scanDescenderExtent(
   const w = Math.ceil(originX + widthPx + pad)
   const h = Math.ceil(baselineY + descentPx + pad)
   const ctx = ensureScratch(w, h)
-  if (!ctx) return null
+  if (!ctx) {
+    return null
+  }
   ctx.clearRect(0, 0, w, h)
   ctx.font = font
   ctx.textBaseline = 'alphabetic'
@@ -342,7 +380,9 @@ function scanDescenderExtent(
   ctx.fillText(text, originX, baselineY)
   const rowStart = Math.max(0, Math.floor(baselineY))
   const rowEnd = Math.min(h, Math.ceil(baselineY + descentPx))
-  if (rowEnd <= rowStart) return null
+  if (rowEnd <= rowStart) {
+    return null
+  }
   const img = ctx.getImageData(0, rowStart, w, rowEnd - rowStart)
   let minX = w
   let maxX = -1
@@ -351,12 +391,18 @@ function scanDescenderExtent(
     const rowOff = y * w * 4
     for (let x = 0; x < w; x++) {
       if ((data[rowOff + x * 4 + 3] ?? 0) > 10) {
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
+        if (x < minX) {
+          minX = x
+        }
+        if (x > maxX) {
+          maxX = x
+        }
       }
     }
   }
-  if (maxX < minX) return null
+  if (maxX < minX) {
+    return null
+  }
   return { left: minX - originX, right: maxX + 1 - originX }
 }
 
@@ -376,7 +422,9 @@ export function measureGlyphInk(
   const font = `${italic ? 'italic' : 'normal'} ${fontWeight} ${fontSize}px ${fontFamily}`
   const key = `${font}\u0000${text}`
   const hit = glyphInkCache.get(key)
-  if (hit !== undefined) return hit
+  if (hit !== undefined) {
+    return hit
+  }
   const ctx = ensureMeasureCtx()
   let out: GlyphInk | null = null
   if (ctx) {
@@ -404,7 +452,9 @@ export function measureGlyphInk(
       }
     }
   }
-  if (glyphInkCache.size >= INK_CACHE_MAX) glyphInkCache.clear()
+  if (glyphInkCache.size >= INK_CACHE_MAX) {
+    glyphInkCache.clear()
+  }
   glyphInkCache.set(key, out)
   return out
 }

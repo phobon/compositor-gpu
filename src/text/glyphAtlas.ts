@@ -90,7 +90,9 @@ export class GlyphAtlas {
       tint ? '' : fill
     }`
     const hit = this.entries.get(key)
-    if (hit !== undefined) return hit
+    if (hit !== undefined) {
+      return hit
+    }
     const font = `${italic ? 'italic ' : ''}${weight} ${sizePx}px ${
       stack || 'sans-serif'
     }`
@@ -116,7 +118,9 @@ export class GlyphAtlas {
   ): AtlasEntry | null {
     const key = `S|${text}|${stack}|${weight}|${italic ? 1 : 0}|${sizePx}|${blurPx}`
     const hit = this.entries.get(key)
-    if (hit !== undefined) return hit
+    if (hit !== undefined) {
+      return hit
+    }
     const font = `${italic ? 'italic ' : ''}${weight} ${sizePx}px ${
       stack || 'sans-serif'
     }`
@@ -126,7 +130,9 @@ export class GlyphAtlas {
   }
 
   private ensureCanvas(): Ctx2D | null {
-    if (this.ctx) return this.ctx
+    if (this.ctx) {
+      return this.ctx
+    }
     const s = this.size
     this.canvas =
       typeof OffscreenCanvas !== 'undefined'
@@ -147,7 +153,9 @@ export class GlyphAtlas {
     blurPx = 0
   ): AtlasEntry | null {
     const ctx = this.ensureCanvas()
-    if (!ctx) return null
+    if (!ctx) {
+      return null
+    }
     const pad = ATLAS_PAD
     // Room for the shadow's Gaussian tail (3σ) on every side.
     const bp = blurPx > 0 ? Math.ceil(blurPx * 1.5) : 0
@@ -156,7 +164,9 @@ export class GlyphAtlas {
     const m = ctx.measureText(grapheme)
     const inkL = m.actualBoundingBoxLeft
     const inkR = m.actualBoundingBoxRight
-    if (!(inkL + inkR > 0)) return null // whitespace / no ink
+    if (!(inkL + inkR > 0)) {
+      return null // whitespace / no ink
+    }
     const ascentPx = m.fontBoundingBoxAscent
     const descentPx = m.fontBoundingBoxDescent
     // Whole-px pen origin within the cell keeps texels on the device-px grid.
@@ -169,7 +179,9 @@ export class GlyphAtlas {
     const h = cellAscPx + cellDesc + 2 * pad
 
     const spot = this.pack(w, h)
-    if (!spot) return null
+    if (!spot) {
+      return null
+    }
     ctx.fillStyle = fill
     const x = spot.x + pad + leftPx
     const y = spot.y + pad + cellAscPx
@@ -211,7 +223,9 @@ export class GlyphAtlas {
   /** Shelf-pack a w×h cell (1px gap between cells); grows or clears if full. */
   private pack(w: number, h: number): { x: number; y: number } | null {
     const gap = 1
-    if (w > MAX_SIZE || h > MAX_SIZE) return null
+    if (w > MAX_SIZE || h > MAX_SIZE) {
+      return null
+    }
     for (;;) {
       const S = this.size
       if (w <= S && h <= S) {
@@ -234,7 +248,9 @@ export class GlyphAtlas {
         this.ctx = null
         this.canvas = null
         this.resetPacker()
-        if (!this.ensureCanvas()) return null
+        if (!this.ensureCanvas()) {
+          return null
+        }
       } else {
         if (!this.warnedFull) {
           this.warnedFull = true
@@ -262,7 +278,9 @@ export class GlyphAtlas {
 
   /** Copy the canvas to the GPU texture if anything was drawn since. */
   flush(device: GPUDevice): void {
-    if (!this.canvas) return
+    if (!this.canvas) {
+      return
+    }
     const S = this.size
     if (!this.texture || this.texture.width !== S) {
       this.texture?.destroy()
@@ -278,7 +296,9 @@ export class GlyphAtlas {
       this.generation++
       this.dirty = true
     }
-    if (!this.dirty) return
+    if (!this.dirty) {
+      return
+    }
     device.queue.copyExternalImageToTexture(
       { source: this.canvas },
       { texture: this.texture, premultipliedAlpha: true },

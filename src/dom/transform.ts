@@ -23,19 +23,29 @@ const MIN_DET = 0.2
  * perspective and z terms are dropped, so 3D transforms render flattened.
  */
 export function parseTransform(s: string): Mat2 | null {
-  if (!s || s === 'none') return null
+  if (!s || s === 'none') {
+    return null
+  }
   const m = /^(matrix|matrix3d)\(([^)]*)\)$/.exec(s.trim())
-  if (!m) return null
+  if (!m) {
+    return null
+  }
   const v = (m[2] ?? '').split(',').map((t) => Number.parseFloat(t))
   let lin: Mat2
   if (m[1] === 'matrix') {
-    if (v.length !== 6) return null
+    if (v.length !== 6) {
+      return null
+    }
     lin = [v[0] ?? 1, v[1] ?? 0, v[2] ?? 0, v[3] ?? 1]
   } else {
-    if (v.length !== 16) return null
+    if (v.length !== 16) {
+      return null
+    }
     lin = [v[0] ?? 1, v[1] ?? 0, v[4] ?? 0, v[5] ?? 1]
   }
-  if (!lin.every(Number.isFinite)) return null
+  if (!lin.every(Number.isFinite)) {
+    return null
+  }
   if (lin[0] === 1 && lin[1] === 0 && lin[2] === 0 && lin[3] === 1) {
     return null
   }
@@ -63,12 +73,20 @@ const ANGLE = /^(-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(deg|rad|turn|grad)$/i
 
 function angleRad(tok: string): number | null {
   const m = ANGLE.exec(tok)
-  if (!m) return null
+  if (!m) {
+    return null
+  }
   const n = Number.parseFloat(m[1] ?? '')
   const unit = (m[2] ?? '').toLowerCase()
-  if (unit === 'deg') return (n * Math.PI) / 180
-  if (unit === 'grad') return (n * Math.PI) / 200
-  if (unit === 'turn') return n * 2 * Math.PI
+  if (unit === 'deg') {
+    return (n * Math.PI) / 180
+  }
+  if (unit === 'grad') {
+    return (n * Math.PI) / 200
+  }
+  if (unit === 'turn') {
+    return n * 2 * Math.PI
+  }
   return n
 }
 
@@ -78,10 +96,14 @@ function angleRad(tok: string): number | null {
  * any axis is projected to its 2D part, like matrix3d in parseTransform.
  */
 function parseRotate(v: string | undefined): Mat2 | null {
-  if (!set(v)) return null
+  if (!set(v)) {
+    return null
+  }
   const toks = (v as string).trim().split(/\s+/)
   const theta = angleRad(toks[toks.length - 1] ?? '')
-  if (theta === null || theta === 0) return null
+  if (theta === null || theta === 0) {
+    return null
+  }
   let x = 0
   let y = 0
   let z = 1
@@ -90,13 +112,17 @@ function parseRotate(v: string | undefined): Mat2 | null {
     x = axis === 'x' ? 1 : 0
     y = axis === 'y' ? 1 : 0
     z = axis === 'z' ? 1 : 0
-    if (x + y + z === 0) return null
+    if (x + y + z === 0) {
+      return null
+    }
   } else if (toks.length === 4) {
     x = Number.parseFloat(toks[0] ?? '')
     y = Number.parseFloat(toks[1] ?? '')
     z = Number.parseFloat(toks[2] ?? '')
     const len = Math.hypot(x, y, z)
-    if (!Number.isFinite(len) || len === 0) return null
+    if (!Number.isFinite(len) || len === 0) {
+      return null
+    }
     x /= len
     y /= len
     z /= len
@@ -117,7 +143,9 @@ function parseRotate(v: string | undefined): Mat2 | null {
 
 /** One computed `scale` component (a number, or a percentage). */
 function scaleFactor(tok: string | undefined): number {
-  if (tok === undefined) return Number.NaN
+  if (tok === undefined) {
+    return Number.NaN
+  }
   const n = Number.parseFloat(tok)
   return tok.endsWith('%') ? n / 100 : n
 }
@@ -125,12 +153,18 @@ function scaleFactor(tok: string | undefined): number {
 /** Linear part of a computed `scale` value (`1.2`, `1.2 0.8`, with an
  * optional z factor that is dropped), or null for none/identity. */
 function parseScale(v: string | undefined): Mat2 | null {
-  if (!set(v)) return null
+  if (!set(v)) {
+    return null
+  }
   const toks = (v as string).trim().split(/\s+/)
   const sx = scaleFactor(toks[0])
   const sy = toks.length > 1 ? scaleFactor(toks[1]) : sx
-  if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null
-  if (sx === 1 && sy === 1) return null
+  if (!Number.isFinite(sx) || !Number.isFinite(sy)) {
+    return null
+  }
+  if (sx === 1 && sy === 1) {
+    return null
+  }
   return [sx, 0, 0, sy]
 }
 
@@ -152,8 +186,12 @@ export function composeLinear(
   parent: Mat2 | null,
   own: Mat2 | null
 ): Mat2 | null {
-  if (!parent) return own
-  if (!own) return parent
+  if (!parent) {
+    return own
+  }
+  if (!own) {
+    return parent
+  }
   const [pa, pb, pc, pd] = parent
   const [oa, ob, oc, od] = own
   return [
@@ -179,12 +217,18 @@ export function solveLocalSize(
   const c = Math.abs(lin[2])
   const d = Math.abs(lin[3])
   const det = a * d - b * c
-  if (Math.abs(det) <= MIN_DET) return null
+  if (Math.abs(det) <= MIN_DET) {
+    return null
+  }
   const w = (aabbW * d - c * aabbH) / det
   const h = (a * aabbH - b * aabbW) / det
   // Tiny negatives are float noise on a degenerate (zero-size) axis.
-  if (!Number.isFinite(w) || !Number.isFinite(h)) return null
-  if (w < -0.5 || h < -0.5) return null
+  if (!Number.isFinite(w) || !Number.isFinite(h)) {
+    return null
+  }
+  if (w < -0.5 || h < -0.5) {
+    return null
+  }
   return [Math.max(0, w), Math.max(0, h)]
 }
 
@@ -203,7 +247,9 @@ export function solveWidthGivenHeight(
   const c = Math.abs(lin[2])
   const d = Math.abs(lin[3])
   const w = a >= b ? (aabbW - c * h) / a : (aabbH - d * h) / b
-  if (!Number.isFinite(w)) return null
+  if (!Number.isFinite(w)) {
+    return null
+  }
   return Math.max(0, w)
 }
 

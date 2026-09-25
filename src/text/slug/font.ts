@@ -100,7 +100,9 @@ function readLigatures(font: opentype.Font): Map<number, Ligature[]> {
   const out = new Map<number, Ligature[]>()
   const seen = new Set<string>()
   const api = font.substitution as unknown as LigatureApi | undefined
-  if (!api || typeof api.getLigatures !== 'function') return out
+  if (!api || typeof api.getLigatures !== 'function') {
+    return out
+  }
   for (const feature of ['liga', 'clig']) {
     for (const script of [undefined, 'latn']) {
       let list: { sub: number[]; by: number }[] = []
@@ -111,9 +113,13 @@ function readLigatures(font: opentype.Font): Map<number, Ligature[]> {
       }
       for (const { sub, by } of list) {
         const first = sub[0]
-        if (first === undefined || sub.length < 2) continue
+        if (first === undefined || sub.length < 2) {
+          continue
+        }
         const key = sub.join(',')
-        if (seen.has(key)) continue
+        if (seen.has(key)) {
+          continue
+        }
         seen.add(key)
         const bucket = out.get(first) ?? []
         bucket.push({ seq: sub.slice(), by })
@@ -165,7 +171,9 @@ export function makeInstance(
 
   const glyph = (index: number): GlyphBands => {
     const cached = cache.get(index)
-    if (cached) return cached
+    if (cached) {
+      return cached
+    }
     const raw = font.glyphs.get(index)
     const g = vary ? variationOf(font).getTransform(raw, coords) : raw
     const bb = g.getBoundingBox()
@@ -191,14 +199,24 @@ export function makeInstance(
     i: number
   ): { len: number; by: number } | null => {
     const first = ids[i]
-    if (first === undefined) return null
+    if (first === undefined) {
+      return null
+    }
     const bucket = handle.ligatures.get(first)
-    if (!bucket) return null
+    if (!bucket) {
+      return null
+    }
     for (const { seq, by } of bucket) {
-      if (i + seq.length > ids.length) continue
+      if (i + seq.length > ids.length) {
+        continue
+      }
       let k = 1
-      while (k < seq.length && ids[i + k] === seq[k]) k++
-      if (k === seq.length) return { len: seq.length, by }
+      while (k < seq.length && ids[i + k] === seq[k]) {
+        k++
+      }
+      if (k === seq.length) {
+        return { len: seq.length, by }
+      }
     }
     return null
   }
@@ -341,7 +359,9 @@ function bucketIntoBands(quads: Quad[]): {
     for (const q of quads) {
       const lo = Math.min(q.y0, q.cy, q.y1)
       const hi = Math.max(q.y0, q.cy, q.y1)
-      if (hi >= yMin && lo <= yMax) curves.push(q)
+      if (hi >= yMin && lo <= yMax) {
+        curves.push(q)
+      }
     }
     bands.push({ yMin, yMax, start, end: curves.length })
   }

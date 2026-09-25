@@ -19,7 +19,9 @@ mkdirSync(outDir, { recursive: true })
 
 function parseN(argv: string[]): number {
   const idx = argv.indexOf('--n')
-  if (idx === -1) return 400
+  if (idx === -1) {
+    return 400
+  }
   const v = Number(argv[idx + 1])
   return Number.isFinite(v) && v > 0 ? v : 400
 }
@@ -66,11 +68,16 @@ async function sampleReadMs(
   return page.evaluate(
     async ({ kind, count }) => {
       const perf = window.__perf
-      if (!perf) return []
+      if (!perf) {
+        return []
+      }
       const samples: number[] = []
       for (let i = 0; i < count; i++) {
-        if (kind === 'full') perf.invalidate()
-        else perf.mutate(kind)
+        if (kind === 'full') {
+          perf.invalidate()
+        } else {
+          perf.mutate(kind)
+        }
         await new Promise<void>((r) =>
           requestAnimationFrame(() => requestAnimationFrame(() => r()))
         )
@@ -96,7 +103,9 @@ async function sampleSteadyFrames(
 ): Promise<FrameSample[]> {
   return page.evaluate(async (count) => {
     const perf = window.__perf
-    if (!perf) return []
+    if (!perf) {
+      return []
+    }
     const samples: FrameSample[] = []
     let dir = 1
     for (let i = 0; i < count; i++) {
@@ -125,7 +134,9 @@ async function main(): Promise<void> {
     })
     await server.listen()
     const url = server.resolvedUrls?.local[0]
-    if (!url) throw new Error('vite dev server produced no resolved URL')
+    if (!url) {
+      throw new Error('vite dev server produced no resolved URL')
+    }
     console.log(`[perf] vite dev server at ${url}`)
 
     const { browser: b, usedSwiftshader } = await launchWithFallback(

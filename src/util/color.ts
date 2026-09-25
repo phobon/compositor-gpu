@@ -15,12 +15,16 @@ function probeContext(): CanvasRenderingContext2D | null {
   const g = globalThis as unknown as Record<string, unknown>
   let ctx = g[CANVAS_KEY] as CanvasRenderingContext2D | undefined
   if (!ctx) {
-    if (typeof document === 'undefined') return null
+    if (typeof document === 'undefined') {
+      return null
+    }
     const c = document.createElement('canvas')
     c.width = 1
     c.height = 1
     ctx = c.getContext('2d', { willReadFrequently: true }) ?? undefined
-    if (ctx) g[CANVAS_KEY] = ctx
+    if (ctx) {
+      g[CANVAS_KEY] = ctx
+    }
   }
   return ctx ?? null
 }
@@ -46,9 +50,13 @@ function probe(ctx: CanvasRenderingContext2D, sentinel: string, css: string) {
  */
 export function tryParseColor(css: string): RGBA | null {
   const cached = cache.get(css)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) {
+    return cached
+  }
   const ctx = probeContext()
-  if (!ctx) return null
+  if (!ctx) {
+    return null
+  }
   const a = probe(ctx, '#010203', css)
   const [r = 0, g = 0, b = 0, al = 0] = a
   const [r2, g2, b2, al2] = probe(ctx, '#fdfeff', css)
@@ -56,7 +64,9 @@ export function tryParseColor(css: string): RGBA | null {
     r === r2 && g === g2 && b === b2 && al === al2
       ? { r: r / 255, g: g / 255, b: b / 255, a: al / 255 }
       : null
-  if (cache.size >= CACHE_MAX) cache.clear()
+  if (cache.size >= CACHE_MAX) {
+    cache.clear()
+  }
   cache.set(css, out)
   return out
 }

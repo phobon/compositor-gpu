@@ -57,7 +57,9 @@ function forEachCell(r: Rect, fn: (key: number) => boolean | undefined): void {
   const y1 = Math.floor((r.y + r.height) / CELL)
   for (let cx = x0; cx <= x1; cx++) {
     for (let cy = y0; cy <= y1; cy++) {
-      if (fn(cx * 65536 + cy)) return
+      if (fn(cx * 65536 + cy)) {
+        return
+      }
     }
   }
 }
@@ -81,9 +83,13 @@ function boundsOverlap(a: Accum, r: Rect): boolean {
 }
 
 function accumOverlaps(a: Accum, e: Entry): boolean {
-  if (!boundsOverlap(a, e.rect)) return false
+  if (!boundsOverlap(a, e.rect)) {
+    return false
+  }
   for (const r of e.rects) {
-    if (rectOverlapsAccum(a, r)) return true
+    if (rectOverlapsAccum(a, r)) {
+      return true
+    }
   }
   return false
 }
@@ -92,7 +98,9 @@ function rectOverlapsAccum(a: Accum, r: Rect): boolean {
   let hit = false
   forEachCell(r, (key) => {
     const cell = a.grid.get(key)
-    if (!cell) return false
+    if (!cell) {
+      return false
+    }
     for (const m of cell) {
       if (rectsOverlap(m, r)) {
         hit = true
@@ -107,8 +115,11 @@ function rectOverlapsAccum(a: Accum, r: Rect): boolean {
 function insertMember(a: Accum, r: Rect): void {
   forEachCell(r, (key) => {
     const cell = a.grid.get(key)
-    if (cell) cell.push(r)
-    else a.grid.set(key, [r])
+    if (cell) {
+      cell.push(r)
+    } else {
+      a.grid.set(key, [r])
+    }
     return false
   })
 }
@@ -124,7 +135,9 @@ function newAccum(e: Entry): Accum {
     maxY: e.rect.y + e.rect.height,
     grid: new Map()
   }
-  for (const r of e.rects) insertMember(a, r)
+  for (const r of e.rects) {
+    insertMember(a, r)
+  }
   return a
 }
 
@@ -134,12 +147,16 @@ function extend(a: Accum, e: Entry): void {
   a.minY = Math.min(a.minY, e.rect.y)
   a.maxX = Math.max(a.maxX, e.rect.x + e.rect.width)
   a.maxY = Math.max(a.maxY, e.rect.y + e.rect.height)
-  for (const r of e.rects) insertMember(a, r)
+  for (const r of e.rects) {
+    insertMember(a, r)
+  }
 }
 
 /** Union of doc-space rects; a degenerate zero rect for an empty list. */
 export function unionRect(rects: Rect[]): Rect {
-  if (rects.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
+  if (rects.length === 0) {
+    return { x: 0, y: 0, width: 0, height: 0 }
+  }
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
@@ -183,7 +200,9 @@ export function buildBatches(
   const entries: Entry[] = []
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]
-    if (!b) continue
+    if (!b) {
+      continue
+    }
     entries.push({
       layer: 'boxes',
       z: b.z,
@@ -195,7 +214,9 @@ export function buildBatches(
   }
   for (let i = 0; i < images.length; i++) {
     const im = images[i]
-    if (!im) continue
+    if (!im) {
+      continue
+    }
     entries.push({
       layer: 'images',
       z: im.z,
@@ -208,7 +229,9 @@ export function buildBatches(
   let glyphBase = 0
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i]
-    if (!run) continue
+    if (!run) {
+      continue
+    }
     const count = run.glyphs.length
     // Text shadows paint outside the glyph line boxes: pad each footprint
     // so a shadowed run can't merge past a record its shadow overlaps.
@@ -235,13 +258,19 @@ export function buildBatches(
   const events: GroupEvent[] = []
   for (let g = 0; g < groups.length; g++) {
     const grp = groups[g]
-    if (!grp) continue
+    if (!grp) {
+      continue
+    }
     events.push({ z: grp.first, kind: 'push', group: g, depth: grp.depth })
     events.push({ z: grp.last, kind: 'pop', group: g, depth: grp.depth })
   }
   events.sort((a, b) => {
-    if (a.z !== b.z) return a.z - b.z
-    if (a.kind !== b.kind) return a.kind === 'pop' ? -1 : 1
+    if (a.z !== b.z) {
+      return a.z - b.z
+    }
+    if (a.kind !== b.kind) {
+      return a.kind === 'pop' ? -1 : 1
+    }
     return a.kind === 'push' ? a.depth - b.depth : b.depth - a.depth
   })
 

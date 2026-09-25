@@ -72,13 +72,17 @@ export function readOwnDecorations(
   s: CSSStyleDeclaration
 ): Decoration[] | null {
   const raw = s.textDecorationLine
-  if (!raw || raw === 'none') return null
+  if (!raw || raw === 'none') {
+    return null
+  }
   const lines = raw
     .split(/\s+/)
     .filter((l): l is DecorationLine =>
       (LINES as readonly string[]).includes(l)
     )
-  if (lines.length === 0) return null
+  if (lines.length === 0) {
+    return null
+  }
 
   const color = parseColor(s.textDecorationColor || s.color)
   const fontSize = Number.parseFloat(s.fontSize) || 16
@@ -115,8 +119,12 @@ export function propagateDecorations(
   parentDecor: Decoration[] | null
 ): Decoration[] | null {
   const ownDecor = readOwnDecorations(s)
-  if (isOutOfFlow(s) || isAtomicInline(el, s)) return ownDecor
-  if (!ownDecor) return parentDecor
+  if (isOutOfFlow(s) || isAtomicInline(el, s)) {
+    return ownDecor
+  }
+  if (!ownDecor) {
+    return parentDecor
+  }
   return parentDecor ? [...parentDecor, ...ownDecor] : ownDecor
 }
 
@@ -146,13 +154,17 @@ export function buildDecorationBoxes(
   allocId: () => number
 ): DecorationBoxes {
   const out: DecorationBoxes = { under: [], over: [] }
-  if (decor.length === 0) return out
+  if (decor.length === 0) {
+    return out
+  }
   const glyphs = run.glyphs
   let start = 0
   for (let i = 1; i <= glyphs.length; i++) {
     const g0 = glyphs[start] as Glyph
     const cur: Glyph | undefined = glyphs[i]
-    if (cur && Math.abs(glyphLocalY(g0, cur)) < LINE_EPS) continue
+    if (cur && Math.abs(glyphLocalY(g0, cur)) < LINE_EPS) {
+      continue
+    }
     for (const d of decor) {
       const list = d.line === 'line-through' ? out.over : out.under
       list.push(...fragmentBoxes(run, glyphs, start, i, d, clip, allocId))
@@ -279,9 +291,13 @@ function skipInkSegments(
       run.italic,
       g.fontSize
     )
-    if (!ink) continue
+    if (!ink) {
+      continue
+    }
     // Ink reaching past the top of the underline band intrudes on it.
-    if (ink.descent <= top - baseline) continue
+    if (ink.descent <= top - baseline) {
+      continue
+    }
     const glyphLeft = glyphLocalX(g0, g)
     // Prefer the descender-only span (just the sub-baseline stroke) over
     // the whole glyph's ink bbox — a 'p' or 'g's bowl sits above the
@@ -294,7 +310,9 @@ function skipInkSegments(
     const gap = skipInkGap(g.fontSize)
     cuts.push([inkL - gap, inkR + gap])
   }
-  if (cuts.length === 0) return [[0, xLast]]
+  if (cuts.length === 0) {
+    return [[0, xLast]]
+  }
   cuts.sort((a, b) => a[0] - b[0])
 
   // Merge overlapping/adjacent cuts, then take the complement within
@@ -302,18 +320,25 @@ function skipInkSegments(
   const merged: Array<[number, number]> = []
   for (const c of cuts) {
     const last = merged[merged.length - 1]
-    if (last && c[0] <= last[1]) last[1] = Math.max(last[1], c[1])
-    else merged.push([...c])
+    if (last && c[0] <= last[1]) {
+      last[1] = Math.max(last[1], c[1])
+    } else {
+      merged.push([...c])
+    }
   }
   const out: Array<[number, number]> = []
   let cursor = 0
   for (const [cL, cR] of merged) {
     const segL = Math.max(0, cursor)
     const segR = Math.min(xLast, cL)
-    if (segR - segL >= 1) out.push([segL, segR])
+    if (segR - segL >= 1) {
+      out.push([segL, segR])
+    }
     cursor = Math.max(cursor, cR)
   }
-  if (xLast - cursor >= 1) out.push([Math.max(0, cursor), xLast])
+  if (xLast - cursor >= 1) {
+    out.push([Math.max(0, cursor), xLast])
+  }
   return out
 }
 

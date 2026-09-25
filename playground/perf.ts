@@ -64,8 +64,12 @@ function paragraphHtml(seed: number): string {
 function buildCard(index: number): HTMLElement {
   const card = document.createElement('div')
   card.className = 'pcard'
-  if ((index + 1) % 10 === 0) card.classList.add('rot')
-  if ((index + 1) % 7 === 0) card.classList.add('dim')
+  if ((index + 1) % 10 === 0) {
+    card.classList.add('rot')
+  }
+  if ((index + 1) % 7 === 0) {
+    card.classList.add('dim')
+  }
 
   const h = document.createElement('h3')
   h.textContent = `Card ${index + 1}`
@@ -105,7 +109,9 @@ function buildWrappedCard(index: number): HTMLElement {
 function buildGrid(n: number): void {
   const stage = document.getElementById('stage') as HTMLElement
   const frag = document.createDocumentFragment()
-  for (let i = 0; i < n; i++) frag.appendChild(buildWrappedCard(i))
+  for (let i = 0; i < n; i++) {
+    frag.appendChild(buildWrappedCard(i))
+  }
   stage.appendChild(frag)
 }
 
@@ -149,8 +155,11 @@ async function boot(): Promise<void> {
   const textReady = (): Promise<void> =>
     new Promise((resolve) => {
       const check = (): void => {
-        if (!compositor.text || compositor.text.ready) resolve()
-        else requestAnimationFrame(check)
+        if (!compositor.text || compositor.text.ready) {
+          resolve()
+        } else {
+          requestAnimationFrame(check)
+        }
       }
       check()
     })
@@ -159,7 +168,9 @@ async function boot(): Promise<void> {
 
   window.__perf = {
     ready: (async () => {
-      if (!compositor.active) return
+      if (!compositor.active) {
+        return
+      }
       await textReady()
       await document.fonts.ready
       await imagesReady()
@@ -185,7 +196,9 @@ async function boot(): Promise<void> {
     }
   }
 
-  if (!compositor.active) return
+  if (!compositor.active) {
+    return
+  }
   compositor.start()
 }
 

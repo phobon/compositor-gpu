@@ -67,7 +67,9 @@ export class Scene {
         break
       case 'image':
         this.images.push(record)
-        if (record.dynamic) this.hasDynamic = true
+        if (record.dynamic) {
+          this.hasDynamic = true
+        }
         this.markDirty('images')
         break
       case 'text':
@@ -97,7 +99,9 @@ export class Scene {
 
   glyphCount(): number {
     let n = 0
-    for (const run of this.runs) n += run.glyphs.length
+    for (const run of this.runs) {
+      n += run.glyphs.length
+    }
     return n
   }
 }

@@ -15,12 +15,18 @@ export function splitTopLevel(value: string, sep: string): string[] {
   for (let i = 0; i < value.length; i++) {
     const ch = value[i] as string
     if (quote) {
-      if (ch === '\\') i++
-      else if (ch === quote) quote = ''
-    } else if (ch === '"' || ch === "'") quote = ch
-    else if (ch === '(') depth++
-    else if (ch === ')') depth = Math.max(0, depth - 1)
-    else if (depth === 0 && (ws ? /\s/.test(ch) : ch === sep)) {
+      if (ch === '\\') {
+        i++
+      } else if (ch === quote) {
+        quote = ''
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      depth = Math.max(0, depth - 1)
+    } else if (depth === 0 && (ws ? /\s/.test(ch) : ch === sep)) {
       out.push(value.slice(start, i).trim())
       start = i + 1
     }

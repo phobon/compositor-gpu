@@ -78,7 +78,9 @@ export class ImageAtlas {
   }
 
   private ensureTexture(): GPUTexture {
-    if (this.texture) return this.texture
+    if (this.texture) {
+      return this.texture
+    }
     this.texture = this.createTexture(this.size)
     this.view = this.texture.createView()
     return this.texture
@@ -102,13 +104,17 @@ export class ImageAtlas {
     const cw = w + 2 * GUTTER
     const ch = h + 2 * GUTTER
     const s = this.size
-    if (cw > s || ch > s) return null
+    if (cw > s || ch > s) {
+      return null
+    }
     if (this.shelfX + cw > s) {
       this.shelfY += this.shelfH
       this.shelfX = 0
       this.shelfH = 0
     }
-    if (this.shelfY + ch > s) return null
+    if (this.shelfY + ch > s) {
+      return null
+    }
     const x = this.shelfX + GUTTER
     const y = this.shelfY + GUTTER
     this.shelfX += cw
@@ -125,7 +131,9 @@ export class ImageAtlas {
    * False if already at the cap. */
   private grow(): boolean {
     const max = this.maxSize()
-    if (this.size >= max) return false
+    if (this.size >= max) {
+      return false
+    }
     const newSize = Math.min(this.size * 2, max)
     const texture = this.createTexture(newSize)
     for (const [k, e] of this.entries) {
@@ -162,14 +170,22 @@ export class ImageAtlas {
    * re-uploading pixels.
    */
   add(source: HTMLImageElement, w: number, h: number): AtlasRect | null {
-    if (w <= 0 || h <= 0) return null
-    if (Math.max(w, h) > MAX_ENTRY_SIZE) return null
+    if (w <= 0 || h <= 0) {
+      return null
+    }
+    if (Math.max(w, h) > MAX_ENTRY_SIZE) {
+      return null
+    }
     const k = key(source, w, h)
     const hit = this.entries.get(k)
-    if (hit) return hit.rect
+    if (hit) {
+      return hit.rect
+    }
     this.ensureTexture()
     let spot = this.pack(w, h)
-    if (!spot && this.grow()) spot = this.pack(w, h)
+    if (!spot && this.grow()) {
+      spot = this.pack(w, h)
+    }
     if (!spot) {
       if (!this.warnedFull) {
         this.warnedFull = true
@@ -191,7 +207,9 @@ export class ImageAtlas {
   /** Regenerate the mip chain if the atlas changed since the last flush
    * (at most once per frame). */
   flush(encoder?: GPUCommandEncoder): void {
-    if (!this.mipsDirty || !this.texture) return
+    if (!this.mipsDirty || !this.texture) {
+      return
+    }
     this.mips.generate(this.texture, mipLevelCountFor(this.size), encoder)
     this.mipsDirty = false
   }

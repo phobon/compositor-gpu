@@ -57,11 +57,15 @@ function parseArgs(argv: string[]): Args {
   let parityMax: number | null = null
   const update = argv.includes('--update')
   const onlyIdx = argv.indexOf('--only')
-  if (onlyIdx !== -1) only = argv[onlyIdx + 1] ?? null
+  if (onlyIdx !== -1) {
+    only = argv[onlyIdx + 1] ?? null
+  }
   const pmIdx = argv.indexOf('--parity-max')
   if (pmIdx !== -1) {
     const v = argv[pmIdx + 1]
-    if (v) parityMax = Number(v)
+    if (v) {
+      parityMax = Number(v)
+    }
   }
   return { update, only, parityMax }
 }
@@ -128,7 +132,9 @@ async function main(): Promise<void> {
     })
     await server.listen()
     const url = server.resolvedUrls?.local[0]
-    if (!url) throw new Error('vite dev server produced no resolved URL')
+    if (!url) {
+      throw new Error('vite dev server produced no resolved URL')
+    }
     console.log(`[visual] vite dev server at ${url}`)
 
     const { browser: b, usedSwiftshader } = await launchWithFallback(

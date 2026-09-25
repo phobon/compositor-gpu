@@ -12,7 +12,13 @@
   },
   "linter": {
     "enabled": true,
-    "rules": { "recommended": true, "suspicious": { "noExplicitAny": "warn" } }
+    "rules": {
+      "recommended": true,
+      "suspicious": { "noExplicitAny": "warn" },
+      "style": {
+        "useBlockStatements": { "level": "error", "fix": "safe" }
+      }
+    }
   },
   "files": {
     "ignore": ["dist", "node_modules", "test/visual/out", "test/perf/out"]

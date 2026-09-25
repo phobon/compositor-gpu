@@ -48,7 +48,9 @@ function imagesReady(): Promise<void> {
 async function boot(): Promise<void> {
   const stage = $('stage')
 
-  if (vrMode) $('b-animate').setAttribute('aria-pressed', 'false')
+  if (vrMode) {
+    $('b-animate').setAttribute('aria-pressed', 'false')
+  }
 
   const compositor = await createCompositor({
     root: stage,
@@ -89,15 +91,20 @@ async function boot(): Promise<void> {
   const textReady = (): Promise<void> =>
     new Promise((resolve) => {
       const check = (): void => {
-        if (!compositor.text || compositor.text.ready) resolve()
-        else requestAnimationFrame(check)
+        if (!compositor.text || compositor.text.ready) {
+          resolve()
+        } else {
+          requestAnimationFrame(check)
+        }
       }
       check()
     })
 
   window.__vr = {
     ready: (async () => {
-      if (!compositor.active) return
+      if (!compositor.active) {
+        return
+      }
       await textReady()
       await document.fonts.ready
       await imagesReady()
@@ -153,8 +160,11 @@ async function boot(): Promise<void> {
   let running = true
   toggle.addEventListener('click', () => {
     running = !running
-    if (running) compositor.start()
-    else compositor.stop()
+    if (running) {
+      compositor.start()
+    } else {
+      compositor.stop()
+    }
     toggle.setAttribute('aria-pressed', String(running))
     toggle.textContent = running ? 'GPU layer on' : 'GPU layer off'
   })
@@ -189,7 +199,9 @@ async function boot(): Promise<void> {
 function animateLiveCanvas({ once }: { once: boolean }): void {
   const cv = document.querySelector('.livecanvas') as HTMLCanvasElement | null
   const ctx = cv?.getContext('2d')
-  if (!cv || !ctx) return
+  if (!cv || !ctx) {
+    return
+  }
   const draw = (t: number): void => {
     ctx.fillStyle = '#101018'
     ctx.fillRect(0, 0, cv.width, cv.height)
@@ -201,12 +213,17 @@ function animateLiveCanvas({ once }: { once: boolean }): void {
       ctx.fillStyle = `hsl(${((t / 18 + i * 52) % 360).toFixed(0)} 82% 62%)`
       ctx.fill()
     }
-    if (!once) requestAnimationFrame(draw)
+    if (!once) {
+      requestAnimationFrame(draw)
+    }
   }
   // Under `?vr` a single deterministic frame is drawn directly (a real rAF
   // timestamp would differ between harness runs and break the diff).
-  if (once) draw(1000)
-  else requestAnimationFrame(draw)
+  if (once) {
+    draw(1000)
+  } else {
+    requestAnimationFrame(draw)
+  }
 }
 
 animateLiveCanvas({ once: vrMode })

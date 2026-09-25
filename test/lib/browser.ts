@@ -13,7 +13,9 @@ export const SWIFTSHADER_ARGS = [
 
 async function waitForAdapter(page: Page): Promise<boolean> {
   return page.evaluate(async () => {
-    if (!navigator.gpu) return false
+    if (!navigator.gpu) {
+      return false
+    }
     const adapter = await navigator.gpu.requestAdapter()
     return adapter !== null
   })

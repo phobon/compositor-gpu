@@ -48,7 +48,9 @@ export class MipGenerator {
   constructor(private readonly device: GPUDevice) {}
 
   private ensure(): void {
-    if (this.pipeline) return
+    if (this.pipeline) {
+      return
+    }
     const { device } = this
     this.layout = device.createBindGroupLayout({
       entries: [
@@ -84,7 +86,9 @@ export class MipGenerator {
     mipLevelCount: number,
     encoder?: GPUCommandEncoder
   ): void {
-    if (mipLevelCount <= 1) return
+    if (mipLevelCount <= 1) {
+      return
+    }
     this.ensure()
     const pipeline = this.pipeline as GPURenderPipeline
     const layout = this.layout as GPUBindGroupLayout
@@ -122,6 +126,8 @@ export class MipGenerator {
       pass.draw(3)
       pass.end()
     }
-    if (!encoder) device.queue.submit([enc.finish()])
+    if (!encoder) {
+      device.queue.submit([enc.finish()])
+    }
   }
 }

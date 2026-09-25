@@ -67,14 +67,28 @@ export function createsStackingContext(
 ): boolean {
   // Any positioned element: a real context when z-index is set, and the
   // documented z=0 pseudo-context (Appendix E step 6) when it's auto.
-  if (s.position !== 'static') return true
-  if (Number.parseFloat(s.opacity) < 1) return true
-  if (transformable && hasTransform(s)) return true
-  if (s.isolation === 'isolate') return true
-  if (s.mixBlendMode !== 'normal') return true
-  if (s.filter !== 'none') return true
+  if (s.position !== 'static') {
+    return true
+  }
+  if (Number.parseFloat(s.opacity) < 1) {
+    return true
+  }
+  if (transformable && hasTransform(s)) {
+    return true
+  }
+  if (s.isolation === 'isolate') {
+    return true
+  }
+  if (s.mixBlendMode !== 'normal') {
+    return true
+  }
+  if (s.filter !== 'none') {
+    return true
+  }
   const wc = s.willChange
-  if (/(^|,)\s*opacity\s*(,|$)/.test(wc)) return true
+  if (/(^|,)\s*opacity\s*(,|$)/.test(wc)) {
+    return true
+  }
   if (
     transformable &&
     /(^|,)\s*(transform|translate|rotate|scale)\s*(,|$)/.test(wc)
@@ -86,7 +100,9 @@ export function createsStackingContext(
 
 /** The declared z-index for a new context, per the simplification above. */
 export function contextZIndex(s: CSSStyleDeclaration): number {
-  if (s.position === 'static' || s.zIndex === 'auto') return 0
+  if (s.position === 'static' || s.zIndex === 'auto') {
+    return 0
+  }
   const n = Number.parseInt(s.zIndex, 10)
   return Number.isFinite(n) ? n : 0
 }
@@ -99,7 +115,9 @@ interface Extent {
 }
 
 function growExtent(e: Extent, r: Rect): void {
-  if (!(r.width > 0 && r.height > 0)) return
+  if (!(r.width > 0 && r.height > 0)) {
+    return
+  }
   e.minX = Math.min(e.minX, r.x)
   e.minY = Math.min(e.minY, r.y)
   e.maxX = Math.max(e.maxX, r.x + r.width)
@@ -113,7 +131,9 @@ function growExtent(e: Extent, r: Rect): void {
  */
 export function textShadowPad(run: GlyphRun): [number, number] | null {
   const shadows = run.textShadows
-  if (!shadows || shadows.length === 0) return null
+  if (!shadows || shadows.length === 0) {
+    return null
+  }
   let px = 0
   let py = 0
   for (const s of shadows) {
@@ -178,7 +198,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
   const paint = (r: SceneRecord): void => {
     r.z = counter++
     const e = open[open.length - 1]
-    if (e) growByRecord(e, r)
+    if (e) {
+      growByRecord(e, r)
+    }
   }
 
   const visit = (ctx: StackingContext): void => {
@@ -210,7 +232,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
           height: e.maxY - e.minY
         }
         const parent = open[open.length - 1]
-        if (parent) growExtent(parent, g.bounds)
+        if (parent) {
+          growExtent(parent, g.bounds)
+        }
       }
       return
     }
@@ -227,9 +251,13 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
     const positive: StackingContext[] = []
     for (const item of rest) {
       if (isContext(item)) {
-        if (item.z < 0) negative.push(item)
-        else if (item.z > 0) positive.push(item)
-        else zero.push(item)
+        if (item.z < 0) {
+          negative.push(item)
+        } else if (item.z > 0) {
+          positive.push(item)
+        } else {
+          zero.push(item)
+        }
       } else {
         inflow.push(item)
       }
@@ -238,13 +266,24 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
     positive.sort((a, b) => a.z - b.z)
 
     for (const item of own) {
-      if (isContext(item)) visit(item)
-      else paint(item)
+      if (isContext(item)) {
+        visit(item)
+      } else {
+        paint(item)
+      }
     }
-    for (const item of negative) visit(item)
-    for (const item of inflow) paint(item)
-    for (const item of zero) visit(item)
-    for (const item of positive) visit(item)
+    for (const item of negative) {
+      visit(item)
+    }
+    for (const item of inflow) {
+      paint(item)
+    }
+    for (const item of zero) {
+      visit(item)
+    }
+    for (const item of positive) {
+      visit(item)
+    }
   }
 
   visit(root)

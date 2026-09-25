@@ -30,12 +30,18 @@ const ANIMATION_END = ['animationend', 'animationcancel']
  * animations that are still filling, so check playState. Without the Web
  * Animations API, assume nothing is left. */
 function hasPending(el: Element, kind: 'transition' | 'animation'): boolean {
-  if (typeof el.getAnimations !== 'function') return false
+  if (typeof el.getAnimations !== 'function') {
+    return false
+  }
   for (const a of el.getAnimations()) {
-    if (a.playState === 'finished' || a.playState === 'idle') continue
+    if (a.playState === 'finished' || a.playState === 'idle') {
+      continue
+    }
     const isTransition =
       typeof CSSTransition !== 'undefined' && a instanceof CSSTransition
-    if (isTransition === (kind === 'transition')) return true
+    if (isTransition === (kind === 'transition')) {
+      return true
+    }
   }
   return false
 }
@@ -43,9 +49,13 @@ function hasPending(el: Element, kind: 'transition' | 'animation'): boolean {
 /** Is any of `el`'s animations actually advancing (not paused)? True
  * without the Web Animations API, to stay on the safe side. */
 function isAdvancing(el: Element): boolean {
-  if (typeof el.getAnimations !== 'function') return true
+  if (typeof el.getAnimations !== 'function') {
+    return true
+  }
   for (const a of el.getAnimations()) {
-    if (a.playState === 'running') return true
+    if (a.playState === 'running') {
+      return true
+    }
   }
   return false
 }
@@ -84,10 +94,14 @@ function animatesPaintOnly(a: Animation): boolean {
   }
   if (typeof CSSAnimation !== 'undefined' && a instanceof CSSAnimation) {
     const effect = a.effect as KeyframeEffect | null
-    if (!effect || typeof effect.getKeyframes !== 'function') return false
+    if (!effect || typeof effect.getKeyframes !== 'function') {
+      return false
+    }
     for (const kf of effect.getKeyframes()) {
       for (const prop of Object.keys(kf)) {
-        if (!KEYFRAME_META.has(prop) && !paintOnlyProperty(prop)) return false
+        if (!KEYFRAME_META.has(prop) && !paintOnlyProperty(prop)) {
+          return false
+        }
       }
     }
     return true
@@ -97,17 +111,25 @@ function animatesPaintOnly(a: Animation): boolean {
 
 /** Are all of `el`'s unfinished animations paint-only? */
 function paintOnlyAnimations(el: Element): boolean {
-  if (typeof el.getAnimations !== 'function') return false
+  if (typeof el.getAnimations !== 'function') {
+    return false
+  }
   for (const a of el.getAnimations()) {
-    if (a.playState === 'finished' || a.playState === 'idle') continue
-    if (!animatesPaintOnly(a)) return false
+    if (a.playState === 'finished' || a.playState === 'idle') {
+      continue
+    }
+    if (!animatesPaintOnly(a)) {
+      return false
+    }
   }
   return true
 }
 
 /** Could adding/removing this node change which stylesheets apply? */
 function carriesStylesheet(n: Node): boolean {
-  if (n.nodeType !== Node.ELEMENT_NODE) return false
+  if (n.nodeType !== Node.ELEMENT_NODE) {
+    return false
+  }
   const el = n as Element
   return el.matches(STYLESHEET) || el.querySelector(STYLESHEET) !== null
 }
@@ -152,7 +174,9 @@ export class DomSync {
     this.ro = new ResizeObserver(() => this.mark(Dirty.LAYOUT))
     this.mo = new MutationObserver((records) => {
       let flag = Dirty.NONE
-      for (const r of records) flag |= this.scope(r)
+      for (const r of records) {
+        flag |= this.scope(r)
+      }
       this.mark(flag)
     })
     this.io = new IntersectionObserver(() => this.mark(Dirty.LAYOUT))
@@ -162,33 +186,51 @@ export class DomSync {
   private scope(r: MutationRecord): number {
     const t = r.target
     if (r.type === 'attributes') {
-      if (t === this.root) return Dirty.STYLE
+      if (t === this.root) {
+        return Dirty.STYLE
+      }
       const p = t.parentElement
       // Detached: its removal is a childList record on the old parent.
-      if (!p) return Dirty.NONE
+      if (!p) {
+        return Dirty.NONE
+      }
       this.scopes.add(p)
       return Dirty.MUTATION
     }
     if (r.type === 'characterData') {
       const p = t.parentElement
-      if (!p) return Dirty.NONE
-      if (p.tagName === 'STYLE') return Dirty.CONTENT
+      if (!p) {
+        return Dirty.NONE
+      }
+      if (p.tagName === 'STYLE') {
+        return Dirty.CONTENT
+      }
       this.scopes.add(p)
       return Dirty.MUTATION
     }
     // childList
     const el = t as Element
-    if (el.tagName === 'STYLE') return Dirty.CONTENT
-    for (const n of r.addedNodes) if (carriesStylesheet(n)) return Dirty.CONTENT
+    if (el.tagName === 'STYLE') {
+      return Dirty.CONTENT
+    }
+    for (const n of r.addedNodes) {
+      if (carriesStylesheet(n)) {
+        return Dirty.CONTENT
+      }
+    }
     for (const n of r.removedNodes) {
-      if (carriesStylesheet(n)) return Dirty.CONTENT
+      if (carriesStylesheet(n)) {
+        return Dirty.CONTENT
+      }
     }
     this.scopes.add(el)
     return Dirty.MUTATION
   }
 
   private mark(flag: number): void {
-    if (flag === Dirty.NONE) return
+    if (flag === Dirty.NONE) {
+      return
+    }
     this.dirty |= flag
     this.onInvalidate()
   }
@@ -218,25 +260,37 @@ export class DomSync {
 
   private onAnimStart = (e: Event): void => {
     const t = e.target
-    if (!(t instanceof Element)) return
+    if (!(t instanceof Element)) {
+      return
+    }
     const had = this.animating.size
     this.animating.add(t)
-    if (had === 0) this.mark(Dirty.MUTATION)
+    if (had === 0) {
+      this.mark(Dirty.MUTATION)
+    }
   }
 
   private onTransitionEnd = (e: Event): void => {
     const t = e.target
-    if (!(t instanceof Element) || !this.animating.has(t)) return
+    if (!(t instanceof Element) || !this.animating.has(t)) {
+      return
+    }
     // Another transition on the same element may still be running.
-    if (hasPending(t, 'transition')) return
+    if (hasPending(t, 'transition')) {
+      return
+    }
     this.settle(t)
   }
 
   private onAnimationEnd = (e: Event): void => {
     const t = e.target
-    if (!(t instanceof Element) || !this.animating.has(t)) return
+    if (!(t instanceof Element) || !this.animating.has(t)) {
+      return
+    }
     // An element can run several animations; keep it until all are done.
-    if (hasPending(t, 'animation')) return
+    if (hasPending(t, 'animation')) {
+      return
+    }
     this.settle(t)
   }
 
@@ -249,7 +303,9 @@ export class DomSync {
       return
     }
     const p = t.parentElement
-    if (p) this.scopes.add(p)
+    if (p) {
+      this.scopes.add(p)
+    }
     this.mark(p ? Dirty.MUTATION : Dirty.STYLE)
   }
 
@@ -266,7 +322,9 @@ export class DomSync {
    */
   *animatingScopes(paintOnly?: Set<Element>): Iterable<Element> {
     for (const el of this.settled) {
-      if (!el.isConnected) continue
+      if (!el.isConnected) {
+        continue
+      }
       paintOnly?.add(el)
       yield el
     }
@@ -277,7 +335,9 @@ export class DomSync {
         this.animating.delete(el)
         continue
       }
-      if (!isAdvancing(el)) continue
+      if (!isAdvancing(el)) {
+        continue
+      }
       if (el !== this.root && paintOnlyAnimations(el)) {
         this.paintOnlyLast.add(el)
         paintOnly?.add(el)
@@ -289,7 +349,9 @@ export class DomSync {
   }
 
   start(): void {
-    if (this.started) return
+    if (this.started) {
+      return
+    }
     this.started = true
     // Nothing was observed while stopped: the tree may be stale.
     this.dirty = Dirty.ALL
@@ -307,7 +369,9 @@ export class DomSync {
     if (typeof this.root.getAnimations === 'function') {
       for (const a of this.root.getAnimations({ subtree: true })) {
         const t = (a.effect as KeyframeEffect | null)?.target
-        if (t) this.animating.add(t)
+        if (t) {
+          this.animating.add(t)
+        }
       }
     }
     this.ro.observe(this.root)
@@ -329,7 +393,9 @@ export class DomSync {
   }
 
   stop(): void {
-    if (!this.started) return
+    if (!this.started) {
+      return
+    }
     this.started = false
     this.ro.disconnect()
     this.mo.disconnect()

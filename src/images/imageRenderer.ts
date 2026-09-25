@@ -199,7 +199,9 @@ export class ImagePass implements RenderPass {
   }
 
   private ensureCapacity(n: number): void {
-    if (n <= this.capacity && this.buffer) return
+    if (n <= this.capacity && this.buffer) {
+      return
+    }
     const cap = Math.max(n, this.capacity ? this.capacity * 2 : 16)
     this.buffer?.destroy()
     this.buffer = this.shared.device.createBuffer({
@@ -213,7 +215,9 @@ export class ImagePass implements RenderPass {
   private textureFor(rec: ImageRecord): Cached | null {
     const src = rec.source
     const [w, h] = naturalSize(src)
-    if (w === 0 || h === 0) return null
+    if (w === 0 || h === 0) {
+      return null
+    }
     const key = srcKey(src)
     const { device } = this.shared
     const cached = this.cache.get(src)
@@ -247,7 +251,9 @@ export class ImagePass implements RenderPass {
       { texture },
       [w, h]
     )
-    if (mipLevelCount > 1) this.mips.generate(texture, mipLevelCount)
+    if (mipLevelCount > 1) {
+      this.mips.generate(texture, mipLevelCount)
+    }
     const entry: Cached = {
       view: texture.createView(),
       texture,
@@ -262,7 +268,9 @@ export class ImagePass implements RenderPass {
   upload(scene: Scene): void {
     const images = scene.images
     this.draws = []
-    if (images.length === 0) return
+    if (images.length === 0) {
+      return
+    }
     this.ensureCapacity(images.length)
     const d = this.data
     for (let i = 0; i < images.length; i++) {
@@ -398,7 +406,9 @@ export class ImagePass implements RenderPass {
    * standalone ones (and gaps) draw individually / are skipped. Returns the
    * number of draw calls issued. */
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
-    if (this.draws.length === 0) return 0
+    if (this.draws.length === 0) {
+      return 0
+    }
     encoder.setPipeline(this.pipeline)
     const end = first + count
     let issued = 0
@@ -411,7 +421,9 @@ export class ImagePass implements RenderPass {
       }
       if (bg === 'atlas') {
         let j = i + 1
-        while (j < end && this.draws[j] === 'atlas') j++
+        while (j < end && this.draws[j] === 'atlas') {
+          j++
+        }
         encoder.setBindGroup(1, this.ensureAtlasBindGroup())
         encoder.draw(6, j - i, 0, i)
         issued++

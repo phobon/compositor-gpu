@@ -10,7 +10,9 @@ export class FrameScheduler {
   constructor(private readonly onFrame: (time: number, dt: number) => void) {}
 
   request(): void {
-    if (this.handle || !this.running) return
+    if (this.handle || !this.running) {
+      return
+    }
     this.handle = requestAnimationFrame(this.tick)
   }
 
@@ -22,7 +24,9 @@ export class FrameScheduler {
 
   stop(): void {
     this.running = false
-    if (this.handle) cancelAnimationFrame(this.handle)
+    if (this.handle) {
+      cancelAnimationFrame(this.handle)
+    }
     this.handle = 0
   }
 

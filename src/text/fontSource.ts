@@ -20,8 +20,12 @@ interface FaceRule {
 
 const numWeight = (w: string): number => {
   const s = w.trim().toLowerCase()
-  if (s === '' || s === 'normal') return 400
-  if (s === 'bold') return 700
+  if (s === '' || s === 'normal') {
+    return 400
+  }
+  if (s === 'bold') {
+    return 700
+  }
   // Variable ranges ("100 900") resolve to their lower bound.
   const n = Number.parseInt(s, 10)
   return Number.isFinite(n) ? n : 400
@@ -42,7 +46,9 @@ function parseSrcUrls(src: string, baseHref: string | null): SrcRef[] {
   const base = baseHref ?? document.baseURI
   for (let m = re.exec(src); m; m = re.exec(src)) {
     const raw = m[2]
-    if (!raw) continue
+    if (!raw) {
+      continue
+    }
     let url: string
     try {
       url = new URL(raw, base).href
@@ -65,12 +71,18 @@ function collectFaceRules(): FaceRule[] {
       continue
     }
     for (const rule of Array.from(rules)) {
-      if (rule.type !== CSSRule.FONT_FACE_RULE) continue
+      if (rule.type !== CSSRule.FONT_FACE_RULE) {
+        continue
+      }
       const st = (rule as CSSFontFaceRule).style
       const family = unquote(st.getPropertyValue('font-family')).toLowerCase()
-      if (!family) continue
+      if (!family) {
+        continue
+      }
       const srcs = parseSrcUrls(st.getPropertyValue('src'), sheet.href)
-      if (srcs.length === 0) continue
+      if (srcs.length === 0) {
+        continue
+      }
       out.push({
         family,
         weight: numWeight(st.getPropertyValue('font-weight')),
@@ -83,7 +95,9 @@ function collectFaceRules(): FaceRule[] {
 }
 
 const formatOf = (s: SrcRef): string => {
-  if (s.format) return s.format
+  if (s.format) {
+    return s.format
+  }
   const ext = s.url.split(/[?#]/)[0]?.split('.').pop()?.toLowerCase() ?? ''
   return ext
 }
@@ -91,10 +105,18 @@ const formatOf = (s: SrcRef): string => {
 /** opentype.js parses ttf/otf/woff but not woff2, so rank woff2 last. */
 const srcRank = (s: SrcRef): number => {
   const f = formatOf(s)
-  if (f.includes('woff2')) return 3
-  if (f.includes('truetype') || f.includes('opentype')) return 0
-  if (f === 'ttf' || f === 'otf') return 0
-  if (f.includes('woff')) return 1
+  if (f.includes('woff2')) {
+    return 3
+  }
+  if (f.includes('truetype') || f.includes('opentype')) {
+    return 0
+  }
+  if (f === 'ttf' || f === 'otf') {
+    return 0
+  }
+  if (f.includes('woff')) {
+    return 1
+  }
   return 2
 }
 
@@ -109,9 +131,13 @@ function matchUrl(
   italic: boolean
 ): string | null {
   let pool = rules.filter((r) => r.family === family)
-  if (pool.length === 0) return null
+  if (pool.length === 0) {
+    return null
+  }
   const italicPool = pool.filter((r) => r.italic === italic)
-  if (italicPool.length > 0) pool = italicPool
+  if (italicPool.length > 0) {
+    pool = italicPool
+  }
   let best = pool[0] ?? null
   let bestDiff = best
     ? Math.abs(best.weight - weight)
@@ -152,7 +178,9 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer | null> {
 export async function resolveFontBytes(
   faces: FontFace[]
 ): Promise<ResolvedFont[]> {
-  if (faces.length === 0) return []
+  if (faces.length === 0) {
+    return []
+  }
   const rules = collectFaceRules()
   const seen = new Set<string>()
   const bufByUrl = new Map<string, Promise<ArrayBuffer | null>>()
@@ -163,7 +191,9 @@ export async function resolveFontBytes(
     const weight = numWeight(face.weight)
     const italic = isItalic(face.style)
     const key = `${family}|${weight}|${italic ? 1 : 0}`
-    if (seen.has(key)) continue
+    if (seen.has(key)) {
+      continue
+    }
     seen.add(key)
 
     const url = matchUrl(rules, family, weight, italic)
@@ -179,7 +209,9 @@ export async function resolveFontBytes(
       bufByUrl.set(url, bufP)
     }
     const buffer = await bufP
-    if (!buffer) continue
+    if (!buffer) {
+      continue
+    }
     results.push({
       buffer,
       descriptor: { family: face.family, weight, italic }

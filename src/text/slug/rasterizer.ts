@@ -229,7 +229,9 @@ export class SlugText implements TextBackend {
     }
     const resolved = await resolveFontBytes(faces)
     for (const { buffer, descriptor } of resolved) {
-      if (this.loadedKeys.has(faceKey(descriptor))) continue
+      if (this.loadedKeys.has(faceKey(descriptor))) {
+        continue
+      }
       try {
         this.loadFontBuffer(buffer, descriptor)
       } catch (err) {
@@ -295,7 +297,9 @@ export class SlugText implements TextBackend {
     }
     const key = `${family}|${weight}|${italic ? 1 : 0}`
     const cached = this.resolveCache.get(key)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      return cached
+    }
 
     const fam = family.toLowerCase()
     // Prefer a family-matching variable font (exact weight), then a static
@@ -317,9 +321,13 @@ export class SlugText implements TextBackend {
     italic: boolean
   ): FaceEntry | null {
     let pool = this.faces.filter((f) => f.family === fam)
-    if (pool.length === 0) return null
+    if (pool.length === 0) {
+      return null
+    }
     const italicPool = pool.filter((f) => f.italic === italic)
-    if (italicPool.length > 0) pool = italicPool
+    if (italicPool.length > 0) {
+      pool = italicPool
+    }
 
     let best = pool[0] ?? null
     let bestDiff = best
@@ -345,15 +353,21 @@ export class SlugText implements TextBackend {
     italic: boolean
   ): FaceEntry | null {
     const pool = this.variableSources.filter((v) => v.family === fam)
-    if (pool.length === 0) return null
+    if (pool.length === 0) {
+      return null
+    }
     const italicPool = pool.filter((v) => v.italic === italic)
     const src = italicPool[0] ?? pool[0]
-    if (!src) return null
+    if (!src) {
+      return null
+    }
 
     const w = Math.max(src.min, Math.min(src.max, weight))
     const instKey = `${src.family}|${w}|${italic ? 1 : 0}`
     const existing = this.instanced.get(instKey)
-    if (existing) return existing
+    if (existing) {
+      return existing
+    }
 
     const idx = this.faces.length
     const face: FaceEntry = {
@@ -387,14 +401,18 @@ export class SlugText implements TextBackend {
     }
 
     const gb = face.font.glyph(glyphIndex)
-    if (this.refuse(key, gb.curves.length, glyphIndex)) return -1
+    if (this.refuse(key, gb.curves.length, glyphIndex)) {
+      return -1
+    }
 
     let slot: number
     if (this.nextFree < SLOT_COUNT) {
       slot = this.nextFree++
     } else {
       const oldestKey = this.cache.keys().next().value
-      if (oldestKey === undefined) return -1
+      if (oldestKey === undefined) {
+        return -1
+      }
       const victim = this.cache.get(oldestKey) as number
       if (this.slotFrame[victim] === this.frameId) {
         this.overflowed = true // every slot is pinned by this frame
@@ -416,8 +434,12 @@ export class SlugText implements TextBackend {
    * refused glyphs to the fallback atlas (see `fits`).
    */
   private refuse(key: number, curves: number, glyphIndex: number): boolean {
-    if (this.refused.has(key)) return true
-    if (curves <= MAX_CURVES) return false
+    if (this.refused.has(key)) {
+      return true
+    }
+    if (curves <= MAX_CURVES) {
+      return false
+    }
     this.refused.add(key)
     if (!this.warnedBudget) {
       this.warnedBudget = true
@@ -431,8 +453,12 @@ export class SlugText implements TextBackend {
   /** Can this glyph be drawn by Slug (resident, or within the budget)? */
   private fits(face: FaceEntry, glyphIndex: number): boolean {
     const key = face.idx * (1 << 20) + glyphIndex
-    if (this.cache.has(key)) return true
-    if (this.refused.has(key)) return false
+    if (this.cache.has(key)) {
+      return true
+    }
+    if (this.refused.has(key)) {
+      return false
+    }
     const n = face.font.glyph(glyphIndex).curves.length
     return !this.refuse(key, n, glyphIndex)
   }
@@ -467,7 +493,9 @@ export class SlugText implements TextBackend {
     for (let j = 0; j < gb.curves.length; j++) {
       const q = gb.curves[j]
       const o = j * CURVE_FLOATS
-      if (!q) continue
+      if (!q) {
+        continue
+      }
       c[o] = q.x0
       c[o + 1] = q.y0
       c[o + 2] = q.x1
@@ -490,7 +518,9 @@ export class SlugText implements TextBackend {
   }
 
   private ensureGlyphCapacity(n: number): void {
-    if (n <= this.glyphCapacity && this.glyphBuf) return
+    if (n <= this.glyphCapacity && this.glyphBuf) {
+      return
+    }
     const cap = Math.max(n, this.glyphCapacity ? this.glyphCapacity * 2 : 256)
     const device = this.shared.device
     this.glyphBuf?.destroy()
@@ -513,7 +543,9 @@ export class SlugText implements TextBackend {
   }
 
   private rebuildBindGroup(): void {
-    if (!this.glyphBuf) return
+    if (!this.glyphBuf) {
+      return
+    }
     this.bindGroup = this.shared.device.createBindGroup({
       layout: this.layout,
       entries: [
@@ -527,8 +559,12 @@ export class SlugText implements TextBackend {
   /** Rebuild the atlas bind group if the quad buffer or texture changed. */
   private ensureAtlasBindGroup(): void {
     const view = this.atlas.view
-    if (!this.quadBuf || !view) return
-    if (this.atlasBindGroup && this.atlasGen === this.atlas.generation) return
+    if (!this.quadBuf || !view) {
+      return
+    }
+    if (this.atlasBindGroup && this.atlasGen === this.atlas.generation) {
+      return
+    }
     this.atlasBindGroup = this.shared.device.createBindGroup({
       layout: this.atlasLayout,
       entries: [
@@ -565,7 +601,9 @@ export class SlugText implements TextBackend {
     this.atlasLive = 0
     this.fallbackCount = 0
     this.ligatureCount = 0
-    if (total === 0) return
+    if (total === 0) {
+      return
+    }
     this.ensureGlyphCapacity(total + shadowTotal)
     if (this.shadowStart.length < total + 1) {
       this.shadowStart = new Uint32Array(
@@ -579,7 +617,9 @@ export class SlugText implements TextBackend {
     // frame; one re-pack against the fresh atlas fixes that.
     const epoch = this.atlas.epoch
     let n = this.fill(scene, dpr, total)
-    if (this.atlas.epoch !== epoch) n = this.fill(scene, dpr, total)
+    if (this.atlas.epoch !== epoch) {
+      n = this.fill(scene, dpr, total)
+    }
     this.count = n
     this.instances = total + shadowTotal
     if (this.overflowed) {
@@ -587,7 +627,9 @@ export class SlugText implements TextBackend {
         `SlugText: glyph cache overflow — >${SLOT_COUNT} distinct glyphs in one frame; raise SLOT_COUNT`
       )
     }
-    if (n === 0) return
+    if (n === 0) {
+      return
+    }
     const m = this.instances
     const queue = this.shared.device.queue
     if (this.slugLive > 0) {
@@ -677,8 +719,9 @@ export class SlugText implements TextBackend {
           consumed--
           f.fill(0, base, base + GLYPH_FLOATS)
           q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
-          for (let k = 0; k < S; k++)
+          for (let k = 0; k < S; k++) {
             this.zeroInstance(runBase + k * nGlyphs + j)
+          }
           continue
         }
         let gi = ids[j] ?? 0
@@ -695,8 +738,9 @@ export class SlugText implements TextBackend {
             consumed = lig.len - 1
             this.ligatureCount++
             if (S > 0) {
-              for (let k = 1; k < lig.len; k++)
+              for (let k = 1; k < lig.len; k++) {
                 text += glyphs[j + k]?.text ?? ''
+              }
             }
           }
         }
@@ -751,7 +795,9 @@ export class SlugText implements TextBackend {
           f[base + 25] = xf[5] + xf[1] * kb
           f[base + 26] = 0
           f[base + 27] = 0
-          if (slot >= 0) this.slugLive++
+          if (slot >= 0) {
+            this.slugLive++
+          }
           for (let k = 0; k < S; k++) {
             const sh = shadows[S - 1 - k] as TextShadow
             const si = runBase + k * nGlyphs + j
@@ -794,7 +840,9 @@ export class SlugText implements TextBackend {
           g.color
         )
         this.putQuad(i - 1, e, g, dpr, pad, g.color, alpha, 0, 0, !e?.tint)
-        if (e) this.fallbackCount++
+        if (e) {
+          this.fallbackCount++
+        }
         for (let k = 0; k < S; k++) {
           const sh = shadows[S - 1 - k] as TextShadow
           const si = runBase + k * nGlyphs + j
@@ -900,12 +948,16 @@ export class SlugText implements TextBackend {
    * classified once at read time (`Glyph.colour` / `Glyph.codePoints`).
    */
   private slugGlyph(face: FaceEntry, g: Glyph): number {
-    if (g.colour || g.codePoints > 1) return 0
+    if (g.colour || g.codePoints > 1) {
+      return 0
+    }
     return this.glyphIndex(face, g.glyphId)
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
-    if (this.count === 0 || count === 0) return 0
+    if (this.count === 0 || count === 0) {
+      return 0
+    }
     let draws = 0
     const slug = this.ready && this.slugLive > 0 && this.bindGroup
     const atlas = this.atlasLive > 0 && this.atlasBindGroup
@@ -965,14 +1017,18 @@ function ligatureRight(
   len: number
 ): number | null {
   const g0 = glyphs[j]
-  if (!g0 || len < 2) return null
+  if (!g0 || len < 2) {
+    return null
+  }
   const [a, b, c, d, tx0, ty0] = g0.xform
   const det = a * d - b * c
   let prevRight = g0.local.w
   let right = prevRight
   for (let k = 1; k < len; k++) {
     const gk = glyphs[j + k]
-    if (!gk || gk.index !== g0.index + k) return null
+    if (!gk || gk.index !== g0.index + k) {
+      return null
+    }
     const dx = gk.xform[4] - tx0
     const dy = gk.xform[5] - ty0
     const ix = det !== 0 ? (d * dx - c * dy) / det : dx

@@ -278,7 +278,9 @@ export class BoxPass implements RenderPass {
 
   /** Grow the instance buffer; returns true when it was recreated. */
   private ensureCapacity(n: number): boolean {
-    if (n <= this.capacity) return false
+    if (n <= this.capacity) {
+      return false
+    }
     const cap = Math.max(n, this.capacity ? this.capacity * 2 : 64)
     this.buffer?.destroy()
     this.buffer = this.shared.device.createBuffer({
@@ -296,7 +298,9 @@ export class BoxPass implements RenderPass {
    */
   private ensureStopCapacity(n: number): boolean {
     const need = Math.max(n, 1)
-    if (need <= this.stopCapacity) return false
+    if (need <= this.stopCapacity) {
+      return false
+    }
     const cap = Math.max(need, this.stopCapacity ? this.stopCapacity * 2 : 16)
     this.stopBuffer?.destroy()
     this.stopBuffer = this.shared.device.createBuffer({
@@ -311,9 +315,13 @@ export class BoxPass implements RenderPass {
   upload(scene: Scene): void {
     const boxes = scene.boxes
     this.count = boxes.length
-    if (this.count === 0) return
+    if (this.count === 0) {
+      return
+    }
     let stopCount = 0
-    for (const b of boxes) stopCount += b.gradient?.stops.length ?? 0
+    for (const b of boxes) {
+      stopCount += b.gradient?.stops.length ?? 0
+    }
     const grewBoxes = this.ensureCapacity(this.count)
     const grewStops = this.ensureStopCapacity(stopCount)
     if (grewBoxes || grewStops || !this.bindGroup) {
@@ -381,7 +389,9 @@ export class BoxPass implements RenderPass {
           sd[so++] = 0
         }
       } else {
-        for (let k = 0; k < 8; k++) d[o++] = 0
+        for (let k = 0; k < 8; k++) {
+          d[o++] = 0
+        }
       }
       const sh = b.shadow
       if (sh) {
@@ -398,7 +408,9 @@ export class BoxPass implements RenderPass {
         d[o++] = sh.inner.radius[2]
         d[o++] = sh.inner.radius[3]
       } else {
-        for (let k = 0; k < 12; k++) d[o++] = 0
+        for (let k = 0; k < 12; k++) {
+          d[o++] = 0
+        }
       }
     }
     this.shared.device.queue.writeBuffer(
@@ -420,7 +432,9 @@ export class BoxPass implements RenderPass {
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
-    if (count === 0 || !this.bindGroup) return 0
+    if (count === 0 || !this.bindGroup) {
+      return 0
+    }
     encoder.setPipeline(this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
     encoder.draw(6, count, 0, first)
