@@ -130,7 +130,7 @@ export class Renderer {
     f[3] = ctx.scrollY
     f[4] = ctx.time
     f[5] = dpr
-    f[6] = 0
+    f[6] = 0 // vscroll: viewport-space records map 1:1 onto the canvas
     f[7] = 0
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
@@ -175,7 +175,8 @@ export class Renderer {
   /**
    * Walk scene.batches in order. A push ends the current render pass and
    * begins one on a pooled offscreen target (cleared) whose Frame uniform
-   * maps the group's viewport-clipped doc rect onto the texture; the
+   * maps the group's viewport-clipped doc rect onto the texture (and, via
+   * `vscroll`, the same rect in viewport space for fixed records); the
    * matching pop ends it, resumes the parent target (loadOp 'load') and
    * composites the texture there with the group's alpha. Passes only ever
    * see a render pass with bind group 0 set.
@@ -284,17 +285,33 @@ export class Renderer {
     slot: number,
     ctx: FrameContext
   ): Target | null {
-    const b = g.bounds
-    const x0 = clamp(Math.floor((b.x - 1 - parent.ox) * parent.sx), parent.devW)
-    const y0 = clamp(Math.floor((b.y - 1 - parent.oy) * parent.sy), parent.devH)
-    const x1 = clamp(
-      Math.ceil((b.x + b.width + 1 - parent.ox) * parent.sx),
-      parent.devW
-    )
-    const y1 = clamp(
-      Math.ceil((b.y + b.height + 1 - parent.oy) * parent.sy),
-      parent.devH
-    )
+    // Doc-space extent at the current scroll: viewport-space members
+    // (fixed subtrees) sit at their viewport rect + scroll.
+    let bx0 = Number.POSITIVE_INFINITY
+    let by0 = Number.POSITIVE_INFINITY
+    let bx1 = Number.NEGATIVE_INFINITY
+    let by1 = Number.NEGATIVE_INFINITY
+    const d = g.bounds
+    if (d.width > 0 && d.height > 0) {
+      bx0 = d.x
+      by0 = d.y
+      bx1 = d.x + d.width
+      by1 = d.y + d.height
+    }
+    const v = g.vbounds
+    if (v) {
+      bx0 = Math.min(bx0, v.x + ctx.scrollX)
+      by0 = Math.min(by0, v.y + ctx.scrollY)
+      bx1 = Math.max(bx1, v.x + v.width + ctx.scrollX)
+      by1 = Math.max(by1, v.y + v.height + ctx.scrollY)
+    }
+    if (!(bx1 > bx0 && by1 > by0)) {
+      return null
+    }
+    const x0 = clamp(Math.floor((bx0 - 1 - parent.ox) * parent.sx), parent.devW)
+    const y0 = clamp(Math.floor((by0 - 1 - parent.oy) * parent.sy), parent.devH)
+    const x1 = clamp(Math.ceil((bx1 + 1 - parent.ox) * parent.sx), parent.devW)
+    const y1 = clamp(Math.ceil((by1 + 1 - parent.oy) * parent.sy), parent.devH)
     const w = x1 - x0
     const h = y1 - y0
     if (w <= 0 || h <= 0) {
@@ -311,8 +328,9 @@ export class Renderer {
     f[3] = oy
     f[4] = ctx.time
     f[5] = this.shared.dpr
-    f[6] = 0
-    f[7] = 0
+    // The target origin in viewport space, for viewport-space records.
+    f[6] = ox - ctx.scrollX
+    f[7] = oy - ctx.scrollY
     this.device.queue.writeBuffer(frame.buffer, 0, f)
     return {
       view: pooled.view,

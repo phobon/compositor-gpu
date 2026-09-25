@@ -4,7 +4,8 @@ import type {
   Gradient,
   ImageRecord,
   RGBA,
-  Rect
+  Rect,
+  Space
 } from '../scene/records'
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
@@ -17,18 +18,32 @@ import { type Placement, placementAabb, subPlacement } from './transform'
 // the synchronous pass.
 let readScrollX = 0
 let readScrollY = 0
+// Offset `toDocRect` adds: the scroll snapshot in document space, 0 while
+// the reader walks a viewport-space (`position: fixed`) subtree.
+let offX = 0
+let offY = 0
 
-/** Snapshot the scroll offset for `toDocRect`. Call at the start of a read. */
+/** Snapshot the scroll offset for `toDocRect`. Call at the start of a read.
+ * Resets the read space to 'doc'. */
 export function beginRead(): void {
   readScrollX = window.scrollX
   readScrollY = window.scrollY
+  offX = readScrollX
+  offY = readScrollY
 }
 
-/** Viewport-relative DOMRect -> document space (CSS px from doc top-left). */
+/** Space `toDocRect` measures into until the next call (see records.ts). */
+export function setReadSpace(space: Space): void {
+  offX = space === 'viewport' ? 0 : readScrollX
+  offY = space === 'viewport' ? 0 : readScrollY
+}
+
+/** Viewport-relative DOMRect -> the current read space: document space (CSS
+ * px from doc top-left), or viewport space under setReadSpace('viewport'). */
 export function toDocRect(r: DOMRect): Rect {
   return {
-    x: r.left + readScrollX,
-    y: r.top + readScrollY,
+    x: r.left + offX,
+    y: r.top + offY,
     width: r.width,
     height: r.height
   }

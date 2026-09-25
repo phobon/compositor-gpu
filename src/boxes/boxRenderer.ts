@@ -17,8 +17,8 @@ struct Box {
   radius : vec4f,   // tl, tr, br, bl
   fill   : vec4f,   // sRGB rgba
   border : vec4f,   // sRGB rgba
-  params : vec4f,   // borderWidth, opacity, z, _
-  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  params : vec4f,   // borderWidth, opacity, z, space (1 = viewport)
+  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
   sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset
@@ -51,7 +51,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   let m = b.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + b.xf1.xy;
   var out : VOut;
-  out.pos = doc_to_clip(p);
+  out.pos = to_clip(p, b.params.w);
   out.half = size * 0.5;
   // Centred local coords: the SDF and gradients run in the untransformed
   // box, and fwidth() picks up the transform's scale/rotation for AA.
@@ -362,7 +362,7 @@ export class BoxPass implements RenderPass {
       d[o++] = b.border?.width ?? 0
       d[o++] = b.opacity
       d[o++] = b.z
-      d[o++] = 0
+      d[o++] = b.space === 'viewport' ? 1 : 0
       const c = b.clip
       d[o++] = c ? c.x : -1e9
       d[o++] = c ? c.y : -1e9

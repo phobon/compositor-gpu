@@ -392,6 +392,75 @@
       }
       .quote { font-style: italic; color: #cbd5e1; }
       .quote::after { content: " \201D"; color: #f59e0b; }
+      /* position: fixed — shown only under body.show-fixed (the harness
+         sets it for the fixed section) so it doesn't cover other captures. */
+      .fx-scroll {
+        height: 600px;
+        overflow: hidden;
+        padding: 16px;
+        border: 1px solid #2a2a30;
+        border-radius: 12px;
+        background: #121218;
+        font-size: 14px;
+        color: #c7c7d1;
+      }
+      .fx-scroll p { margin: 0 0 0.8em; }
+      .fx-pill, .fx-card { display: none; }
+      body.show-fixed #panel { visibility: hidden; }
+      body.show-fixed .fx-pill {
+        display: block;
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: #f59e0b;
+        border: 2px solid #fde68a;
+        color: #1c1917;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      body.show-fixed .fx-card {
+        display: block;
+        position: fixed;
+        bottom: 16px;
+        left: 16px;
+        width: 220px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #1e3a8a;
+        border: 1px solid #60a5fa;
+        color: #eff6ff;
+        font-size: 13px;
+        opacity: 0.8;
+      }
+      .fx-card .fx-chip {
+        width: 40px;
+        height: 12px;
+        margin-top: 8px;
+        border-radius: 6px;
+        background: #f472b6;
+      }
+      /* position: sticky */
+      .sticky-block {
+        height: 900px;
+        padding: 0 16px 16px;
+        border: 1px solid #2a2a30;
+        border-radius: 12px;
+        background: #121218;
+        font-size: 14px;
+        color: #c7c7d1;
+      }
+      .sticky-block h3 {
+        position: sticky;
+        top: 0;
+        margin: 0 -16px 12px;
+        padding: 10px 16px;
+        background: #065f46;
+        color: #ecfdf5;
+        font-size: 16px;
+      }
+      .sticky-block p { margin: 0 0 0.8em; }
     </style>
   </head>
   <body>
@@ -528,6 +597,56 @@
           </div>
         </div>
         <p class="hint">Badge (z-index: 5) should paint over text; plate (z-index: -1) behind text; opacity 0.4 ghost and children paint opaque but dimmed.</p>
+      </section>
+
+      <section data-vr="fixed" data-vr-body-class="show-fixed" data-vr-capture="viewport" data-vr-scroll2="120">
+        <h2>Fixed positioning</h2>
+        <div class="fx-scroll">
+          <p>The page scrolls underneath while fixed elements stay attached to the viewport.</p>
+          <p>Fixed records are stored in viewport space and skip the scroll offset in the vertex shader.</p>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+          <p>Batches never merge a viewport record past a document record: their overlap changes with scroll.</p>
+          <p>An opacity group holding viewport records resolves its bounds at the current scroll.</p>
+          <p>Ancestor overflow clips do not apply across the fixed boundary.</p>
+          <p>The page scrolls underneath while fixed elements stay attached to the viewport.</p>
+          <p>Fixed records are stored in viewport space and skip the scroll offset in the vertex shader.</p>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+          <p>Batches never merge a viewport record past a document record: their overlap changes with scroll.</p>
+          <p>An opacity group holding viewport records resolves its bounds at the current scroll.</p>
+          <p>Ancestor overflow clips do not apply across the fixed boundary.</p>
+          <p>The page scrolls underneath while fixed elements stay attached to the viewport.</p>
+          <p>Fixed records are stored in viewport space and skip the scroll offset in the vertex shader.</p>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+          <p>Batches never merge a viewport record past a document record: their overlap changes with scroll.</p>
+          <p>An opacity group holding viewport records resolves its bounds at the current scroll.</p>
+          <p>Ancestor overflow clips do not apply across the fixed boundary.</p>
+          <p>The page scrolls underneath while fixed elements stay attached to the viewport.</p>
+          <p>Fixed records are stored in viewport space and skip the scroll offset in the vertex shader.</p>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+          <p>Batches never merge a viewport record past a document record: their overlap changes with scroll.</p>
+          <p>An opacity group holding viewport records resolves its bounds at the current scroll.</p>
+          <p>Ancestor overflow clips do not apply across the fixed boundary.</p>
+        </div>
+        <div class="fx-pill">fixed</div>
+        <div class="fx-card">
+          <b>Fixed card</b> at opacity 0.8, pinned bottom-left.
+          <div class="fx-chip"></div>
+        </div>
+        <p class="hint">The amber pill (top-right) and blue card (bottom-left) stay put while the page scrolls.</p>
+      </section>
+
+      <section data-vr="sticky" data-vr-scroll="300">
+        <h2>Sticky positioning</h2>
+        <div class="sticky-block">
+          <h3>Sticky heading (top: 0)</h3>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+          <p>Batches never merge a viewport record past a document record: their overlap changes with scroll.</p>
+          <p>An opacity group holding viewport records resolves its bounds at the current scroll.</p>
+          <p>Ancestor overflow clips do not apply across the fixed boundary.</p>
+          <p>The page scrolls underneath while fixed elements stay attached to the viewport.</p>
+          <p>Fixed records are stored in viewport space and skip the scroll offset in the vertex shader.</p>
+          <p>Document-space records keep scrolling with a single uniform write and no re-read.</p>
+        </div>
       </section>
 
       <section data-vr="opacity">

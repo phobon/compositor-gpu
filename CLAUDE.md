@@ -66,8 +66,21 @@ Everything in `scene/records.ts` is in **document space** (CSS px from the
 document's top-left: `getBoundingClientRect()` + `scrollX/Y`, via
 `toDocRect`). `doc_to_clip()` in `gpu/frame.ts` maps that to clip space in the
 vertex shader. This is the load-bearing decision: **scrolling writes one uniform
-and re-reads nothing.** Never store viewport-relative coordinates in a record,
-and never make scroll a reason to re-walk the DOM.
+and re-reads nothing.** Never store viewport-relative coordinates in a
+doc-space record, and never make scroll a reason to re-walk the DOM.
+
+The one exception is `position: fixed` on the viewport: the reader walks
+that subtree with `setReadSpace('viewport')` (no scroll offset in
+`toDocRect`) and tags its records `space: 'viewport'`; every vertex shader
+calls `to_clip(p, space)`, which subtracts `frame.scroll` (doc) or
+`frame.vscroll` (viewport; 0 on the canvas, the target origin on a group
+target). Clips and `ElNode.rect` are in the node's space, so the escalation
+check is scroll-invariant for fixed subtrees. Opacity groups keep doc
+`bounds` and viewport `vbounds`, unioned at the current scroll by the
+renderer; the batch builder treats records of different spaces as always
+overlapping. `position: sticky` stays doc-space: on scroll the compositor
+re-reads, paint-only, each sticky element whose rect moved
+(`SceneReader.movedStickies`).
 
 Records also carry a **local frame**: `local` (untransformed layout size) and
 `xform` (2×3 affine, local → document). `rect` stays the document-space AABB

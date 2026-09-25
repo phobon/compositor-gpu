@@ -36,10 +36,24 @@ interface Entry {
    * union rect spans whole paragraphs and would block everything), else
    * just `rect`. */
   rects: Rect[]
+  /** SPACE_DOC or SPACE_VIEWPORT (the record's coordinate space). */
+  space: number
+}
+
+// Rects in different spaces can't be compared (their relative position
+// changes with scroll), so an entry overlaps any batch holding a member of
+// the other space.
+const SPACE_DOC = 1
+const SPACE_VIEWPORT = 2
+
+function spaceBit(r: { space?: 'doc' | 'viewport' }): number {
+  return r.space === 'viewport' ? SPACE_VIEWPORT : SPACE_DOC
 }
 
 interface Accum {
   layer: Layer
+  /** Bitmask of the members' spaces. */
+  spaces: number
   first: number
   count: number
   minX: number
@@ -83,6 +97,9 @@ function boundsOverlap(a: Accum, r: Rect): boolean {
 }
 
 function accumOverlaps(a: Accum, e: Entry): boolean {
+  if ((a.spaces & ~e.space) !== 0) {
+    return true
+  }
   if (!boundsOverlap(a, e.rect)) {
     return false
   }
@@ -127,6 +144,7 @@ function insertMember(a: Accum, r: Rect): void {
 function newAccum(e: Entry): Accum {
   const a: Accum = {
     layer: e.layer,
+    spaces: e.space,
     first: e.first,
     count: e.count,
     minX: e.rect.x,
@@ -143,6 +161,7 @@ function newAccum(e: Entry): Accum {
 
 function extend(a: Accum, e: Entry): void {
   a.count += e.count
+  a.spaces |= e.space
   a.minX = Math.min(a.minX, e.rect.x)
   a.minY = Math.min(a.minY, e.rect.y)
   a.maxX = Math.max(a.maxX, e.rect.x + e.rect.width)
@@ -209,7 +228,8 @@ export function buildBatches(
       first: i,
       count: 1,
       rect: b.batchRect ?? b.rect,
-      rects: [b.batchRect ?? b.rect]
+      rects: [b.batchRect ?? b.rect],
+      space: spaceBit(b)
     })
   }
   for (let i = 0; i < images.length; i++) {
@@ -223,7 +243,8 @@ export function buildBatches(
       first: i,
       count: 1,
       rect: im.rect,
-      rects: [im.rect]
+      rects: [im.rect],
+      space: spaceBit(im)
     })
   }
   let glyphBase = 0
@@ -247,7 +268,8 @@ export function buildBatches(
       rect: pad
         ? unionRect(rects)
         : (runRects[i] ?? { x: 0, y: 0, width: 0, height: 0 }),
-      rects
+      rects,
+      space: spaceBit(run)
     })
     glyphBase += count
   }

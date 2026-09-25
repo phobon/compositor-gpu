@@ -85,6 +85,7 @@ export async function createCompositor(
   let fps = 0
   let readMs = 0
   const paintOnly = new Set<Element>()
+  let scrolled = false
 
   // The viewport minus any classic scrollbar (innerWidth/Height include
   // it, which would squeeze the mirror horizontally).
@@ -112,6 +113,17 @@ export async function createCompositor(
     for (const el of sync.animatingScopes(paintOnly)) {
       scopes.add(el)
       cssAnimating = true
+    }
+    // A sticky element's offset is a paint-time shift that depends on
+    // scroll: re-read each one that moved (paint-only — layout doesn't
+    // change) once per frame that scrolled.
+    if (scrolled) {
+      scrolled = false
+      for (const el of reader.movedStickies()) {
+        scopes.add(el)
+        paintOnly.add(el)
+        flags |= Dirty.MUTATION
+      }
     }
     if (mutated) {
       paintOnly.clear()
@@ -197,9 +209,13 @@ export async function createCompositor(
     pendingReadFlags |= Dirty.LAYOUT
     scheduler.request()
   }
-  // Positions are absolute document space, so scrolling only needs a re-render
-  // (updated frame.scroll), not a re-read. Essential once the GPU IS the paint.
-  const onScroll = (): void => scheduler.request()
+  // Positions are absolute document space (or viewport space for fixed
+  // subtrees), so scrolling only needs a re-render (updated frame.scroll),
+  // not a re-read — except sticky elements, re-read in frame().
+  const onScroll = (): void => {
+    scrolled = true
+    scheduler.request()
+  }
 
   // Replace mode: hide the mirrored root's own paint while keeping its layout,
   // focus, selection, hit-testing and a11y tree intact (opacity leaves all of

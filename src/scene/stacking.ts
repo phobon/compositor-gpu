@@ -35,8 +35,14 @@ export interface OpacityGroup {
   /** Exclusive. */
   last: number
   alpha: number
-  /** Doc-space union of the members' AABBs (nested groups included). */
+  /** Doc-space union of the doc-space members' AABBs (nested groups
+   * included); zero-size when there are none. */
   bounds: Rect
+  /** Viewport-space union of the viewport-space members' AABBs (records in
+   * a `position: fixed` subtree), or null when there are none. A group
+   * inside a fixed element has only these; one containing a fixed element
+   * has both. The renderer unions them at the current scroll. */
+  vbounds: Rect | null
   /** 0 for a group not inside another group. */
   depth: number
 }
@@ -114,6 +120,33 @@ interface Extent {
   maxY: number
 }
 
+function emptyExtent(): Extent {
+  return {
+    minX: Number.POSITIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY
+  }
+}
+
+function extentRect(e: Extent): Rect | null {
+  if (!(e.maxX > e.minX && e.maxY > e.minY)) {
+    return null
+  }
+  return {
+    x: e.minX,
+    y: e.minY,
+    width: e.maxX - e.minX,
+    height: e.maxY - e.minY
+  }
+}
+
+/** Open-group bounds, one extent per coordinate space. */
+interface Extents {
+  doc: Extent
+  vp: Extent
+}
+
 function growExtent(e: Extent, r: Rect): void {
   if (!(r.width > 0 && r.height > 0)) {
     return
@@ -169,7 +202,8 @@ export function padGlyphRect(
 /** Extend `e` by a record's paint bounds. Glyph line boxes are padded by
  * a quarter em (the ink box can overshoot a tight line-height) plus the
  * run's text-shadow extent. */
-function growByRecord(e: Extent, r: SceneRecord): void {
+function growByRecord(es: Extents, r: SceneRecord): void {
+  const e = r.space === 'viewport' ? es.vp : es.doc
   if (r.kind !== 'text') {
     growExtent(e, r.rect)
     return
@@ -193,7 +227,7 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
   let counter = 0
   const groups: OpacityGroup[] = []
   /** Bounds of the open groups, innermost last. */
-  const open: Extent[] = []
+  const open: Extents[] = []
 
   const paint = (r: SceneRecord): void => {
     r.z = counter++
@@ -211,30 +245,26 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
         last: counter,
         alpha,
         bounds: { x: 0, y: 0, width: 0, height: 0 },
+        vbounds: null,
         depth: open.length
       }
       groups.push(g)
-      const e: Extent = {
-        minX: Number.POSITIVE_INFINITY,
-        minY: Number.POSITIVE_INFINITY,
-        maxX: Number.NEGATIVE_INFINITY,
-        maxY: Number.NEGATIVE_INFINITY
-      }
+      const e: Extents = { doc: emptyExtent(), vp: emptyExtent() }
       open.push(e)
       visitItems(ctx)
       open.pop()
       g.last = counter
-      if (e.maxX > e.minX && e.maxY > e.minY) {
-        g.bounds = {
-          x: e.minX,
-          y: e.minY,
-          width: e.maxX - e.minX,
-          height: e.maxY - e.minY
-        }
-        const parent = open[open.length - 1]
+      const parent = open[open.length - 1]
+      const doc = extentRect(e.doc)
+      if (doc) {
+        g.bounds = doc
         if (parent) {
-          growExtent(parent, g.bounds)
+          growExtent(parent.doc, doc)
         }
+      }
+      g.vbounds = extentRect(e.vp)
+      if (g.vbounds && parent) {
+        growExtent(parent.vp, g.vbounds)
       }
       return
     }

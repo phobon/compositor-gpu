@@ -22,8 +22,8 @@ struct Quad {
   rect   : vec4f,   // x,y,w,h in the glyph's local line-box frame
   uv     : vec4f,   // u0,v0,u1,v1
   color  : vec4f,   // sRGB straight alpha; a = glyph alpha * run opacity
-  params : vec4f,   // tint (1 = mono coverage), _, _, _
-  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  params : vec4f,   // tint (1 = mono coverage), space (1 = viewport), _, _
+  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space, offset applied), _, _
 };
@@ -50,7 +50,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   let m = q.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + q.xf1.xy;
   var out : VOut;
-  out.pos = doc_to_clip(p);
+  out.pos = to_clip(p, q.params.y);
   out.uv = mix(q.uv.xy, q.uv.zw, corner);
   out.idx = ii;
   out.docp = p;

@@ -42,8 +42,10 @@
 - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
       leaks, `visibility`, inline transforms + `rotate/scale/translate`,
       colour parsing, decoration order, animation scoping; docs reconciled
-- [ ] `position: fixed` / `sticky` scroll with the document (needs a
-      viewport-space record kind or a scroll-triggered re-read of those subtrees)
+- [x] `position: fixed` → viewport-space records (`space: 'viewport'`,
+      `to_clip` in `FRAME_WGSL`); `sticky` → paint-only re-read of moved
+      stickies on scroll. Not handled: `background-attachment: fixed`,
+      fixed pseudo-elements, element scroll containers
 - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)

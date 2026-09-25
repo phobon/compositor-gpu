@@ -126,7 +126,8 @@ async function boot(): Promise<void> {
       }
       await raf2()
     },
-    stats: () => compositor.stats()
+    stats: () => compositor.stats(),
+    invalidate: () => compositor.invalidate()
   }
 
   if (!compositor.active) {

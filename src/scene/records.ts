@@ -1,5 +1,8 @@
 // Plain data records describing what to paint, in DOCUMENT space (CSS px from
-// the top-left of the document). No GPU types leak into this file.
+// the top-left of the document) — except records with `space: 'viewport'`
+// (a `position: fixed` subtree), whose rects, xforms and clips are in
+// viewport space (CSS px from the viewport's top-left; no scroll offset).
+// No GPU types leak into this file.
 
 import type { Affine } from '../dom/transform'
 
@@ -47,6 +50,10 @@ export interface Gradient {
   radii: [number, number]
   stops: GradientStop[]
 }
+
+/** Coordinate space of a record's rect / xform / clip (see top of file).
+ * Absent means 'doc'. */
+export type Space = 'doc' | 'viewport'
 
 export interface BoxRecord {
   kind: 'box'
@@ -97,6 +104,8 @@ export interface BoxRecord {
    * blur tails don't split batches (paint order in the tail is invisible).
    */
   batchRect?: Rect
+  /** 'viewport' inside a `position: fixed` subtree; absent = 'doc'. */
+  space?: Space
 }
 
 export interface ImageRecord {
@@ -129,6 +138,8 @@ export interface ImageRecord {
   dynamic?: boolean
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
+  /** 'viewport' inside a `position: fixed` subtree; absent = 'doc'. */
+  space?: Space
 }
 
 /** One shaped glyph, positioned by the browser, in document space. */
@@ -207,6 +218,8 @@ export interface GlyphRun {
   textShadows?: TextShadow[]
   /** Doc-space clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
+  /** Space of every glyph's rect / xform and of `clip`; absent = 'doc'. */
+  space?: Space
 }
 
 export type SceneRecord = BoxRecord | ImageRecord | GlyphRun

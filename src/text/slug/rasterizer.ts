@@ -100,6 +100,8 @@ export class SlugText implements TextBackend {
   private shadowStart = new Uint32Array(0)
   /** The current run's doc-space clip (minX, minY, maxX, maxY). */
   private readonly clip = new Float64Array(4)
+  /** The current run's space flag (1 = viewport, see frame.ts to_clip). */
+  private space = 0
   // face.idx * 2^21 + code point -> glyph index (0 = .notdef).
   private gidCache = new Map<number, number>()
   // Per-run Slug glyph ids (0 = fallback), reused across runs.
@@ -689,6 +691,7 @@ export class SlugText implements TextBackend {
       clip[1] = cl ? cl.y : -1e9
       clip[2] = cl ? cl.x + cl.width : 1e9
       clip[3] = cl ? cl.y + cl.height : 1e9
+      this.space = run.space === 'viewport' ? 1 : 0
       const alpha = run.opacity
       // Italic requested but the face is upright: synthesise oblique like
       // the browser does (a shear about the baseline; Slug only — the atlas
@@ -770,7 +773,7 @@ export class SlugText implements TextBackend {
           }
           f[base + 4] = g.offset.x
           f[base + 5] = g.offset.y
-          f[base + 6] = 0
+          f[base + 6] = this.space
           f[base + 7] = 0
           f[base + 8] = g.color.r
           f[base + 9] = g.color.g
@@ -923,7 +926,7 @@ export class SlugText implements TextBackend {
     q[qb + 10] = color.b
     q[qb + 11] = color.a * alpha
     q[qb + 12] = colour ? 0 : 1
-    q[qb + 13] = 0
+    q[qb + 13] = this.space
     q[qb + 14] = 0
     q[qb + 15] = 0
     q[qb + 16] = clip[0] ?? -1e9

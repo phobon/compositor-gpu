@@ -19,6 +19,9 @@ const FLAG_UV_FROM_TILE = 2
  * fragment's [0,1] uv into `atlas.xy..atlas.zw` (clamped half a texel in,
  * per `params.zw`, to avoid bleeding into the entry's gutter). */
 const FLAG_ATLAS = 4
+/** params.y bit 3: viewport-space record (position: fixed) — its
+ * positions and clip exclude the scroll offset (see frame.ts to_clip). */
+const FLAG_VIEWPORT = 8
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
@@ -28,7 +31,7 @@ struct Img {
   rect   : vec4f,   // x,y,w,h local space (quad rect)
   uv     : vec4f,   // u0,v0,u1,v1 — used unless FLAG_UV_FROM_TILE is set
   params : vec4f,   // opacity, flags, atlas half-texel inset u/v
-  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   radius : vec4f,   // tl, tr, br, bl (px) — clips against the local box
   tile   : vec4f,   // originX, originY, w, h (local space) — fit 'none' only
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
@@ -59,7 +62,8 @@ fn vs(@builtin(vertex_index) vi : u32,
   let m = im.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + im.xf1.xy;
   var out : VOut;
-  out.pos = doc_to_clip(p);
+  let space = select(0.0, 1.0, (u32(im.params.y) & ${FLAG_VIEWPORT}u) != 0u);
+  out.pos = to_clip(p, space);
   out.uv = mix(im.uv.xy, im.uv.zw, corner);
   out.idx = ii;
   out.docp = p;
@@ -316,6 +320,7 @@ export class ImagePass implements RenderPass {
       d[o + 6] = f.uv.u1
       d[o + 7] = f.uv.v1
       d[o + 8] = rec.opacity
+      const vflag = rec.space === 'viewport' ? FLAG_VIEWPORT : 0
       const c = rec.clip
       d[o + 12] = c ? c.x : -1e9
       d[o + 13] = c ? c.y : -1e9
@@ -341,7 +346,7 @@ export class ImagePass implements RenderPass {
 
       if (spot) {
         const s = this.atlas.size
-        d[o + 9] = f.flags | FLAG_ATLAS
+        d[o + 9] = f.flags | FLAG_ATLAS | vflag
         d[o + 10] = 0.5 / spot.w
         d[o + 11] = 0.5 / spot.h
         d[o + 32] = spot.x / s
@@ -351,7 +356,7 @@ export class ImagePass implements RenderPass {
         this.draws.push('atlas')
         continue
       }
-      d[o + 9] = f.flags
+      d[o + 9] = f.flags | vflag
       d[o + 10] = 0
       d[o + 11] = 0
       d[o + 32] = 0

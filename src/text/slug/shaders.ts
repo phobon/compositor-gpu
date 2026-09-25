@@ -22,10 +22,10 @@ ${FRAME_WGSL}
 
 struct Glyph {
   rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
-  offset : vec4f,   // xy displacement (doc space), z, _
+  offset : vec4f,   // xy displacement, space (1 = viewport), _
   color  : vec4f,
   gref   : vec4u,   // bandStart, bandCount, _, _
-  clip   : vec4f,   // minX, minY, maxX, maxY (doc space)
+  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space), _, _
 };
@@ -56,7 +56,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
     g.xf1.xy + g.offset.xy;
   var out : VOut;
-  out.pos = doc_to_clip(p);
+  out.pos = to_clip(p, g.offset.z);
   out.em = vec2f(corner.x, 1.0 - corner.y);
   out.idx = ii;
   out.docp = p;

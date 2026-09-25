@@ -4,7 +4,8 @@ import type {
   GlyphRun,
   ImageRecord,
   Rect,
-  SceneRecord
+  SceneRecord,
+  Space
 } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import {
@@ -37,6 +38,7 @@ import {
   readImageRecord,
   readOpacity,
   readShadows,
+  setReadSpace,
   toDocRect
 } from './styles'
 import { contentHeight, readTextNode } from './textRuns'
@@ -69,6 +71,14 @@ import {
 // (untransformed) size and full affine from its AABB (see transform.ts).
 // Clip rects of transformed overflow ancestors stay AABBs — over-inclusive
 // for rotated clippers, exact for scale/translate.
+//
+// Fixed positioning: an element with `position: fixed` whose containing
+// block is the viewport (no ancestor traps it — see trapsFixed) starts a
+// viewport-space subtree. Every record under it, its node rects and its
+// clips are measured without the scroll offset (setReadSpace), and records
+// carry `space: 'viewport'`, so scrolling still re-reads nothing. Ancestor
+// clips don't apply across that boundary. A trapped fixed element behaves
+// like an absolute one and stays in document space.
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
 
@@ -86,9 +96,15 @@ export interface ElNode {
   /** Child elements, direct text-node runs and pseudo-element records
    * (`::marker`, `::before` first, `::after` last), in paint order. */
   kids: ElKid[]
-  /** Border-box rect (doc space). Read for every element: it is the
+  /** Border-box rect (in `space`). Read for every element: it is the
    * escalation check for a partial read. */
   rect: Rect
+  /** Space of this node's rects, records and clips ('viewport' inside a
+   * `position: fixed` subtree). */
+  space: Space
+  /** This element or an ancestor establishes the containing block for
+   * `position: fixed` descendants (transform, filter, ...). */
+  trapsFixed: boolean
   /** The element's own box and/or image record. */
   own: readonly OwnRecord[]
   isContext: boolean
@@ -320,6 +336,12 @@ export class SceneReader {
   readElements = 0
   /** Partial reads that completed without escalating. */
   partialReads = 0
+  /** Elements with computed `position: sticky` in the current tree. Their
+   * offset depends on scroll, so the compositor re-reads them (paint-only)
+   * on scroll. */
+  readonly stickies = new Set<Element>()
+  /** An ancestor of the root traps fixed descendants (see trapsFixed). */
+  private rootTrapsFixed = false
 
   constructor(
     private readonly root: Element,
@@ -383,6 +405,14 @@ export class SceneReader {
       return
     }
 
+    for (const el of this.stickies) {
+      for (const b of bounds) {
+        if (b.contains(el)) {
+          this.stickies.delete(el)
+          break
+        }
+      }
+    }
     for (const b of bounds) {
       const old = this.nodes.get(b)
       if (!old) {
@@ -424,6 +454,30 @@ export class SceneReader {
     this.rebuildScene()
   }
 
+  /**
+   * Sticky elements whose border box moved since they were last read (one
+   * rect read each; call in the frame's read phase). Unstuck stickies scroll
+   * with the document and need no re-read.
+   */
+  movedStickies(): Element[] {
+    const out: Element[] = []
+    if (this.stickies.size === 0) {
+      return out
+    }
+    beginRead()
+    for (const el of this.stickies) {
+      const n = this.nodes.get(el)
+      if (!el.isConnected || !n) {
+        continue
+      }
+      setReadSpace(n.space)
+      if (!sameRect(n.rect, toDocRect(el.getBoundingClientRect()))) {
+        out.push(el)
+      }
+    }
+    return out
+  }
+
   /** Drop pending asset callbacks and the element tree. */
   destroy(): void {
     disposeBackgrounds(this)
@@ -432,6 +486,8 @@ export class SceneReader {
   }
 
   private readAll(): void {
+    this.stickies.clear()
+    this.rootTrapsFixed = ancestorsTrapFixed(this.root)
     this.tree = this.readNode(this.root, null, null, true, null, null, null)
     this.rebuildScene()
   }
@@ -449,7 +505,7 @@ export class SceneReader {
   private readNode(
     el: Element,
     parent: ElNode | null,
-    clip: Rect | null,
+    ancestorClip: Rect | null,
     isRoot: boolean,
     parentLin: Mat2 | null,
     parentDecor: Decoration[] | null,
@@ -467,8 +523,21 @@ export class SceneReader {
     if (display === 'none') {
       return null
     }
-    const rect = toDocRect(el.getBoundingClientRect())
     const transformable = isTransformable(el, display)
+    const position = s.position
+    const parentSpace = parent ? parent.space : 'doc'
+    const parentTraps = parent ? parent.trapsFixed : this.rootTrapsFixed
+    // A fixed element on the viewport starts a viewport-space subtree;
+    // ancestor clips don't reach it.
+    const fixedRoot =
+      position === 'fixed' && parentSpace === 'doc' && !parentTraps
+    const space: Space = fixedRoot ? 'viewport' : parentSpace
+    const clip = fixedRoot ? null : ancestorClip
+    setReadSpace(space)
+    if (position === 'sticky') {
+      this.stickies.add(el)
+    }
+    const rect = toDocRect(el.getBoundingClientRect())
     const lin = composeLinear(
       parentLin,
       transformable ? composeIndividual(s) : null
@@ -550,6 +619,8 @@ export class SceneReader {
       parent,
       kids: [],
       rect,
+      space,
+      trapsFixed: parentTraps || trapsFixed(s, transformable),
       own,
       isContext,
       ctxZ: isContext ? contextZIndex(s) : 0,
@@ -577,6 +648,7 @@ export class SceneReader {
         if (kid) {
           node.kids.push(kid)
         }
+        setReadSpace(space) // a fixed child switched it
       } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
         const run = readTextNode(
           child as Text,
@@ -607,6 +679,9 @@ export class SceneReader {
     }
     if (layers.has('boxes') || layers.has('text')) {
       this.readPseudos(node, s, place, display)
+    }
+    if (space === 'viewport') {
+      tagViewport(node)
     }
     return node
   }
@@ -676,6 +751,8 @@ export class SceneReader {
         parent: node,
         kids,
         rect: ctx.rect,
+        space: node.space,
+        trapsFixed: node.trapsFixed,
         own,
         isContext: true,
         ctxZ: ctx.z,
@@ -690,6 +767,75 @@ export class SceneReader {
       }
     ]
   }
+}
+
+/**
+ * Mark `node`'s own records, text runs (with decorations) and pseudo-element
+ * records viewport-space. Element kids tag themselves as they are read.
+ */
+function tagViewport(node: ElNode): void {
+  for (const r of node.own) {
+    r.space = 'viewport'
+  }
+  for (const kid of node.kids) {
+    if (kid.kind === 'element') {
+      if (kid.pseudo) {
+        tagViewport(kid)
+      }
+      continue
+    }
+    kid.space = 'viewport'
+    if (kid.kind !== 'text') {
+      continue
+    }
+    if (kid.decorations) {
+      for (const d of kid.decorations) {
+        d.space = 'viewport'
+      }
+    }
+    if (kid.decorationsOver) {
+      for (const d of kid.decorationsOver) {
+        d.space = 'viewport'
+      }
+    }
+  }
+}
+
+const TRAP_WILL_CHANGE =
+  /(^|,)\s*(transform|translate|rotate|scale|perspective|filter)\s*(,|$)/
+
+/**
+ * Does this element establish the containing block for `position: fixed`
+ * descendants (so they position — and scroll — like absolute ones)? A
+ * transform, filter, backdrop-filter, perspective, the matching will-change
+ * values, or paint/layout containment.
+ */
+function trapsFixed(s: CSSStyleDeclaration, transformable: boolean): boolean {
+  if (transformable && hasTransform(s)) {
+    return true
+  }
+  if (s.filter !== 'none' || s.perspective !== 'none') {
+    return true
+  }
+  const bf = s.backdropFilter
+  if (bf && bf !== 'none') {
+    return true
+  }
+  if (transformable && TRAP_WILL_CHANGE.test(s.willChange)) {
+    return true
+  }
+  const c = s.contain
+  return c !== 'none' && /paint|layout|strict|content/.test(c)
+}
+
+/** Whether any ancestor of `root` traps fixed descendants. */
+function ancestorsTrapFixed(root: Element): boolean {
+  for (let p = root.parentElement; p; p = p.parentElement) {
+    if (trapsFixed(getComputedStyle(p), true)) {
+      return true
+    }
+  }
+  return false
 }
 
 const XHTML = 'http://www.w3.org/1999/xhtml'

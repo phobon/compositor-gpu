@@ -11,11 +11,19 @@
 //   npm run test:visual                   # check against goldens
 //   npm run test:visual -- --only boxes
 //   npm run test:visual -- --parity-max 5
+//
+// Per-section attributes:
+//   data-vr-body-class="c"  add class c to <body> for the capture (and force
+//                           a full re-read: <body> is outside the root)
+//   data-vr-scroll="N"      after scrolling the section into view, scroll a
+//                           further N px before capturing
+//   data-vr-scroll2="M"     also capture after M more px, as `<name>-sM`
+//   data-vr-capture="viewport"  capture the whole viewport, not the section
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
-import type { Browser, Page } from 'playwright'
+import type { Browser, ElementHandle, Page } from 'playwright'
 import { PNG } from 'pngjs'
 import { type ViteDevServer, createServer } from 'vite'
 import { launchWithFallback } from '../lib/browser'
@@ -39,6 +47,8 @@ const SECTIONS = [
   'gradients',
   'overflow',
   'stacking',
+  'fixed',
+  'sticky',
   'opacity',
   'transforms',
   'mutations',
@@ -96,6 +106,15 @@ function diff(aPath: string, bPath: string, outPath: string): number {
   })
   writePng(outPath, out)
   return (mismatched / (width * height)) * 100
+}
+
+function raf2(page: Page): Promise<void> {
+  return page.evaluate(
+    () =>
+      new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => r()))
+      )
+  )
 }
 
 function setMode(page: Page, mode: 'dom' | 'gpu' | 'both'): Promise<void> {
@@ -202,84 +221,61 @@ async function main(): Promise<void> {
         continue
       }
 
-      await handle.evaluate((el) =>
-        el.scrollIntoView({ behavior: 'instant', block: 'center' })
-      )
-      await page.evaluate(
-        () =>
-          new Promise<void>((r) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => r()))
-          )
-      )
-
-      const rect = await handle.evaluate((el) => {
-        const r = el.getBoundingClientRect()
-        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
-      })
-
-      const vw = 1280
-      const vh = 900
-      const left = Math.max(0, Math.floor(rect.left))
-      const top = Math.max(0, Math.floor(rect.top))
-      const right = Math.min(vw, Math.ceil(rect.right))
-      const bottom = Math.min(vh, Math.ceil(rect.bottom))
-      const width = right - left
-      const height = bottom - top
-      if (width <= 0 || height <= 0) {
-        console.error(`[visual] MISSING/empty section ${selector} (offscreen)`)
-        results.push({
-          name,
-          parityPct: null,
-          regressionPct: null,
-          status: 'missing'
-        })
-        hadFailure = true
-        continue
+      const opts = await handle.evaluate((el) => ({
+        bodyClass: el.getAttribute('data-vr-body-class'),
+        scroll: Number(el.getAttribute('data-vr-scroll') ?? 0),
+        scroll2: Number(el.getAttribute('data-vr-scroll2') ?? 0),
+        viewport: el.getAttribute('data-vr-capture') === 'viewport'
+      }))
+      if (opts.bodyClass) {
+        await page.evaluate((c) => {
+          document.body.classList.add(c)
+          window.__vr?.invalidate()
+        }, opts.bodyClass)
       }
-      const clipBox = { x: left, y: top, width, height }
-
-      await setMode(page, 'dom')
-      const domPath = resolve(outDir, `${name}-dom.png`)
-      await page.screenshot({ path: domPath, clip: clipBox })
-
-      await setMode(page, 'gpu')
-      const gpuPath = resolve(outDir, `${name}-gpu.png`)
-      await page.screenshot({ path: gpuPath, clip: clipBox })
-
-      // Restore overlay mode between sections for a consistent starting state.
-      await setMode(page, 'both')
-
-      const parityDiffPath = resolve(outDir, `${name}-parity-diff.png`)
-      const parityPct = diff(domPath, gpuPath, parityDiffPath)
-
-      const goldenPath = resolve(goldenDir, `${name}.png`)
-      let regressionPct: number | null = null
-      let status: SectionResult['status'] = 'ok'
-
-      if (args.update) {
-        writeFileSync(goldenPath, readFileSync(gpuPath))
-        status = 'ok'
-      } else if (existsSync(goldenPath)) {
-        const goldenDiffPath = resolve(outDir, `${name}-golden-diff.png`)
-        regressionPct = diff(goldenPath, gpuPath, goldenDiffPath)
-        if (regressionPct > 0.5) {
-          status = 'fail'
-          hadFailure = true
+      try {
+        await handle.evaluate((el) =>
+          el.scrollIntoView({ behavior: 'instant', block: 'center' })
+        )
+        await raf2(page)
+        const shots: [string, number][] = [[name, opts.scroll]]
+        if (opts.scroll2) {
+          shots.push([`${name}-s${opts.scroll2}`, opts.scroll2])
         }
-      } else {
-        status = 'no-golden'
+        for (const [shot, by] of shots) {
+          if (by) {
+            await page.evaluate((y) => window.scrollBy(0, y), by)
+            await raf2(page)
+          }
+          const r = await captureSection(page, handle, shot, opts.viewport)
+          if (!r) {
+            console.error(
+              `[visual] MISSING/empty section ${selector} (offscreen)`
+            )
+            results.push({
+              name: shot,
+              parityPct: null,
+              regressionPct: null,
+              status: 'missing'
+            })
+            hadFailure = true
+            continue
+          }
+          const res = judge(shot, r.domPath, r.gpuPath, args)
+          if (res.status === 'fail') {
+            hadFailure = true
+          }
+          results.push(res)
+        }
+      } finally {
+        if (opts.bodyClass) {
+          await page.evaluate((c) => {
+            document.body.classList.remove(c)
+            window.__vr?.invalidate()
+          }, opts.bodyClass)
+          await raf2(page)
+        }
       }
-
-      if (
-        status === 'ok' &&
-        args.parityMax !== null &&
-        parityPct > args.parityMax
-      ) {
-        status = 'fail'
-        hadFailure = true
-      }
-
-      results.push({ name, parityPct, regressionPct, status })
     }
   } finally {
     await browser?.close()
@@ -293,6 +289,82 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   console.log('\n[visual] OK')
+}
+
+/** DOM and GPU captures of `handle`'s section (or the whole viewport),
+ * as `<shot>-dom.png` / `<shot>-gpu.png`; null when it is offscreen. */
+async function captureSection(
+  page: Page,
+  handle: ElementHandle<Element>,
+  shot: string,
+  viewport: boolean
+): Promise<{ domPath: string; gpuPath: string } | null> {
+  const vw = 1280
+  const vh = 900
+  const rect = viewport
+    ? { left: 0, top: 0, right: vw, bottom: vh }
+    : await handle.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+      })
+  const left = Math.max(0, Math.floor(rect.left))
+  const top = Math.max(0, Math.floor(rect.top))
+  const right = Math.min(vw, Math.ceil(rect.right))
+  const bottom = Math.min(vh, Math.ceil(rect.bottom))
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+  const clipBox = { x: left, y: top, width, height }
+
+  await setMode(page, 'dom')
+  const domPath = resolve(outDir, `${shot}-dom.png`)
+  await page.screenshot({ path: domPath, clip: clipBox })
+
+  await setMode(page, 'gpu')
+  const gpuPath = resolve(outDir, `${shot}-gpu.png`)
+  await page.screenshot({ path: gpuPath, clip: clipBox })
+
+  // Restore overlay mode between sections for a consistent starting state.
+  await setMode(page, 'both')
+  return { domPath, gpuPath }
+}
+
+/** Parity (DOM vs GPU) and regression (GPU vs golden) for one capture. */
+function judge(
+  shot: string,
+  domPath: string,
+  gpuPath: string,
+  args: Args
+): SectionResult {
+  const parityDiffPath = resolve(outDir, `${shot}-parity-diff.png`)
+  const parityPct = diff(domPath, gpuPath, parityDiffPath)
+
+  const goldenPath = resolve(goldenDir, `${shot}.png`)
+  let regressionPct: number | null = null
+  let status: SectionResult['status'] = 'ok'
+
+  if (args.update) {
+    writeFileSync(goldenPath, readFileSync(gpuPath))
+  } else if (existsSync(goldenPath)) {
+    const goldenDiffPath = resolve(outDir, `${shot}-golden-diff.png`)
+    regressionPct = diff(goldenPath, gpuPath, goldenDiffPath)
+    if (regressionPct > 0.5) {
+      status = 'fail'
+    }
+  } else {
+    status = 'no-golden'
+  }
+
+  if (
+    status === 'ok' &&
+    args.parityMax !== null &&
+    parityPct > args.parityMax
+  ) {
+    status = 'fail'
+  }
+  return { name: shot, parityPct, regressionPct, status }
 }
 
 function printTable(results: SectionResult[]): void {

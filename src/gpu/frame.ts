@@ -7,7 +7,7 @@ struct Frame {
   scroll   : vec2f,   // document scroll offset (CSS px)
   time     : f32,     // ms since load
   dpr      : f32,
-  _pad     : vec2f,
+  vscroll  : vec2f,   // offset subtracted from viewport-space positions
 };
 @group(0) @binding(0) var<uniform> frame : Frame;
 
@@ -16,9 +16,20 @@ fn doc_to_clip(p : vec2f) -> vec4f {
   let v = (p - frame.scroll) / frame.viewport;
   return vec4f(v.x * 2.0 - 1.0, 1.0 - v.y * 2.0, 0.0, 1.0);
 }
+
+// A record's position -> clip space. space < 0.5: document space (minus
+// frame.scroll); otherwise viewport space (position: fixed subtrees), minus
+// frame.vscroll — 0 on the canvas, the target origin's viewport position
+// on an opacity-group target.
+fn to_clip(p : vec2f, space : f32) -> vec4f {
+  let o = select(frame.scroll, frame.vscroll, space > 0.5);
+  let v = (p - o) / frame.viewport;
+  return vec4f(v.x * 2.0 - 1.0, 1.0 - v.y * 2.0, 0.0, 1.0);
+}
 `
 
-/** Bytes in the Frame uniform block (2+2+1+1+2 floats = 8 floats). */
+/** Bytes in the Frame uniform block (2+2+1+1+2 floats = 8 floats):
+ * viewport, scroll, time, dpr, vscroll. */
 export const FRAME_BYTES = 8 * 4
 
 /** A render pass owns one pipeline + its instance buffers for one layer. */
