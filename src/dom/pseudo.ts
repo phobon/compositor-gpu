@@ -33,8 +33,11 @@ import {
   fontMetrics,
   graphemeClass,
   graphemes,
+  langOf,
   ligaturesEnabled,
-  opticalSize
+  opticalSize,
+  textTransformOf,
+  transformText
 } from './textRuns'
 import {
   applyAffine,
@@ -300,14 +303,18 @@ const DIGIT = /^[0-9]$/
  * between them is kept). With `usedWidth` (the browser's used inline size)
  * the advances are corrected to it: `tabular` digits share the remainder
  * equally (the marker UA style is `font-variant-numeric: tabular-nums`,
- * which Canvas 2D can't set), anything else is scaled.
+ * which Canvas 2D can't set), anything else is scaled. `text` is the
+ * source content; `text-transform` of `s` is applied here, before measuring.
  */
 function layoutLine(
-  text: string,
+  source: string,
   s: CSSStyleDeclaration,
+  el: Element,
   usedWidth: number | null,
   tabular: boolean
 ): Laid {
+  const tt = textTransformOf(s)
+  const text = transformText(source, tt, tt ? langOf(el) : undefined)
   const c = measureCtx()
   const cells: Cell[] = []
   let width = 0
@@ -656,7 +663,7 @@ export function readMarker(
   }
   const used = pxOrNull(ms.width)
   const tabular = ms.fontVariantNumeric.includes('tabular-nums')
-  const laid = layoutLine(text, ms, used, tabular)
+  const laid = layoutLine(text, ms, el, used, tabular)
   const x = outside ? cbox.x - laid.width : cbox.x
   const run = buildRun(laid, ms, place, x, baseline, clip, alloc)
   return run ? { items: [run], context: null } : null
@@ -707,7 +714,7 @@ export function readBeforeAfter(
   const chUsed = usedH === null ? null : borderBox ? usedH - padY : usedH
   const m = fontMetrics(ps)
   const lh = lineHeight(ps)
-  const laid = layoutLine(text, ps, null, false)
+  const laid = layoutLine(text, ps, el, null, false)
   const tw = laid.width
   const hasText = laid.cells.some((c) => c.text.trim().length > 0)
   const cbox = contentBox(s, place)

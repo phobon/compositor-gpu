@@ -3,8 +3,8 @@ import type { Scene } from '../scene/scene'
 /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
 export const FRAME_WGSL = /* wgsl */ `
 struct Frame {
-  viewport : vec2f,   // CSS px size of the mirrored viewport
-  scroll   : vec2f,   // document scroll offset (CSS px)
+  viewport : vec2f,   // CSS px size of the target (canvas or group texture)
+  scroll   : vec2f,   // doc-space origin of the target (CSS px)
   time     : f32,     // ms since load
   dpr      : f32,
   vscroll  : vec2f,   // offset subtracted from viewport-space positions
@@ -19,8 +19,8 @@ fn doc_to_clip(p : vec2f) -> vec4f {
 
 // A record's position -> clip space. space < 0.5: document space (minus
 // frame.scroll); otherwise viewport space (position: fixed subtrees), minus
-// frame.vscroll — 0 on the canvas, the target origin's viewport position
-// on an opacity-group target.
+// frame.vscroll, the target origin's viewport position (canvas anchor or
+// group origin, minus the real scroll).
 fn to_clip(p : vec2f, space : f32) -> vec4f {
   let o = select(frame.scroll, frame.vscroll, space > 0.5);
   let v = (p - o) / frame.viewport;

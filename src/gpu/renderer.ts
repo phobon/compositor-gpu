@@ -123,15 +123,18 @@ export class Renderer {
   }
 
   private writeFrame(ctx: FrameContext, dpr: number): void {
+    // The canvas covers [canvasX, canvasX + canvasWidth) in doc space. A
+    // viewport-space position p is at doc p + scroll, so canvas p + scroll
+    // - canvasX: vscroll is the canvas origin in viewport space.
     const f = this.frameData
-    f[0] = ctx.width
-    f[1] = ctx.height
-    f[2] = ctx.scrollX
-    f[3] = ctx.scrollY
+    f[0] = ctx.canvasWidth
+    f[1] = ctx.canvasHeight
+    f[2] = ctx.canvasX
+    f[3] = ctx.canvasY
     f[4] = ctx.time
     f[5] = dpr
-    f[6] = 0 // vscroll: viewport-space records map 1:1 onto the canvas
-    f[7] = 0
+    f[6] = ctx.canvasX - ctx.scrollX
+    f[7] = ctx.canvasY - ctx.scrollY
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
 
@@ -204,12 +207,12 @@ export class Renderer {
     const main: Target = {
       view: texture.createView({ format: this.gpu.viewFormat }),
       bindGroup: this.shared.frameBindGroup,
-      ox: ctx.scrollX,
-      oy: ctx.scrollY,
+      ox: ctx.canvasX,
+      oy: ctx.canvasY,
       devW: texture.width,
       devH: texture.height,
-      sx: ctx.width > 0 ? texture.width / ctx.width : dpr,
-      sy: ctx.height > 0 ? texture.height / ctx.height : dpr,
+      sx: ctx.canvasWidth > 0 ? texture.width / ctx.canvasWidth : dpr,
+      sy: ctx.canvasHeight > 0 ? texture.height / ctx.canvasHeight : dpr,
       group: -1,
       pooled: null,
       rect: [0, 0, 0, 0],
@@ -328,7 +331,9 @@ export class Renderer {
     f[3] = oy
     f[4] = ctx.time
     f[5] = this.shared.dpr
-    // The target origin in viewport space, for viewport-space records.
+    // The target origin in viewport space, for viewport-space records: doc
+    // origin minus the real scroll (not the parent's origin, which is the
+    // canvas anchor on the main target).
     f[6] = ox - ctx.scrollX
     f[7] = oy - ctx.scrollY
     this.device.queue.writeBuffer(frame.buffer, 0, f)

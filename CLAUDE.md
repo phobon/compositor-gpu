@@ -63,6 +63,11 @@ external. `@/*` aliases `src/*` in both tsconfig and vite.
 
 ## Status
 
+`docs/HANDOFF.md` is the session handoff for the bonobolabs.com `/duo`
+integration: checkouts, uncommitted state, how to run the site and the
+readout, and the first move on each open problem. Read it before touching
+the site side.
+
 `ROADMAP.md` is the live checklist and `docs/ARCHITECTURE.md` is the spec — the
 spec describes the target, not all of which is built. Currently real: the box
 pass (a complete DOM→GPU vertical slice) and the Slug text pass (font pipeline +
@@ -83,12 +88,25 @@ vertex shader. This is the load-bearing decision: **scrolling writes one uniform
 and re-reads nothing.** Never store viewport-relative coordinates in a
 doc-space record, and never make scroll a reason to re-walk the DOM.
 
+The canvas is `position: absolute` on `<html>`, so the browser scrolls it with
+the page (no lag behind the DOM). It covers the viewport plus `canvasMargin`
+(default one viewport height) above and below, clamped to the document's
+scrollable size. Its document-space origin is the **anchor**: when the
+viewport leaves the canvas (any horizontal scroll, or vertically past the
+margin) or on resize, `frame()` moves it to `anchorY = clamp(scrollY - margin,
+0, docH - canvasH)`, `anchorX = scrollX`, before `render()` in the same task.
+`FrameContext.canvasX/Y/Width/Height` carry the canvas region;
+`scrollX/Y`/`width/height` stay the real viewport. The Frame uniform's
+`viewport`/`scroll` are the canvas size and anchor.
+
 The one exception is `position: fixed` on the viewport: the reader walks
 that subtree with `setReadSpace('viewport')` (no scroll offset in
 `toDocRect`) and tags its records `space: 'viewport'`; every vertex shader
 calls `to_clip(p, space)`, which subtracts `frame.scroll` (doc) or
-`frame.vscroll` (viewport; 0 on the canvas, the target origin on a group
-target). Clips and `ElNode.rect` are in the node's space, so the escalation
+`frame.vscroll` (viewport: the target origin minus the real scroll, i.e.
+`anchor - scroll` on the canvas and `groupOrigin - scroll` on a group
+target). Fixed content is drawn at its position at frame time and moves
+with the page between frames. Clips and `ElNode.rect` are in the node's space, so the escalation
 check is scroll-invariant for fixed subtrees. Opacity groups keep doc
 `bounds` and viewport `vbounds`, unioned at the current scroll by the
 renderer; the batch builder treats records of different spaces as always
@@ -113,7 +131,9 @@ runs whose face has no italic get a synthetic 14° shear via the same affine.
 ### The frame
 `compositor.ts` owns the loop. Per frame: take dirty flags → if
 LAYOUT/STYLE/CONTENT call `SceneReader.fullRead()`, if MUTATION call
-`partialRead(scopes)` (the only places DOM layout is read) in `dom/tree.ts` → run
+`partialRead(scopes)` (the only places DOM layout is read) in `dom/tree.ts` →
+re-anchor the canvas if the viewport left it (`place()`; reads
+`scrollHeight`/`scrollWidth` only then or on LAYOUT) → run
 `onGlyph`/`onFrame` hooks → `renderer.render()`. All DOM reads happen in one
 batched phase before any GPU write. A partial read escalates to a full read when
 the mutated element's border-box rect changed (siblings could move); inline and

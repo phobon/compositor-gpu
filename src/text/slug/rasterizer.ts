@@ -65,6 +65,9 @@ export class SlugText implements TextBackend {
   ready = false
   /** Glyphs drawn via the Canvas 2D fallback atlas in the last upload. */
   fallbackCount = 0
+  /** Up to 12 distinct fallback graphemes from the last upload, as
+   * `"text" family weight reason`, for `stats().fallbackSamples`. */
+  fallbackSamples = new Set<string>()
   /** Ligature glyphs formed in the last upload (components merged). */
   ligatureCount = 0
   /** `"family weight[i]"` labels of faces `prepare()` couldn't resolve (no
@@ -716,6 +719,7 @@ export class SlugText implements TextBackend {
     this.slugLive = 0
     this.atlasLive = 0
     this.fallbackCount = 0
+    this.fallbackSamples.clear()
     this.ligatureCount = 0
     const ids = this.idScratch
     let i = 0
@@ -800,10 +804,21 @@ export class SlugText implements TextBackend {
           q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
           const slot = this.ensureResident(face, gi)
           const F = g.fontSize
-          const asc = ascPx * F
-          const desc = descPx * F
+          // Blink rounds a font's ascent and descent to whole CSS px before
+          // laying out the line box (SimpleFontData), so the baseline sits
+          // at lineTop + halfLeading + round(ascent).
+          const asc = Math.round(ascPx * F)
+          const desc = Math.round(descPx * F)
           const halfLead = (g.local.h - (asc + desc)) / 2
-          const baseline = halfLead + asc
+          let baseline = halfLead + asc
+          // Browsers position glyphs at whole device pixels vertically
+          // (sub-pixel only in x), which is what keeps baselines, x-heights
+          // and crossbars crisp at small sizes. Match that for untransformed
+          // runs; a transformed run keeps its exact baseline.
+          if (xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1) {
+            const ty = xf[5]
+            baseline = Math.round((ty + baseline) * dpr) / dpr - ty
+          }
           const bbox = slot >= 0 ? this.slotBBox[slot] : undefined
           if (bbox) {
             f[base + 0] = bbox.x1 * F
@@ -890,6 +905,13 @@ export class SlugText implements TextBackend {
         this.putQuad(i - 1, e, g, dpr, pad, g.color, alpha, 0, 0, !e?.tint)
         if (e) {
           this.fallbackCount++
+          if (this.fallbackSamples.size < 12) {
+            this.fallbackSamples.add(
+              `${JSON.stringify(g.text)} ${run.fontFamily} ${run.fontWeight} ${
+                face ? 'no-glyph' : 'no-face'
+              }`
+            )
+          }
         }
         for (let k = 0; k < S; k++) {
           const sh = shadows[S - 1 - k] as TextShadow

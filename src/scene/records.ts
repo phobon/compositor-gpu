@@ -49,6 +49,9 @@ export interface Gradient {
   /** radial: radii in px. */
   radii: [number, number]
   stops: GradientStop[]
+  /** background-repeat is not `no-repeat`: the padding-box tile repeats
+   * into the border area when background-clip reaches it. */
+  repeat?: boolean
 }
 
 /** Coordinate space of a record's rect / xform / clip (see top of file).
@@ -73,6 +76,13 @@ export interface BoxRecord {
   fill: RGBA
   /** First background-image layer when it is a gradient; drawn over fill. */
   gradient?: Gradient | null
+  /**
+   * Background painting area (background-clip) as per-side insets from the
+   * border box, [top, right, bottom, left]: the border widths for
+   * padding-box, plus padding for content-box. Absent = border-box, where
+   * the fill runs under the border.
+   */
+  bgInset?: [number, number, number, number]
   /**
    * Per-side border, [top, right, bottom, left] (CSS order). A side with
    * style none/hidden has width 0. `styles` is the BorderStyle code per
@@ -168,7 +178,9 @@ export interface Glyph {
   local: LocalSize
   /** Index into the font's glyph table (resolved by the text backend). */
   glyphId: number
-  /** The grapheme cluster itself (for the Canvas 2D fallback atlas). */
+  /** The grapheme cluster as painted, i.e. after `text-transform` (one
+   * source grapheme can map to several code points: ß -> SS). Used by the
+   * fallback atlas, ligature text and skip-ink measurement. */
   text: string
   /** Colour / emoji grapheme (drawn by the fallback atlas in its own
    * colours). Classified once at read time. */

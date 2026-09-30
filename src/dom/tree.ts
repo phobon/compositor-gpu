@@ -22,6 +22,7 @@ import {
   type Decoration,
   propagateDecorations
 } from './decorations'
+import { IGNORE_ATTR } from './observer'
 import {
   type GlyphRef,
   type OrdinalCache,
@@ -513,7 +514,7 @@ export class SceneReader {
     parentDecor: Decoration[] | null,
     parentCb: Placement | null
   ): ElNode | null {
-    if (SKIP_TAGS.has(el.tagName)) {
+    if (SKIP_TAGS.has(el.tagName) || el.hasAttribute(IGNORE_ATTR)) {
       return null
     }
     this.readElements++

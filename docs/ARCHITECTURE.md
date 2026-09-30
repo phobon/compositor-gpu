@@ -45,10 +45,24 @@ the pixels, never the layout.
   normalised into document space so scrolling is a single uniform offset, not
   a re-read.
 - **Clip space** — WebGPU NDC. The vertex shader maps document space →
-  viewport space (subtract scroll, apply devicePixelRatio) → clip space.
+  canvas space (subtract the canvas anchor) → clip space.
 
 Keeping the scene in document space is what makes scrolling cheap: on scroll we
-update **one uniform** (the scroll offset), not thousands of instances.
+update **one uniform** at most, not thousands of instances.
+
+**The anchored canvas.** The canvas is `position: absolute` on `<html>`, not
+fixed: the browser's compositor thread scrolls it with the page, so the mirror
+never trails the DOM by a frame. It is `viewW × min(viewH + 2·margin, docH)` CSS
+px (`canvasMargin`, default one viewport height), placed at its **anchor**
+(its document-space origin). When the viewport `[scrollY, scrollY + viewH)`
+leaves `[anchorY, anchorY + canvasH)`, on any horizontal scroll, or on resize,
+the frame re-anchors before rendering, in the same task:
+`anchorY = clamp(scrollY - margin, 0, docH - canvasH)`, `anchorX = scrollX`.
+It never extends past the document's scrollable size, so it never grows the
+page. The Frame uniform's `viewport`/`scroll` are the canvas size and anchor;
+`vscroll` (for `position: fixed` records, stored in viewport space) is
+`anchor - scroll`. Fixed content is drawn where it is at frame time and moves
+with the page until the next frame.
 
 ---
 
@@ -72,7 +86,7 @@ update **one uniform** (the scroll offset), not thousands of instances.
                          │                └─ TextPass  (Slug)        │
                          │                  │                        │
                          │                  ▼                        │
-                         │              <canvas> overlay             │
+                         │         <canvas> (absolute, anchored)     │
                          └─────────────────────────────────────────┘
 ```
 
@@ -88,7 +102,7 @@ invalidations, updates buffers, and draws.
 | --- | --- |
 | `compositor.ts` | Public lifecycle: `createCompositor()`, mount/unmount, start/stop, options. Owns the rAF loop and wires everything together. |
 | `gpu/device.ts` | WebGPU adapter/device init via **TypeGPU**, canvas configuration, resize, DPR, feature detection + graceful bail. |
-| `gpu/renderer.ts` | Frame orchestration: begins a render pass, runs each enabled pass, submits. Holds shared uniforms (viewport, scroll, time). |
+| `gpu/renderer.ts` | Frame orchestration: begins a render pass, runs each enabled pass, submits. Holds shared uniforms (canvas size, canvas anchor, time). |
 | `dom/tree.ts` | Persistent element tree reader: fullRead() walks the DOM and rebuilds the tree; partialRead(scopes) re-reads only the subtrees a mutation could have changed. Escalates to a full read when a mutated element's border-box rect changes (siblings could move). |
 | `dom/styles.ts` | Reads `getComputedStyle` and normalises the subset we paint (background, border-radius, colour, opacity, transform, clip, z-order). |
 | `dom/gradient.ts` | Reads CSS `linear-gradient` and `radial-gradient`, interpolates in premultiplied sRGB. |
@@ -111,7 +125,7 @@ invalidations, updates buffers, and draws.
 | `boxes/boxRenderer.ts` | Instanced rounded-rect pass (backgrounds, borders, gradients, shadows). The simplest full vertical slice of the sync loop. |
 | `images/imageRenderer.ts` | Uploads `<img>` / `<canvas>` / `<video>` / background images to textures, draws textured quads; collapses consecutive atlas-backed instances into one draw. |
 | `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
-| `gpu/frame.ts` | Shared `Frame` uniform (viewport, scroll, time, dpr) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
+| `gpu/frame.ts` | Shared `Frame` uniform (target size, target origin, time, dpr, vscroll) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
 | `gpu/composite.ts` | Offscreen texture pool + pipeline that draws a completed opacity group's texture back into its parent target at the group's doc-space rect, scaled by group alpha. |
 | `gpu/mips.ts` | Mip-chain generation (fullscreen-triangle blit pipeline) for static image/atlas textures. |
 | `util/*` | rAF scheduler, logging, small math (mat, rect). |
@@ -223,9 +237,11 @@ frame():
                             (escalates to a full read if a boundary's rect changed;
                              running CSS transitions/animations add their parent
                              scopes every frame while they run)
+  place(scroll)                                             // re-anchor the canvas
+                                                            // if the viewport left it
   renderer.render(scene, ctx, dpr)                          // writes the Frame
-                                                            // uniform (viewport,
-                                                            // scroll, time, dpr),
+                                                            // uniform (canvas size,
+                                                            // anchor, time, dpr),
                                                             // uploads only dirty
                                                             // layers, walks
                                                             // scene.batches
@@ -241,7 +257,9 @@ frame():
   if a boundary's border-box rect changed.
 - **IntersectionObserver** → cull offscreen records cheaply; only on-screen
   instances are drawn.
-- **scroll** (passive) → SCROLL only (uniform, no re-read).
+- **scroll** (passive) → SCROLL only (no re-read): rAF frames run until the
+  scroll settles; each re-anchors the canvas if the viewport left it and
+  re-reads moved sticky elements, paint-only.
 - **`document.fonts.ready`** and `FontFace` load events → invalidate text.
 - **DPR / media changes** → reconfigure canvas.
 
@@ -292,7 +310,8 @@ compositor.destroy()
 
 The returned `Compositor` also exposes:
 
-- **`canvas`** — the overlay `HTMLCanvasElement`, or `null` in passthrough/inert.
+- **`canvas`** — the mirror `HTMLCanvasElement` (absolutely positioned on
+  `<html>`, see §1.1), or `null` in passthrough/inert.
 - **`active`** — `true` once a real GPU pipeline is running (`false` in passthrough).
 - **`invalidate()`** — force a full re-read of the DOM and re-upload of every layer.
 - **`setSourceHidden(hidden)`** — toggle the `replace`-mode opacity flip directly.
@@ -301,7 +320,8 @@ The returned `Compositor` also exposes:
   `ligatures`, `uploads` (layers re-uploaded), `batches`, `draws` (actual
   `encoder.draw` calls, lower than `batches` when atlas-backed image instances
   collapse into one call), `groups` (opacity groups composited), `readElements`,
-  `partialReads`, `readMs`, `uploadMs`, `encodeMs`, `fps`.
+  `partialReads`, `readMs`, `uploadMs`, `encodeMs`, `fps`, `anchorX`/`anchorY`
+  (the canvas's document-space origin) and `reanchors` (cumulative).
 
 ---
 

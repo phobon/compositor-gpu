@@ -189,11 +189,16 @@ export function readBox(
         width: Math.max(0, lw - bl - br),
         height: Math.max(0, lh - bt - bb)
       })
+      if (gradient) {
+        const rep = splitTopLevel(s.backgroundRepeat, ',')[0] ?? ''
+        gradient.repeat = rep.trim() !== 'no-repeat'
+      }
     }
   }
   if (!hasFill && !border && !gradient) {
     return null
   }
+  const bgInset = readBgInset(s)
 
   return {
     kind: 'box',
@@ -204,10 +209,43 @@ export function readBox(
     radius: readCorners(s, localRect),
     fill,
     gradient,
+    ...(bgInset ? { bgInset } : {}),
     border,
     opacity: 1,
     z: 0
   }
+}
+
+/**
+ * background-clip of the bottom layer (it clips background-color) as
+ * insets from the border box, or null for border-box. `text` is treated as
+ * border-box.
+ */
+function readBgInset(
+  s: CSSStyleDeclaration
+): [number, number, number, number] | null {
+  const layers = splitTopLevel(s.backgroundClip || 'border-box', ',')
+  const clip = (layers[layers.length - 1] ?? '').trim()
+  if (clip !== 'padding-box' && clip !== 'content-box') {
+    return null
+  }
+  // Read the widths directly: `border` is null when no side paints, but a
+  // transparent border still insets the padding box.
+  const w = (width: string, style: string) =>
+    NO_BORDER_STYLE.has(style) ? 0 : px(width)
+  const inset: [number, number, number, number] = [
+    w(s.borderTopWidth, s.borderTopStyle),
+    w(s.borderRightWidth, s.borderRightStyle),
+    w(s.borderBottomWidth, s.borderBottomStyle),
+    w(s.borderLeftWidth, s.borderLeftStyle)
+  ]
+  if (clip === 'content-box') {
+    inset[0] += px(s.paddingTop)
+    inset[1] += px(s.paddingRight)
+    inset[2] += px(s.paddingBottom)
+    inset[3] += px(s.paddingLeft)
+  }
+  return inset
 }
 
 const NO_BORDER_STYLE = new Set(['none', 'hidden'])

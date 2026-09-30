@@ -1,5 +1,5 @@
 import { BoxPass } from './boxes/boxRenderer'
-import { Dirty, DomSync } from './dom/observer'
+import { Dirty, DomSync, IGNORE_ATTR } from './dom/observer'
 import { SceneReader } from './dom/tree'
 import { initGpu } from './gpu/device'
 import { Renderer } from './gpu/renderer'
@@ -14,6 +14,9 @@ import type {
 } from './types'
 import { log, setDebug } from './util/log'
 import { FrameScheduler } from './util/raf'
+
+/** Frames keep running on rAF this long after the last `scroll` event. */
+export const SCROLL_SETTLE_MS = 150
 
 /**
  * Create a compositor that mirrors `root` onto a GPU canvas overlay. Async
@@ -31,11 +34,15 @@ export async function createCompositor(
   setDebug(Boolean(options.debug))
 
   const canvas = document.createElement('canvas')
+  // `position: absolute`, not fixed: the canvas is part of the root
+  // scroller's content, so the browser's compositor thread scrolls it in
+  // lockstep with the page (no frame of lag). It
+  // covers the viewport plus `canvasMargin` above and below, and frame()
+  // moves it (the anchor) when the viewport scrolls out of it.
   Object.assign(canvas.style, {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
+    position: 'absolute',
+    left: '0',
+    top: '0',
     pointerEvents: 'none',
     zIndex: '2147483646'
   } satisfies Partial<CSSStyleDeclaration>)
@@ -92,21 +99,105 @@ export async function createCompositor(
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0
+  let frameMs = 0
+  let maxDtMs = 0
+  let maxDtWindow = 0
+  let maxDtAt = 0
   let readMs = 0
   const paintOnly = new Set<Element>()
-  let scrolled = false
+  let lastScrollAt = -Infinity
+  let lastScrollX = window.scrollX
+  let lastScrollY = window.scrollY
 
   // The viewport minus any classic scrollbar (innerWidth/Height include
   // it, which would squeeze the mirror horizontally).
   const viewW = (): number => document.documentElement.clientWidth
   const viewH = (): number => document.documentElement.clientHeight
-  const resizeCanvas = (): void => {
-    canvas.width = Math.floor(viewW() * dpr)
-    canvas.height = Math.floor(viewH() * dpr)
+  // The canvas region in document space (CSS px): origin (the anchor) and
+  // size. It covers the viewport plus `margin` above and below, clamped to
+  // the document's scrollable size so it never grows the page.
+  let anchorX = 0
+  let anchorY = 0
+  let canvasW = 0
+  let canvasH = 0
+  let reanchors = 0
+  const maxDim = gpu.device.limits.maxTextureDimension2D
+  // The document's scrollable size without the canvas: once content
+  // shrinks, a canvas at the old bottom/right edge would hold scrollHeight
+  // up. Forces layout; call only when re-anchoring.
+  const docSize = (vw: number, vh: number): [number, number] => {
+    const de = document.documentElement
+    let w = de.scrollWidth
+    let h = de.scrollHeight
+    const right = anchorX + canvasW
+    const bottom = anchorY + canvasH
+    if ((h <= bottom && bottom > vh) || (w <= right && right > vw)) {
+      canvas.style.display = 'none'
+      w = de.scrollWidth
+      h = de.scrollHeight
+      canvas.style.display = ''
+    }
+    return [w, h]
   }
-  resizeCanvas()
+  // Re-anchor when the visible viewport is not inside the canvas (or on
+  // `force`: a resize). Vertically the new canvas starts `margin` above the
+  // viewport; horizontally there is no slack, so any horizontal scroll
+  // re-anchors.
+  const place = (
+    scrollX: number,
+    scrollY: number,
+    vw: number,
+    vh: number,
+    force: boolean
+  ): void => {
+    if (
+      !force &&
+      scrollX >= anchorX &&
+      scrollX + vw <= anchorX + canvasW &&
+      scrollY >= anchorY &&
+      scrollY + vh <= anchorY + canvasH
+    ) {
+      return
+    }
+    const margin = Math.max(0, Math.round(options.canvasMargin ?? vh))
+    const [docW, docH] = docSize(vw, vh)
+    // The swapchain texture is capped at maxTextureDimension2D (8192 on
+    // most adapters): a tall viewport at a high dpr shrinks the margin.
+    const w = vw
+    const h = Math.min(
+      vh + 2 * margin,
+      Math.max(docH, vh),
+      Math.max(vh, Math.floor(maxDim / dpr))
+    )
+    anchorX = Math.min(Math.max(scrollX, 0), Math.max(docW - w, 0))
+    anchorY = Math.min(Math.max(scrollY - margin, 0), Math.max(docH - h, 0))
+    reanchors++
+    const s = canvas.style
+    s.left = `${anchorX}px`
+    s.top = `${anchorY}px`
+    if (w !== canvasW || h !== canvasH) {
+      canvasW = w
+      canvasH = h
+      s.width = `${w}px`
+      s.height = `${h}px`
+      canvas.width = Math.min(Math.floor(w * dpr), maxDim)
+      canvas.height = Math.min(Math.floor(h * dpr), maxDim)
+    }
+  }
+  place(window.scrollX, window.scrollY, viewW(), viewH(), true)
+
+  const isScrolling = (): boolean =>
+    performance.now() - lastScrollAt < SCROLL_SETTLE_MS
 
   const frame = (time: number, dt: number): void => {
+    const t0 = performance.now()
+    // Longest gap between frames over the last second: a hitch detector.
+    if (time - maxDtAt >= 1000) {
+      maxDtMs = maxDtWindow
+      maxDtWindow = 0
+      maxDtAt = time
+    }
+    maxDtWindow = Math.max(maxDtWindow, dt * 1000)
     const dirty = sync.take()
     let flags = dirty.flags | pendingReadFlags
     pendingReadFlags = Dirty.NONE
@@ -126,8 +217,11 @@ export async function createCompositor(
     // A sticky element's offset is a paint-time shift that depends on
     // scroll: re-read each one that moved (paint-only — layout doesn't
     // change) once per frame that scrolled.
-    if (scrolled) {
-      scrolled = false
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+    if (scrollX !== lastScrollX || scrollY !== lastScrollY) {
+      lastScrollX = scrollX
+      lastScrollY = scrollY
       for (const el of reader.movedStickies()) {
         scopes.add(el)
         paintOnly.add(el)
@@ -141,9 +235,6 @@ export async function createCompositor(
       flags |= Dirty.MUTATION
     }
 
-    if (flags & Dirty.LAYOUT) {
-      resizeCanvas()
-    }
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
       const t0 = performance.now()
       reader.fullRead()
@@ -153,14 +244,26 @@ export async function createCompositor(
       reader.partialRead(dirty.scopes, paintOnly)
       readMs = performance.now() - t0
     }
+    // After the reads (layout is clean, so docSize() costs no extra
+    // reflow when it doesn't toggle the canvas), and in the same task as
+    // render(), so the new position and the new pixels land in one paint.
+    // The viewport size is read first: after place() moves the canvas,
+    // reading it would force another layout.
+    const width = viewW()
+    const height = viewH()
+    place(scrollX, scrollY, width, height, (flags & Dirty.LAYOUT) !== 0)
 
     const ctx: FrameContext = {
       time,
       dt,
-      scrollX: window.scrollX,
-      scrollY: window.scrollY,
-      width: viewW(),
-      height: viewH()
+      scrollX,
+      scrollY,
+      width,
+      height,
+      canvasX: anchorX,
+      canvasY: anchorY,
+      canvasWidth: canvasW,
+      canvasHeight: canvasH
     }
 
     if (options.onGlyph) {
@@ -183,7 +286,7 @@ export async function createCompositor(
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
     // re-requests one once the viewport has a size.
     if (canvas.width === 0 || canvas.height === 0) {
-      if (animating || scene.hasDynamic || cssAnimating) {
+      if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
         scheduler.request()
       }
       return
@@ -193,7 +296,8 @@ export async function createCompositor(
       fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
     }
     renderer.render(scene, ctx, dpr)
-    if (animating || scene.hasDynamic || cssAnimating) {
+    frameMs = performance.now() - t0
+    if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
       scheduler.request()
     }
   }
@@ -220,27 +324,63 @@ export async function createCompositor(
   }
   // Positions are absolute document space (or viewport space for fixed
   // subtrees), so scrolling only needs a re-render (updated frame.scroll),
-  // not a re-read — except sticky elements, re-read in frame().
+  // not a re-read — except sticky elements, re-read in frame() when the
+  // scroll position changed since the last frame. The canvas is absolute,
+  // so the browser's compositor thread scrolls it with the page and
+  // doc-space content never trails the DOM; frame() only has to re-anchor
+  // it before the viewport leaves it. Viewport-space (fixed) content is
+  // drawn at its position at frame time and moves with the page until the
+  // next frame, as do sticky offsets. `scroll` events can arrive at half
+  // the rAF rate (60 Hz events on a 120 Hz display), so the event stamps
+  // the time and frame() keeps requesting rAF ticks until SCROLL_SETTLE_MS
+  // after the last event, rendering each with the current
+  // window.scrollX/Y.
   const onScroll = (): void => {
-    scrolled = true
+    lastScrollAt = performance.now()
     scheduler.request()
   }
 
   // Replace mode: hide the mirrored root's own paint while keeping its layout,
   // focus, selection, hit-testing and a11y tree intact (opacity leaves all of
   // those untouched). Reversible; the GPU canvas provides the pixels.
+  // Subtrees marked `data-gpu-ignore` aren't mirrored, so they must keep
+  // their own paint: opacity goes on the outermost elements that contain no
+  // ignored element instead of on the root. An ancestor of an ignored
+  // element therefore keeps painting its own background/borders (its text
+  // and other children are still hidden) — keep ignored elements under
+  // paint-free wrappers.
   let sourceHidden = false
-  let savedOpacity = ''
+  const hiddenEls = new Map<HTMLElement, string>()
+  const hideUnder = (el: Element): void => {
+    for (const child of Array.from(el.children)) {
+      if (!(child instanceof HTMLElement) || child.hasAttribute(IGNORE_ATTR)) {
+        continue
+      }
+      if (child.querySelector(`[${IGNORE_ATTR}]`)) {
+        hideUnder(child)
+      } else {
+        hiddenEls.set(child, child.style.opacity)
+        child.style.opacity = '0'
+      }
+    }
+  }
   const setSourceHidden = (hidden: boolean): void => {
     if (hidden === sourceHidden || !(root instanceof HTMLElement)) {
       return
     }
     sourceHidden = hidden
     if (hidden) {
-      savedOpacity = root.style.opacity
-      root.style.opacity = '0'
+      if (root.querySelector(`[${IGNORE_ATTR}]`)) {
+        hideUnder(root)
+      } else {
+        hiddenEls.set(root, root.style.opacity)
+        root.style.opacity = '0'
+      }
     } else {
-      root.style.opacity = savedOpacity
+      for (const [el, saved] of hiddenEls) {
+        el.style.opacity = saved
+      }
+      hiddenEls.clear()
     }
   }
 
@@ -276,6 +416,7 @@ export async function createCompositor(
       images: scene.images.length,
       glyphs: scene.glyphCount(),
       fallback: text?.fallbackCount ?? 0,
+      fallbackSamples: text ? Array.from(text.fallbackSamples) : [],
       ligatures: text?.ligatureCount ?? 0,
       faces: text?.faceCount ?? 0,
       uploads: renderer.lastUploads,
@@ -284,10 +425,17 @@ export async function createCompositor(
       groups: renderer.lastGroups,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
+      sync: { ...sync.diag },
       readMs,
       uploadMs: renderer.lastUploadMs,
       encodeMs: renderer.lastEncodeMs,
-      fps
+      fps,
+      frameMs,
+      maxDtMs,
+      scrolling: isScrolling(),
+      anchorX,
+      anchorY,
+      reanchors
     }),
     start() {
       if (destroyed || lost) {
@@ -336,6 +484,7 @@ function inert(): Compositor & { text: null; scene: null } {
       images: 0,
       glyphs: 0,
       fallback: 0,
+      fallbackSamples: [],
       ligatures: 0,
       faces: 0,
       uploads: 0,
@@ -344,10 +493,24 @@ function inert(): Compositor & { text: null; scene: null } {
       groups: 0,
       readElements: 0,
       partialReads: 0,
+      sync: {
+        layout: 0,
+        style: 0,
+        content: 0,
+        mutation: 0,
+        animating: 0,
+        last: ''
+      },
       readMs: 0,
       uploadMs: 0,
       encodeMs: 0,
-      fps: 0
+      fps: 0,
+      frameMs: 0,
+      maxDtMs: 0,
+      scrolling: false,
+      anchorX: 0,
+      anchorY: 0,
+      reanchors: 0
     }),
     start() {},
     stop() {},

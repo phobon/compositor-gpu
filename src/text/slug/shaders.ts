@@ -17,6 +17,8 @@ import { FRAME_WGSL } from '../../gpu/frame'
  *   1 bands  : {yMin, yMax, curveStart, curveEnd} per glyph-band
  *   2 curves : {p0.xy, p1.xy, c.xy} quadratic control points
  */
+const TAPS = 3
+
 export const SLUG_WGSL = /* wgsl */ `
 ${FRAME_WGSL}
 
@@ -155,12 +157,16 @@ fn fs(in : VOut) -> @location(0) vec4f {
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   let invPx = 1.0 / max(fwidth(in.em.x), 1e-5);
   let pxH = max(fwidth(in.em.y), 1e-5);
-  // 3-tap vertical supersample for anti-aliasing of near-horizontal edges.
+  // ${TAPS}-tap vertical supersample for anti-aliasing of near-horizontal
+  // edges: the row coverage is analytic in x only, so a stem's sides are
+  // exact while a bowl's top and bottom see one coverage level per tap.
   let ey = in.em.y;
-  let c0 = abs(coverage_row(vec2f(in.em.x, ey - 0.36 * pxH), g.gref, invPx));
-  let c1 = abs(coverage_row(vec2f(in.em.x, ey), g.gref, invPx));
-  let c2 = abs(coverage_row(vec2f(in.em.x, ey + 0.36 * pxH), g.gref, invPx));
-  let cov = clamp((c0 + c1 + c2) / 3.0, 0.0, 1.0);
+  var sum = 0.0;
+  for (var k = 0; k < ${TAPS}; k = k + 1) {
+    let off = (f32(k) + 0.5) / f32(${TAPS}) - 0.5;
+    sum = sum + abs(coverage_row(vec2f(in.em.x, ey + off * pxH), g.gref, invPx));
+  }
+  let cov = clamp(sum / f32(${TAPS}), 0.0, 1.0);
   let a = cov * g.color.a;
   return vec4f(g.color.rgb * a, a);
 }

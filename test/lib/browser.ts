@@ -8,7 +8,10 @@ export const SWIFTSHADER_ARGS = [
   '--enable-features=Vulkan',
   '--use-angle=swiftshader',
   '--use-vulkan=swiftshader',
-  '--ignore-gpu-blocklist'
+  '--ignore-gpu-blocklist',
+  // Grayscale text AA, like macOS/`-webkit-font-smoothing: antialiased`;
+  // subpixel (LCD) fringes are noise the GPU can't match.
+  '--disable-lcd-text'
 ]
 
 async function waitForAdapter(page: Page): Promise<boolean> {
@@ -33,7 +36,10 @@ export async function launchWithFallback(
   const executablePath = process.env.CHROMIUM_PATH || undefined
   const launchOpts = { executablePath } as const
 
-  const probe = await chromium.launch({ ...launchOpts, args: [] })
+  const probe = await chromium.launch({
+    ...launchOpts,
+    args: ['--disable-lcd-text']
+  })
   try {
     const page = await probe.newPage()
     // Needs a secure context, so probe against the real dev-server origin

@@ -6,11 +6,22 @@ import { log } from '../util/log'
 export const ATLAS_PAD = 1
 const SIZES = [1024, 2048, 4096] as const
 const MAX_SIZE = 4096
-const COLOR_RE = /\p{Extended_Pictographic}|\p{Emoji_Presentation}/u
+// Default-emoji-presentation code points only. Extended_Pictographic would
+// also catch text-presentation symbols the browser draws as glyphs from the
+// page's font — ©, ®, ™, ↔, ☑ … — which Slug should draw too.
+const COLOR_RE = /\p{Emoji_Presentation}/u
+const VS15 = '\ufe0e' // text presentation requested
+const VS16 = '\ufe0f' // emoji presentation requested
 
 /** True for graphemes the browser should draw in their native colours. */
 export function isColorGrapheme(s: string): boolean {
-  return s.includes('️') || COLOR_RE.test(s)
+  if (s.includes(VS16)) {
+    return true
+  }
+  if (s.includes(VS15)) {
+    return false
+  }
+  return COLOR_RE.test(s)
 }
 
 /** One rasterised grapheme. Lengths are atlas (device) px. */

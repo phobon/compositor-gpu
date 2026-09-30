@@ -152,8 +152,50 @@ function carriesStylesheet(n: Node): boolean {
  * (captured on the root) in `animating`; while any run, the frame re-reads
  * `animatingScopes()` every frame.
  */
+/** Elements carrying this attribute (and their subtrees) are neither
+ * mirrored nor watched: debug overlays, the page's own stats readouts,
+ * anything that would otherwise invalidate the mirror every frame. */
+export const IGNORE_ATTR = 'data-gpu-ignore'
+
+export const isIgnored = (n: Node): boolean => {
+  const el = n instanceof Element ? n : n.parentElement
+  return el !== null && el.closest(`[${IGNORE_ATTR}]`) !== null
+}
+
+/** Why the mirror was invalidated, cumulative since start(), plus the last
+ * mutation's target — for `stats().sync`. */
+export interface SyncDiagnostics {
+  layout: number
+  style: number
+  content: number
+  mutation: number
+  /** Elements currently tracked as running a CSS transition/animation. */
+  animating: number
+  /** Tag/id/class of the last mutation record's target. */
+  last: string
+}
+
+const describeEl = (n: Node): string => {
+  const el = n instanceof Element ? n : n.parentElement
+  if (!el) {
+    return String(n.nodeName)
+  }
+  const cls = typeof el.className === 'string' ? el.className : ''
+  return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${
+    cls ? `.${cls.trim().split(/\s+/).slice(0, 2).join('.')}` : ''
+  }`
+}
+
 export class DomSync {
   private dirty: number = Dirty.ALL
+  readonly diag: SyncDiagnostics = {
+    layout: 0,
+    style: 0,
+    content: 0,
+    mutation: 0,
+    animating: 0,
+    last: ''
+  }
   private scopes = new Set<Element>()
   private spare = new Set<Element>()
   private ro: ResizeObserver
@@ -175,7 +217,16 @@ export class DomSync {
     this.mo = new MutationObserver((records) => {
       let flag = Dirty.NONE
       for (const r of records) {
-        flag |= this.scope(r)
+        if (isIgnored(r.target)) {
+          continue
+        }
+        const f = this.scope(r)
+        if (f !== Dirty.NONE) {
+          this.diag.last = `${r.type} ${describeEl(r.target)}${
+            r.attributeName ? `[${r.attributeName}]` : ''
+          }`
+        }
+        flag |= f
       }
       this.mark(flag)
     })
@@ -231,6 +282,19 @@ export class DomSync {
     if (flag === Dirty.NONE) {
       return
     }
+    const d = this.diag
+    if (flag & Dirty.LAYOUT) {
+      d.layout++
+    }
+    if (flag & Dirty.STYLE) {
+      d.style++
+    }
+    if (flag & Dirty.CONTENT) {
+      d.content++
+    }
+    if (flag & Dirty.MUTATION) {
+      d.mutation++
+    }
     this.dirty |= flag
     this.onInvalidate()
   }
@@ -260,7 +324,7 @@ export class DomSync {
 
   private onAnimStart = (e: Event): void => {
     const t = e.target
-    if (!(t instanceof Element)) {
+    if (!(t instanceof Element) || isIgnored(t)) {
       return
     }
     const had = this.animating.size
@@ -330,6 +394,7 @@ export class DomSync {
     }
     this.settled.clear()
     this.paintOnlyLast.clear()
+    this.diag.animating = this.animating.size
     for (const el of this.animating) {
       if (!el.isConnected) {
         this.animating.delete(el)

@@ -61,6 +61,12 @@
         width: 110px; height: 70px; background: #2a2a35;
         padding: 8px; font-size: 13px; color: #d6d6e0;
       }
+      .bftile {
+        width: 110px; height: 56px; background: #3b82f6;
+        padding: 6px; font-size: 13px; color: #f2f2f2;
+      }
+      .hairrow { gap: 13px; height: 28px; }
+      .hair { width: 40px; height: 24px; border: 1px solid #e2e8f0; }
       .shtile {
         width: 120px; height: 90px; border-radius: 12px; background: #3a3a48;
         padding: 10px; font-size: 13px; color: #d6d6e0;
@@ -518,6 +524,32 @@
         </p>
       </section>
 
+      <section data-vr="texttransform">
+        <p style="font-size: 22px; margin: 0;">
+          <span style="text-transform: uppercase;">uppercase text</span> ·
+          <span style="text-transform: lowercase;">LOWERCASE Text</span> ·
+          <span style="text-transform: capitalize;">capitalize each word-here (ok)</span>
+        </p>
+        <p style="font-size: 22px; margin: 0;">
+          <span style="text-transform: uppercase;">straße</span> ·
+          <span lang="tr" style="text-transform: uppercase;">istanbul iğne</span> ·
+          <span lang="en" style="text-transform: uppercase;">istanbul iğne</span>
+        </p>
+        <p class="liga" style="font-family: 'DejaVu Serif Play', serif; font-size: 28px; letter-spacing: 4px;">
+          office fifty +4px
+        </p>
+        <p class="liga" style="font-family: 'DejaVu Serif Play', serif; font-size: 28px; letter-spacing: -1px;">
+          office fifty -1px
+        </p>
+        <p class="liga" style="font-family: 'DejaVu Serif Play', serif; font-size: 28px;">
+          office fifty 0px
+        </p>
+        <h2 style="letter-spacing: 0.2em; font-weight: 700; margin: 4px 0;">TRACKED BOLD</h2>
+        <p style="font-size: 22px; margin: 0; direction: rtl; unicode-bidi: bidi-override; letter-spacing: 6px; text-align: left;">
+          rtl spaced
+        </p>
+      </section>
+
       <section data-vr="emoji">
         <h2>Emoji &amp; fallback glyphs</h2>
         <p>Ship it 🚀 — 👩‍🚀 flags 🇦🇺, kanji 漢字, math ∑∫, arrows → ←</p>
@@ -537,6 +569,22 @@
           <div class="bdtile" style="border-left: 4px solid #6a5cff;">callout</div>
           <div class="bdtile" style="border: 1px solid #94a3b8; border-top: 6px solid red; border-right: 2px solid lime; border-bottom: 10px solid #06b6d4; border-left: 3px solid #facc15; border-radius: 12px;">four sides</div>
           <div class="bdtile" style="border: 4px solid #f472b6; border-top-style: none; border-left-style: none; border-radius: 8px;">two none</div>
+        </div>
+      </section>
+
+      <section data-vr="borderfill">
+        <h2>Fill under borders</h2>
+        <div class="borderrow">
+          <div class="bftile" style="border: 4px dashed rgba(255,255,255,.35); border-radius: 12px;">dashed</div>
+          <div class="bftile" style="border: 6px solid rgba(0,0,0,.4);">solid</div>
+          <div class="bftile" style="border: 6px dotted rgba(250,204,21,.5); background-clip: padding-box;">padding-box</div>
+          <div class="bftile" style="border: 3px double rgba(255,255,255,.4); background-clip: content-box;">content-box</div>
+        </div>
+        <div class="borderrow hairrow">
+          <div class="hair" style="margin-left: 0.5px;"></div>
+          <div class="hair" style="margin-left: 0.3px; margin-top: 0.4px;"></div>
+          <div class="hair" style="margin-left: 0.7px; margin-top: 0.6px;"></div>
+          <div class="hair" style="margin-left: 0.25px; width: 40.5px; border-color: rgba(255,255,255,.5);"></div>
         </div>
       </section>
 

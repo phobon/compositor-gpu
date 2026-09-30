@@ -21,9 +21,11 @@ struct Box {
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
-  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset
+  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset;
+                    // plain box: w = gradient tile repeats
   sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
-                    // element box (outer) or the shadow box (inset)
+                    // element box (outer) or the shadow box (inset);
+                    // plain box: background-clip insets t, r, b, l
   shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
   bw     : vec4f,   // border widths top, right, bottom, left
   bc1    : vec4f,   // right border colour
@@ -72,6 +74,11 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   let r = select(top, bot, p.y > 0.0);
   let q = abs(p) - b + vec2f(r);
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
+}
+
+// Coverage of a pixel by the inside (d < 0) of an edge; fw = pixel size.
+fn edge_cov(d : f32, fw : f32) -> f32 {
+  return clamp(0.5 - d / fw, 0.0, 1.0);
 }
 
 // erf approximation (Abramowitz & Stegun 7.1.27, max error 5e-4).
@@ -239,6 +246,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
   // Shadow records' quads are padded by sh0.y; pad = 0 for plain boxes.
   let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
   let aa = max(fwidth(d), 1e-4);
+  // Pixel size in local units, for the edge ramps: fwidth(d) doubles where
+  // a pixel quad straddles a square corner's two SDF branches and blurs it.
+  let apx = max(length(vec2f(length(dpdx(in.local)),
+                             length(dpdy(in.local)))) * 0.70710678, 1e-4);
   let bw = b.bw; // top, right, bottom, left
   let opacity = b.params.y;
 
@@ -283,9 +294,24 @@ fn fs(in : VOut) -> @location(0) vec4f {
   // Uniform widths: the outer SDF offset inward, as the ring always was.
   let uniform = all(bw.xxx == bw.yzw);
   let dIn = select(sd_round_box(in.local - ic, ih, ir), d + bw.x, uniform);
-  let outerCov = 1.0 - smoothstep(-aa, aa, d);
-  let fillCov  = 1.0 - smoothstep(-aa, aa, dIn);
-  let borderCov = clamp(outerCov - fillCov, 0.0, 1.0);
+  // Box-filter coverage (one pixel wide ramp): a snapped 1px ring covers
+  // exactly one pixel row, as in Chrome.
+  let outerCov = edge_cov(d, apx);
+  let innerCov = edge_cov(dIn, apx);
+  let borderCov = clamp(outerCov - innerCov, 0.0, 1.0);
+
+  // Background painting area (background-clip): the border box inset by
+  // sh1 per side. Zero insets (border-box) reuse the outer SDF, insets
+  // equal to the widths (padding-box) the inner one.
+  let ci = b.sh1;
+  let fc = vec2f(ci.w - ci.y, ci.x - ci.z) * 0.5;
+  let fh = max(half - vec2f(ci.w + ci.y, ci.x + ci.z) * 0.5, vec2f(0.0));
+  let fr = max(b.radius - vec4f(max(ci.x, ci.w), max(ci.x, ci.y),
+                                max(ci.z, ci.y), max(ci.z, ci.w)), vec4f(0.0));
+  var dF = sd_round_box(in.local - fc, fh, fr);
+  dF = select(dF, dIn, all(ci == bw));
+  dF = select(dF, d, all(ci == vec4f(0.0)));
+  let fillCov = edge_cov(dF, apx);
 
   // Border side: the smallest distance into the ring, normalised by that
   // side's width — the CSS mitre from the outer to the inner corner.
@@ -301,14 +327,17 @@ fn fs(in : VOut) -> @location(0) vec4f {
   if (nd.z < best) { bc = b.bc2; best = nd.z; side = 2u; sw = bw.z; }
   if (nd.w < best) { bc = b.bc3; best = nd.w; side = 3u; sw = bw.w; }
   let style = (u32(b.params.x + 0.5) >> (2u * side)) & 3u;
-  var borderCov2 = borderCov;
+  var pat = 1.0;
   if (style != 0u && borderCov > 0.0) {
     let s = edge_arc_length(in.local, half, b.radius, side);
     let perim = edge_perimeter(half, b.radius);
     // Depth from the outer edge is -d: exact on the corner arcs too, where
     // the per-side distance would measure to the straight edge instead.
-    borderCov2 = borderCov * border_style_cov(style, s, -d, sw, perim, aa);
+    pat = border_style_cov(style, s, -d, sw, perim, aa);
   }
+  let bcov = borderCov * pat;
+  // Coverage where the fill lies under a painted part of the border.
+  let under = clamp(borderCov + fillCov - outerCov, 0.0, borderCov) * pat;
 
   // Background: gradient over fill, source-over, kept premultiplied.
   var bgp = b.fill.rgb * b.fill.a;
@@ -316,7 +345,17 @@ fn fs(in : VOut) -> @location(0) vec4f {
   if (b.grad.x > 0.5) {
     // Gradient box = padding box.
     let size = ih * 2.0;
-    let gp = in.local - ic;
+    var gp = in.local - ic;
+    var gm = 1.0;
+    if (b.sh0.w > 0.5) {
+      // Repeat: wrap into the tile, so the border area shows the far end.
+      let q = gp + ih;
+      let sz = max(size, vec2f(1e-4));
+      gp = q - floor(q / sz) * sz - ih;
+    } else {
+      let e = ih - abs(gp);
+      gm = clamp(min(e.x, e.y) / aa + 0.5, 0.0, 1.0);
+    }
     var t = 0.0;
     if (b.grad.x < 1.5) {
       let ang = b.grad.y;
@@ -327,14 +366,16 @@ fn fs(in : VOut) -> @location(0) vec4f {
       let c = (b.gradc.xy - vec2f(0.5)) * size;
       t = length((gp - c) / max(b.gradc.zw, vec2f(1e-4)));
     }
-    let g = gradient_at(t, u32(b.grad.z), u32(b.grad.w));
+    var g = gradient_at(t, u32(b.grad.z), u32(b.grad.w));
+    g.a = g.a * gm;
     bgp = g.rgb * g.a + bgp * (1.0 - g.a);
     bga = g.a + bga * (1.0 - g.a);
   }
 
-  let rgb = (bgp * fillCov + bc.rgb * bc.a * borderCov2) * opacity;
-  let a = (bga * fillCov + bc.a * borderCov2) * opacity;
-  return vec4f(rgb, a); // premultiplied
+  // Premultiplied: border source-over the fill where they overlap.
+  let bg = vec4f(bgp, bga);
+  let bd = vec4f(bc.rgb * bc.a, bc.a);
+  return (bd * bcov + bg * fillCov - bg * (bc.a * under)) * opacity;
 }
 `
 
@@ -454,18 +495,44 @@ export class BoxPass implements RenderPass {
     }
     const d = this.data
     const sd = this.stopData
+    const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
+    const snap = (v: number) => Math.round(v * dpr) / dpr
+    // Chrome floors border widths to device px, keeping at least one.
+    const snapW = (v: number) =>
+      v > 0 ? Math.max(1, Math.floor(v * dpr + 1e-3)) / dpr : 0
+    const keep = (v: number) => v
     let o = 0
     let so = 0
     for (const b of boxes) {
       const xf = b.xform
+      const sh = b.shadow
+      const bd = b.border
+      // Untransformed boxes snap their edges to device pixels, as Chrome
+      // does, so a 1px border lands on one pixel row instead of two.
+      const flat =
+        !sh && xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1
+      let tx = xf[4]
+      let ty = xf[5]
+      let w = b.local.w
+      let h = b.local.h
+      if (flat) {
+        const x0 = snap(tx)
+        const y0 = snap(ty)
+        const min = (v: number) => (v > 0 ? 1 / dpr : 0)
+        w = Math.max(snap(tx + w) - x0, min(w))
+        h = Math.max(snap(ty + h) - y0, min(h))
+        tx = x0
+        ty = y0
+      }
+      const sw = flat ? snapW : keep
       d[o++] = xf[0]
       d[o++] = xf[1]
       d[o++] = xf[2]
       d[o++] = xf[3]
-      d[o++] = xf[4]
-      d[o++] = xf[5]
-      d[o++] = b.local.w
-      d[o++] = b.local.h
+      d[o++] = tx
+      d[o++] = ty
+      d[o++] = w
+      d[o++] = h
       d[o++] = b.radius[0]
       d[o++] = b.radius[1]
       d[o++] = b.radius[2]
@@ -474,7 +541,6 @@ export class BoxPass implements RenderPass {
       d[o++] = b.fill.g
       d[o++] = b.fill.b
       d[o++] = b.fill.a
-      const bd = b.border
       const top = bd?.colors[0]
       d[o++] = top?.r ?? 0
       d[o++] = top?.g ?? 0
@@ -519,7 +585,6 @@ export class BoxPass implements RenderPass {
           d[o++] = 0
         }
       }
-      const sh = b.shadow
       if (sh) {
         d[o++] = sh.blur * 0.5
         d[o++] = sh.inset ? 0 : shadowPad(sh.blur)
@@ -534,13 +599,21 @@ export class BoxPass implements RenderPass {
         d[o++] = sh.inner.radius[2]
         d[o++] = sh.inner.radius[3]
       } else {
-        for (let k = 0; k < 12; k++) {
+        d[o++] = 0
+        d[o++] = 0
+        d[o++] = 0
+        d[o++] = g?.repeat ? 1 : 0
+        const bi = b.bgInset
+        for (let k = 0; k < 4; k++) {
+          d[o++] = bi ? sw(bi[k] ?? 0) : 0
+        }
+        for (let k = 0; k < 4; k++) {
           d[o++] = 0
         }
       }
       // Shadow records ignore `border`: zero widths keep the ring empty.
       for (let k = 0; k < 4; k++) {
-        d[o++] = sh || !bd ? 0 : (bd.widths[k] ?? 0)
+        d[o++] = sh || !bd ? 0 : sw(bd.widths[k] ?? 0)
       }
       for (let k = 1; k < 4; k++) {
         const c = bd?.colors[k]

@@ -79,6 +79,15 @@ export function graphemeClass(cell: string): GraphemeClass {
  *
  * `glyphId` is set to the grapheme's first code point as a placeholder; the
  * Slug font stage remaps it through the font cmap to a real glyph index.
+ * Both it and `text` come from the grapheme after `text-transform`; the
+ * rect is the source grapheme's, which is where the browser paints it.
+ *
+ * `letter-spacing` needs no correction here: Chrome adds it to each
+ * grapheme's advance on its right-hand side (in RTL runs too; see the
+ * playground's `texttransform` section), so the rect widens but its left
+ * edge stays at the pen origin, and both the Slug ink box (glyph bbox from
+ * the origin) and atlas quads are placed from that edge, not stretched to
+ * the rect width.
  */
 export function readTextNode(
   node: Text,
@@ -105,6 +114,11 @@ export function readTextNode(
   const italic = s.fontStyle === 'italic' || s.fontStyle.startsWith('oblique')
   const opsz = opticalSize(s, fontSize)
   const glyphs: Glyph[] = []
+  const tt = textTransformOf(s)
+  const lang = tt ? langOf(node.parentElement) : undefined
+  // The two source graphemes before the current one (capitalize context).
+  let b1 = ''
+  let b2 = ''
 
   const range = document.createRange()
   const cells = graphemes(text)
@@ -112,6 +126,10 @@ export function readTextNode(
   let index = startIndex
   for (const cell of cells) {
     const len = cell.length
+    const before = b1
+    const before2 = b2
+    b2 = b1
+    b1 = cell
     if (cell.trim().length === 0) {
       offset += len
       index += 1
@@ -122,15 +140,19 @@ export function readTextNode(
     const r = range.getBoundingClientRect()
     if (r.width > 0 && r.height > 0) {
       const rect = toDocRect(r)
-      const cls = graphemeClass(cell)
+      // The browser paints the transformed text in the source grapheme's
+      // rect; a transform that adds code points (ß -> SS) makes the cell a
+      // multi-code-point cluster, which the fallback atlas draws.
+      const shown = tt ? transformCell(cell, before, before2, tt, lang) : cell
+      const cls = graphemeClass(shown)
       glyphs.push({
         index,
         rect,
         // Untransformed; the reader re-derives these under a transform.
         xform: [1, 0, 0, 1, rect.x, rect.y],
         local: { w: rect.width, h: rect.height },
-        glyphId: cell.codePointAt(0) ?? 0,
-        text: cell,
+        glyphId: shown.codePointAt(0) ?? 0,
+        text: shown,
         colour: cls.colour,
         codePoints: cls.codePoints,
         fontId,
@@ -162,6 +184,99 @@ export function readTextNode(
     opacity: 1,
     z: 0
   }
+}
+
+export type TextTransform = 'uppercase' | 'lowercase' | 'capitalize'
+
+/** The case part of computed `text-transform`, or null. `full-width` and
+ * `full-size-kana` are ignored: they swap code points for wide / full-size
+ * forms, which is not implemented. */
+export function textTransformOf(
+  s: Pick<CSSStyleDeclaration, 'textTransform'>
+): TextTransform | null {
+  const v = s.textTransform ?? ''
+  if (v === '' || v === 'none') {
+    return null
+  }
+  if (v.includes('uppercase')) {
+    return 'uppercase'
+  }
+  if (v.includes('lowercase')) {
+    return 'lowercase'
+  }
+  return v.includes('capitalize') ? 'capitalize' : null
+}
+
+/** Content language of `el`: the closest `lang` attribute, if it is a
+ * valid tag for the case-mapping functions. */
+export function langOf(el: Element | null): string | undefined {
+  const lang = el?.closest('[lang]')?.getAttribute('lang') ?? ''
+  if (!lang) {
+    return undefined
+  }
+  try {
+    'i'.toLocaleUpperCase(lang)
+    return lang
+  } catch {
+    return undefined
+  }
+}
+
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u
+const MID_WORD = /^['\u2019.]$/u
+
+/**
+ * Case-map one grapheme under `tt`. `before` / `before2` are the one and
+ * two graphemes before it in the same text node ('' past its start).
+ * `capitalize` approximates the browser's word start (CSS Text 3 §2.1): a
+ * letter or number starts a word when the grapheme before it is not a
+ * letter, number or mark, except that an apostrophe or period between word
+ * characters is word-internal (don't, e.g.). Context does not cross text
+ * nodes, and upper case stands in for title case (ǆ, ß). Case mapping is
+ * per grapheme, so context-sensitive mappings (Greek final sigma under
+ * `lowercase`) are not applied.
+ */
+export function transformCell(
+  cell: string,
+  before: string,
+  before2: string,
+  tt: TextTransform,
+  lang: string | undefined
+): string {
+  if (tt === 'uppercase') {
+    return cell.toLocaleUpperCase(lang)
+  }
+  if (tt === 'lowercase') {
+    return cell.toLocaleLowerCase(lang)
+  }
+  if (!WORD_CHAR.test(cell) || WORD_CHAR.test(before)) {
+    return cell
+  }
+  if (MID_WORD.test(before) && WORD_CHAR.test(before2)) {
+    return cell
+  }
+  return cell.toLocaleUpperCase(lang)
+}
+
+/** Whole-string `text-transform` (text that is not ranged per grapheme,
+ * e.g. pseudo-element content). */
+export function transformText(
+  text: string,
+  tt: TextTransform | null,
+  lang: string | undefined
+): string {
+  if (!tt) {
+    return text
+  }
+  let out = ''
+  let b1 = ''
+  let b2 = ''
+  for (const g of graphemes(text)) {
+    out += transformCell(g, b1, b2, tt, lang)
+    b2 = b1
+    b1 = g
+  }
+  return out
 }
 
 /** `opsz` the browser instances a variable font at: the font-size under
@@ -229,10 +344,17 @@ export function readTextShadows(value: string, color: string): TextShadow[] {
   return out
 }
 
-/** Whether the browser applies the font's common ligatures (liga/clig). */
+/** Whether the browser applies the font's common ligatures (liga/clig).
+ * Chrome turns them off under a non-zero `letter-spacing`. */
 export function ligaturesEnabled(
-  s: Pick<CSSStyleDeclaration, 'fontVariantLigatures' | 'fontFeatureSettings'>
+  s: Pick<
+    CSSStyleDeclaration,
+    'fontVariantLigatures' | 'fontFeatureSettings' | 'letterSpacing'
+  >
 ): boolean {
+  if ((Number.parseFloat(s.letterSpacing ?? '') || 0) !== 0) {
+    return false
+  }
   const v = s.fontVariantLigatures ?? ''
   if (v === 'none' || v.includes('no-common-ligatures')) {
     return false
