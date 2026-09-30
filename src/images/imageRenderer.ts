@@ -497,16 +497,9 @@ export class ImagePass implements RenderPass {
         isSvgSource(srcKey(rec.source))
       ) {
         const dpr = this.shared.dpr || 1
-        const w = clamp(
-          Math.ceil(rec.local.w * dpr),
-          SVG_RASTER_MIN,
-          SVG_RASTER_MAX
-        )
-        const h = clamp(
-          Math.ceil(rec.local.h * dpr),
-          SVG_RASTER_MIN,
-          SVG_RASTER_MAX
-        )
+        const area = areaOf(rec)
+        const w = clamp(Math.ceil(area.w * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
+        const h = clamp(Math.ceil(area.h * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
         const raster = this.rasterizeSvg(rec.source, w, h)
         if (!raster) {
           d.fill(0, o, o + FLOATS_PER_IMAGE)
@@ -585,7 +578,8 @@ export class ImagePass implements RenderPass {
         this.draws.push(null)
         continue
       }
-      const f = fit(rec, nw, nh)
+      const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
+      const f = fit(dst, nw, nh)
       d[o + 0] = f.rect.x
       d[o + 1] = f.rect.y
       d[o + 2] = f.rect.w
@@ -609,15 +603,15 @@ export class ImagePass implements RenderPass {
       d[o + 21] = f.tile.y
       d[o + 22] = f.tile.w
       d[o + 23] = f.tile.h
-      const xf = rec.xform
+      const xf = dst.xform
       d[o + 24] = xf[0]
       d[o + 25] = xf[1]
       d[o + 26] = xf[2]
       d[o + 27] = xf[3]
       d[o + 28] = xf[4]
       d[o + 29] = xf[5]
-      d[o + 30] = rec.local.w
-      d[o + 31] = rec.local.h
+      d[o + 30] = dst.local.w
+      d[o + 31] = dst.local.h
 
       if (spot) {
         const s = this.atlas.size
@@ -749,6 +743,55 @@ interface Fit {
 const FULL_UV = { u0: 0, v0: 0, u1: 1, v1: 1 }
 const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
 
+/** The positioning area (background-origin) in the record's local space. */
+function areaOf(rec: ImageRecord): {
+  x: number
+  y: number
+  w: number
+  h: number
+} {
+  const [t, r, b, l] = rec.originInset ?? [0, 0, 0, 0]
+  return { x: l, y: t, w: rec.local.w - l - r, h: rec.local.h - t - b }
+}
+
+/**
+ * Snap an untransformed record's destination rect to device pixels, as the
+ * box pass does (edges rounded, size kept at 1 device px at least, origin
+ * insets floored like border widths). Sampling follows the snapped rect
+ * because `fit()` runs on the result. Transformed records pass through.
+ */
+function snapRecord(rec: ImageRecord, dpr: number): ImageRecord {
+  const xf = rec.xform
+  if (xf[0] !== 1 || xf[1] !== 0 || xf[2] !== 0 || xf[3] !== 1) {
+    return rec
+  }
+  const snap = (v: number) => Math.round(v * dpr) / dpr
+  const min = (v: number) => (v > 0 ? 1 / dpr : 0)
+  const x0 = snap(xf[4])
+  const y0 = snap(xf[5])
+  const w = Math.max(snap(xf[4] + rec.local.w) - x0, min(rec.local.w))
+  const h = Math.max(snap(xf[5] + rec.local.h) - y0, min(rec.local.h))
+  const inset = (v: number) =>
+    v === 0
+      ? 0
+      : (Math.sign(v) * Math.max(1, Math.floor(Math.abs(v) * dpr + 1e-3))) / dpr
+  return {
+    ...rec,
+    xform: [1, 0, 0, 1, x0, y0],
+    local: { w, h },
+    ...(rec.originInset
+      ? {
+          originInset: [
+            inset(rec.originInset[0]),
+            inset(rec.originInset[1]),
+            inset(rec.originInset[2]),
+            inset(rec.originInset[3])
+          ] as [number, number, number, number]
+        }
+      : {})
+  }
+}
+
 /**
  * Map object-fit/object-position (or the equivalent background-size /
  * background-position) to a quad rect and either a UV sub-rect (fill,
@@ -759,10 +802,7 @@ const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
  * top-left, see ImageRecord.xform).
  */
 function fit(rec: ImageRecord, natW: number, natH: number): Fit {
-  const x = 0
-  const y = 0
-  const w = rec.local.w
-  const h = rec.local.h
+  const { x, y, w, h } = areaOf(rec)
   const box = { x, y, w, h }
   const [px, py] = rec.position
 
@@ -770,7 +810,28 @@ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
     return { rect: box, uv: FULL_UV, tile: NO_TILE, flags: 0 }
   }
 
+  if (rec.originInset && rec.objectFit !== 'none') {
+    // The painted area differs from the positioning area (background-clip
+    // vs -origin): size the tile to the positioning area and sample by
+    // local position, so a repeating image continues past its edge.
+    const k =
+      rec.objectFit === 'fill'
+        ? null
+        : (rec.objectFit === 'cover' ? Math.max : Math.min)(w / natW, h / natH)
+    const tw = k === null ? w : natW * k
+    const th = k === null ? h : natH * k
+    return {
+      rect: { x: 0, y: 0, w: rec.local.w, h: rec.local.h },
+      uv: FULL_UV,
+      tile: { x: x + (w - tw) * px, y: y + (h - th) * py, w: tw, h: th },
+      flags: FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
+    }
+  }
+
   if (rec.objectFit === 'none') {
+    const rect = rec.originInset
+      ? { x: 0, y: 0, w: rec.local.w, h: rec.local.h }
+      : box
     const tile = {
       x: x + (w - natW) * px,
       y: y + (h - natH) * py,
@@ -778,7 +839,7 @@ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
       h: natH
     }
     const flags = FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
-    return { rect: box, uv: FULL_UV, tile, flags }
+    return { rect, uv: FULL_UV, tile, flags }
   }
 
   if (rec.objectFit === 'fill') {

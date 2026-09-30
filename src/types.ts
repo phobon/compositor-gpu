@@ -1,4 +1,5 @@
 import type { SyncDiagnostics } from './dom/observer'
+import type { TextReadStats } from './dom/textRuns'
 import type { Glyph } from './scene/records'
 
 /** Identifies a registered font face for per-run resolution. */
@@ -98,6 +99,10 @@ export interface CompositorStats {
    * means something on the page invalidates the mirror every frame; put
    * `data-gpu-ignore` on it if it isn't meant to be mirrored. */
   sync: SyncDiagnostics
+  /** The last DOM read's text geometry: glyphs, how many of them took a
+   * Range of their own instead of a canvas-split chunk (`FAST_TEXT_READ`),
+   * and Range layout queries issued. */
+  textRead: TextReadStats
   /** Wall time of the last DOM read (full or partial), ms. */
   readMs: number
   /** Wall time spent in pass uploads in the most recent render, ms. */

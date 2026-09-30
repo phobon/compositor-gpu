@@ -23,26 +23,42 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
 MDS-home `git -C compositor-gpu checkout -- . && git -C compositor-gpu pull`,
 then commit the pointer.
 
-**Uncommitted in compositor-gpu (and mirrored in the submodule):**
-`ROADMAP.md`, `src/compositor.ts`, `src/dom/observer.ts`, `src/dom/tree.ts`,
-`src/text/glyphAtlas.ts`, `src/text/slug/rasterizer.ts`,
-`src/text/slug/shaders.ts`, `src/types.ts`, `test/lib/browser.ts`. That is:
-Blink-style glyph placement (rounded ascent/descent, snapped baseline),
-`data-gpu-ignore`, `stats().sync` / `fallbackSamples` / `frameMs` /
-`maxDtMs`, replace mode honouring ignored subtrees, the emoji classifier
-fix, and the `--disable-lcd-text` harness flag. Typecheck, biome and all
-three harnesses pass on this tree (run in a Linux sandbox; see Gotchas).
+**Committed:** `d916275 Scroll-driven canvas` (everything up to the
+document-scrolling canvas) is on `origin/main`, and mds-home `ea95f754`
+points the submodule at it.
 
-**Uncommitted in MDS-home:** `src/components/utils/SEO.jsx` (JSON-LD as
-`@graph`), `src/components/Duo/{DuoFont,GpuCompositor,
-GpuStats,index,useGpuFlag}.js*`, `src/components/primitives/SharedLayout.jsx`
-(`gpuIgnoreChrome` prop), `src/components/TopNav/HeaderMenu/NavMenu.jsx`
-(`data-gpu-ignore` on the portalled popup). Prettier + ESLint pass.
+**Uncommitted in compositor-gpu (2026-09-30 batch c, standalone checkout
+only — the submodule is left for `fetch`/`checkout`):** `CLAUDE.md`,
+`ROADMAP.md`, `docs/UPSTREAM-gvar.md` (new), `playground/index.html`,
+`src/boxes/boxRenderer.ts`, `src/compositor.ts`, `src/dom/backgrounds.ts`,
+`src/dom/styles.ts`, `src/dom/textRuns.ts`, `src/dom/tree.ts`,
+`src/images/imageRenderer.ts`, `src/scene/records.ts`, `src/types.ts`,
+`test/perf/run.ts`. Contents: (1) dashed/dotted borders fitted per side
+(square corners) or along the inset centre path (rounded), matching
+Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
+the `/duo` placeholder border is now pixel-identical, `duo` parity
+1.15 → 0.56; (2) `url()` backgrounds honour `background-clip` /
+`background-origin`, tile into the border area, and snap to device pixels
+like boxes (`ImageRecord.originInset`, shared `boxInset` helper, border
+split into a border-only box when an image reaches under it);
+(3) `FAST_TEXT_READ` in `dom/textRuns.ts`: one `getClientRects()` per text
+node, then per-chunk / per-grapheme fallbacks, with canvas-measured splits
+verified against the browser rect within 0.05 px — Range queries on
+perf.html 84k → 15k, full read ~26% faster, geometry within 0.031 px,
+`stats().textRead` counts the fallbacks. Typecheck, biome, test:visual
+(all parity ≤ previous; goldens rewritten), test:perf (full read 425 ms,
+123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Full diff
+of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
+untracked; delete after reading).
 
-Stale git lock files were left by git runs from the Cowork VM (it cannot
-delete): remove `.git/index.lock` under `~/code/compositor-gpu`, MDS-home,
-and MDS-home's `.git/modules/compositor-gpu/` before any git work. Also
-delete `MDS-home/_to_delete/` and `compositor-gpu/_to_delete_ROADMAP.md.tmp`.
+**MDS-home:** clean at `ea95f754` (Duo wiring, SEO `@graph` fix,
+submodule pointer). Next bump after committing batch (c): `git -C
+compositor-gpu fetch origin && git -C compositor-gpu checkout origin/main
+&& git add compositor-gpu && git commit`.
+
+Git runs from the Cowork VM leave lock files it cannot delete
+(`.git/index.lock`, `.git/modules/compositor-gpu/index.lock`); remove
+any that exist before git work.
 
 ## Running it
 

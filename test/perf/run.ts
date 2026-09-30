@@ -42,6 +42,7 @@ interface Stats {
   uploadMs: number
   encodeMs: number
   fps: number
+  textRead: { graphemes: number; perGrapheme: number; ranges: number }
 }
 
 function median(xs: number[]): number {
@@ -190,6 +191,9 @@ async function main(): Promise<void> {
 
     // (a) full read.
     const fullReadMs = await sampleReadMs(page, 'full', 10)
+    const textRead = (
+      (await page.evaluate(() => window.__perf?.stats())) as Stats
+    ).textRead
     // (b) partial read (text edit).
     const textReadMs = await sampleReadMs(page, 'text', 20)
     // Also: partial read (class toggle).
@@ -218,6 +222,7 @@ async function main(): Promise<void> {
         groups: finalStats.groups,
         readElements: finalStats.readElements
       },
+      textRead,
       fullRead: { medianMs: median(fullReadMs), p90Ms: p90(fullReadMs) },
       partialReadText: {
         medianMs: median(textReadMs),
@@ -257,6 +262,7 @@ function printTable(r: {
     groups: number
     readElements: number
   }
+  textRead: Stats['textRead']
   fullRead: { medianMs: number; p90Ms: number }
   partialReadText: { medianMs: number; p90Ms: number }
   partialReadClass: { medianMs: number; p90Ms: number }
@@ -277,6 +283,13 @@ function printTable(r: {
       `images=${r.counts.images} fallback=${r.counts.fallback} ` +
       `batches=${r.counts.batches} draws=${r.counts.draws} ` +
       `groups=${r.counts.groups} readElements=${r.counts.readElements}`
+  )
+  const t = r.textRead
+  console.log(
+    `  full-read text: graphemes=${t.graphemes} ` +
+      `perGrapheme=${t.perGrapheme} ` +
+      `(${((100 * t.perGrapheme) / Math.max(1, t.graphemes)).toFixed(1)}%) ` +
+      `ranges=${t.ranges}`
   )
   console.log('\n  metric                median (ms)   p90 (ms)')
   console.log('  --------------------------------------------')

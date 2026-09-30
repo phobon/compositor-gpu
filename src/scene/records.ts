@@ -152,6 +152,13 @@ export interface ImageRecord {
   repeat: boolean
   /** Border radii of the owning element, used to clip the quad. */
   radius: Corners
+  /**
+   * Background positioning area (background-origin) as per-side insets
+   * [top, right, bottom, left] from the record's local box (the painted
+   * area, background-clip). Negative when the origin box is the larger.
+   * Absent: the positioning area is the local box.
+   */
+  originInset?: [number, number, number, number]
   /** Multiplier applied by the pass. The reader writes 1: an element's
    * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number

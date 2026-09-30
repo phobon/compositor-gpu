@@ -1,8 +1,12 @@
 import type { ImageRecord, Rect } from '../scene/records'
 import { splitTopLevel } from '../util/css'
-import { paddingPlacement } from './pseudo'
-import { mapBackgroundPosition, readCorners } from './styles'
-import { type Placement, placementAabb } from './transform'
+import {
+  boxInset,
+  insetCorners,
+  mapBackgroundPosition,
+  readCorners
+} from './styles'
+import { type Placement, placementAabb, subPlacement } from './transform'
 
 /**
  * The URL of the first `background-image` layer, or null when that layer
@@ -131,17 +135,26 @@ export function disposeBackgrounds(owner: object): void {
   }
 }
 
+/** Layer `i` of a comma list; the list repeats to cover every layer. */
+function layerValue(list: string, i: number, fallback: string): string {
+  const parts = splitTopLevel(list, ',')
+  return (
+    (parts.length ? (parts[i % parts.length] ?? '') : '').trim() || fallback
+  )
+}
+
 /**
  * Build an ImageRecord for an element's first `background-image` url layer,
- * or null when there isn't one (none, a gradient, or still loading).
- * `place` is the element's border-box placement (see transform.ts). The
- * tile/cover/contain area is the padding box (CSS `background-origin:
- * padding-box`, the default), so the record's local box is the border box
- * inset by the border widths (its `rect` is that box's doc-space AABB).
- * `ImageRecord` has only one local box, used for both placement and the
- * border-radius clip, so the clip ends up applied to the padding box too
- * — a minor approximation (the border ring itself isn't otherwise clipped
- * by the radius here anyway). `onReady` is called once the image finishes
+ * or null when there isn't one (none, a gradient, or still loading). Later
+ * layers are not painted. `place` is the element's border-box placement
+ * (see transform.ts).
+ *
+ * The record's local box is the layer's painting area (`background-clip`,
+ * border-box by default) and its radii follow that box (outer radii minus
+ * the insets). The tile/cover/contain area is the `background-origin` box
+ * (padding-box by default), carried as `originInset` relative to the local
+ * box. `background-clip` and `-origin` are read at the layer's index (0);
+ * `text` clips as border-box. `onReady` is called once the image finishes
  * loading, so the caller can re-read the element (see loadBackground for
  * `owner`).
  */
@@ -165,26 +178,51 @@ export function readBackgroundImage(
   if (!img) {
     return null
   }
-  const pad = paddingPlacement(s, place)
-  if (pad.local.w <= 0 || pad.local.h <= 0) {
+  const clipBox = layerValue(s.backgroundClip, 0, 'border-box')
+  const originBox = layerValue(s.backgroundOrigin, 0, 'padding-box')
+  const ci = boxInset(s, clipBox)
+  const oi = boxInset(s, originBox)
+  const area = subPlacement(
+    place,
+    ci[3],
+    ci[0],
+    Math.max(0, place.local.w - ci[1] - ci[3]),
+    Math.max(0, place.local.h - ci[0] - ci[2])
+  )
+  const origin: [number, number, number, number] = [
+    oi[0] - ci[0],
+    oi[1] - ci[1],
+    oi[2] - ci[2],
+    oi[3] - ci[3]
+  ]
+  if (
+    area.local.w <= 0 ||
+    area.local.h <= 0 ||
+    area.local.w - origin[1] - origin[3] <= 0 ||
+    area.local.h - origin[0] - origin[2] <= 0
+  ) {
     return null
   }
   return {
     kind: 'image',
     id,
-    rect: placementAabb(pad),
-    xform: pad.xform,
-    local: pad.local,
+    rect: placementAabb(area),
+    xform: area.xform,
+    local: area.local,
     source: img,
     objectFit: mapBackgroundSize(s.backgroundSize),
     position: mapBackgroundPosition(s.backgroundPosition),
     repeat: mapBackgroundRepeat(s.backgroundRepeat),
-    radius: readCorners(s, {
-      x: 0,
-      y: 0,
-      width: place.local.w,
-      height: place.local.h
-    }),
+    radius: insetCorners(
+      readCorners(s, {
+        x: 0,
+        y: 0,
+        width: place.local.w,
+        height: place.local.h
+      }),
+      ci
+    ),
+    ...(origin.some((v) => v !== 0) ? { originInset: origin } : {}),
     opacity: 1,
     z: 0,
     clip,

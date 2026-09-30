@@ -226,26 +226,51 @@ function readBgInset(
 ): [number, number, number, number] | null {
   const layers = splitTopLevel(s.backgroundClip || 'border-box', ',')
   const clip = (layers[layers.length - 1] ?? '').trim()
-  if (clip !== 'padding-box' && clip !== 'content-box') {
-    return null
-  }
-  // Read the widths directly: `border` is null when no side paints, but a
-  // transparent border still insets the padding box.
+  return clip === 'padding-box' || clip === 'content-box'
+    ? boxInset(s, clip)
+    : null
+}
+
+/**
+ * Insets [top, right, bottom, left] of a CSS box (`border-box`,
+ * `padding-box`, `content-box`) from the border box. Reads the widths
+ * directly: a transparent border still insets the padding box.
+ */
+export function boxInset(
+  s: CSSStyleDeclaration,
+  box: string
+): [number, number, number, number] {
   const w = (width: string, style: string) =>
     NO_BORDER_STYLE.has(style) ? 0 : px(width)
-  const inset: [number, number, number, number] = [
-    w(s.borderTopWidth, s.borderTopStyle),
-    w(s.borderRightWidth, s.borderRightStyle),
-    w(s.borderBottomWidth, s.borderBottomStyle),
-    w(s.borderLeftWidth, s.borderLeftStyle)
-  ]
-  if (clip === 'content-box') {
+  const inset: [number, number, number, number] = [0, 0, 0, 0]
+  if (box !== 'padding-box' && box !== 'content-box') {
+    return inset
+  }
+  inset[0] = w(s.borderTopWidth, s.borderTopStyle)
+  inset[1] = w(s.borderRightWidth, s.borderRightStyle)
+  inset[2] = w(s.borderBottomWidth, s.borderBottomStyle)
+  inset[3] = w(s.borderLeftWidth, s.borderLeftStyle)
+  if (box === 'content-box') {
     inset[0] += px(s.paddingTop)
     inset[1] += px(s.paddingRight)
     inset[2] += px(s.paddingBottom)
     inset[3] += px(s.paddingLeft)
   }
   return inset
+}
+
+/** Border radii of an inset box: each corner's radius minus the larger of
+ * its two adjacent insets, clamped at 0. */
+export function insetCorners(
+  radius: Corners,
+  [t, r, b, l]: [number, number, number, number]
+): Corners {
+  return [
+    Math.max(0, radius[0] - Math.max(t, l)),
+    Math.max(0, radius[1] - Math.max(t, r)),
+    Math.max(0, radius[2] - Math.max(b, r)),
+    Math.max(0, radius[3] - Math.max(b, l))
+  ]
 }
 
 const NO_BORDER_STYLE = new Set(['none', 'hidden'])

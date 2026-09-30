@@ -33,10 +33,15 @@ naga-cli`) before a run.
 (400 cards, ~4.8k elements, ~84k glyphs) headless and reports full-read,
 partial-read and frame-encode medians (`test/perf/out/last.json`);
 `npx tsx test/perf/profile.ts` writes a CPU profile of five full reads to
-`test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~370 ms
-(dominated by per-grapheme `Range.getBoundingClientRect`, the approach's
-floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms; timings swing ±30% run to run in the sandbox, so compare A/B in
-the same session. That page draws in ~114 calls: the batch builder indexes
+`test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~430 ms
+(587 ms with a Range per grapheme, same session), partial read ~20–50 ms
+(mostly the browser's own reflow), encode <1 ms; the run also prints
+`stats().textRead`. Range reads are no longer the floor: `FAST_TEXT_READ`
+cut them from 84k to ~15k per full read (profile: 1103 → 332 ms native
+over five reads); what remains is 40 rotated cards (the split is off under
+a transform), 16px titles (opsz mismatch, see Text), and computed-style
+reads. Timings swing ±30% run to run in the sandbox (more when other
+jobs share the machine), so compare A/B in the same session. That page draws in ~114 calls: the batch builder indexes
 members in a 128px grid and tests text runs per glyph (a run's union rect
 spans whole paragraphs and blocked every merge), and shadow records use a
 1.5σ `batchRect` footprint.
@@ -221,7 +226,17 @@ provenance. Pipeline:
 
 1. `dom/textRuns.ts` ranges over each **grapheme** (`Intl.Segmenter`) in a text
    node and takes its client rect — this is how the browser's shaping, kerning,
-   bidi and line breaking are inherited for free. `glyphId` is the
+   bidi and line breaking are inherited for free. With `FAST_TEXT_READ`
+   (on; off under a transform) it takes far fewer rects: one
+   `getClientRects()` per text node (a rect per line fragment), with lines
+   and graphemes placed from Canvas 2D `measureText` suffix widths
+   (`readLines`), else one Range per whitespace-free chunk (`readChunk`),
+   else per grapheme. A split is used only when the canvas widths match the
+   browser's rects within 0.05px; ligature candidates (`f[fijlt]`), non-Latin
+   scripts, emoji, bidi, justify and styles the canvas `font` can't carry
+   (feature/variation settings, `font-optical-sizing: none` on an opsz
+   axis) take the per-grapheme path. `stats().textRead` counts graphemes,
+   per-grapheme reads and Range queries. `glyphId` is the
    grapheme's **first code point**; `SlugText` remaps it through the font cmap.
    Ligatures: `font.ts` builds a `liga`/`clig` lookup from GSUB and the
    rasterizer draws the ligature glyph over adjacent, abutting, same-line

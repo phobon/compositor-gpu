@@ -1,5 +1,6 @@
 import { BoxPass } from './boxes/boxRenderer'
 import { Dirty, DomSync, IGNORE_ATTR } from './dom/observer'
+import { textReadStats } from './dom/textRuns'
 import { SceneReader } from './dom/tree'
 import { initGpu } from './gpu/device'
 import { Renderer } from './gpu/renderer'
@@ -426,6 +427,7 @@ export async function createCompositor(
       readElements: reader.readElements,
       partialReads: reader.partialReads,
       sync: { ...sync.diag },
+      textRead: { ...textReadStats },
       readMs,
       uploadMs: renderer.lastUploadMs,
       encodeMs: renderer.lastEncodeMs,
@@ -501,6 +503,7 @@ function inert(): Compositor & { text: null; scene: null } {
         animating: 0,
         last: ''
       },
+      textRead: { graphemes: 0, perGrapheme: 0, ranges: 0 },
       readMs: 0,
       uploadMs: 0,
       encodeMs: 0,

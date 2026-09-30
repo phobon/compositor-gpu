@@ -26,7 +26,8 @@ struct Box {
   sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
                     // element box (outer) or the shadow box (inset);
                     // plain box: background-clip insets t, r, b, l
-  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
+  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl; plain box:
+                    // dash path arc lengths tl, tr, br, bl
   bw     : vec4f,   // border widths top, right, bottom, left
   bc1    : vec4f,   // right border colour
   bc2    : vec4f,   // bottom border colour
@@ -156,85 +157,187 @@ fn gradient_at(t : f32, start : u32, count : u32) -> vec4f {
   return c0;
 }
 
-// Arc length along the outer rounded-rect edge, clockwise from the start
-// of the top edge (just after the top-left arc), for the point on the edge
-// nearest p (centred local coords, y down). side is the winning border
-// side (0 top, 1 right, 2 bottom, 3 left), so straight runs never bleed
-// into a neighbour's parameterisation; corner arcs take the angle about
-// the corner centre. Used to lay dashes and dots along the border.
-fn edge_arc_length(p : vec2f, half : vec2f, r : vec4f, side : u32) -> f32 {
-  let q = 1.5707963;
-  let lt = 2.0 * half.x - r.x - r.y;
-  let lr = 2.0 * half.y - r.y - r.z;
-  let lb = 2.0 * half.x - r.z - r.w;
-  let ll = 2.0 * half.y - r.w - r.x;
-  // Segment starts: top, tr arc, right, br arc, bottom, bl arc, left, tl arc.
-  let s1 = lt;
-  let s2 = s1 + q * r.y;
-  let s3 = s2 + lr;
-  let s4 = s3 + q * r.z;
-  let s5 = s4 + lb;
-  let s6 = s5 + q * r.w;
-  let s7 = s6 + ll;
-  let total = s7 + q * r.x;
-  // Corner arcs: p inside a corner's radius square.
-  if (p.x > half.x - r.y && p.y < -half.y + r.y) {
-    let c = vec2f(half.x - r.y, -half.y + r.y);
-    let a = atan2(p.y - c.y, p.x - c.x); // -q (top) .. 0 (right)
-    return s1 + (a + q) * r.y;
-  }
-  if (p.x > half.x - r.z && p.y > half.y - r.z) {
-    let c = vec2f(half.x - r.z, half.y - r.z);
-    let a = atan2(p.y - c.y, p.x - c.x); // 0 .. q
-    return s3 + a * r.z;
-  }
-  if (p.x < -half.x + r.w && p.y > half.y - r.w) {
-    let c = vec2f(-half.x + r.w, half.y - r.w);
-    let a = atan2(p.y - c.y, p.x - c.x); // q .. pi
-    return s5 + (a - q) * r.w;
-  }
-  if (p.x < -half.x + r.x && p.y < -half.y + r.x) {
-    let c = vec2f(-half.x + r.x, -half.y + r.x);
-    let a = atan2(p.y - c.y, p.x - c.x); // -pi .. -q
-    return s7 + (a + 3.1415927) * r.x;
-  }
-  switch (side) {
-    case 0u: { return p.x + half.x - r.x; }
-    case 1u: { return s2 + p.y + half.y - r.y; }
-    case 2u: { return s4 + half.x - r.z - p.x; }
-    default: { return s6 + half.y - r.w - p.y; }
-  }
+// Blink's SelectBestDashGap (platform/graphics/styled_stroke_data.cc): the
+// gap nearest g that fits a whole number of d-long dashes into len; an open
+// path ends on a dash at both ends.
+fn best_dash_gap(len : f32, d : f32, g : f32, closed : bool) -> f32 {
+  let k = select(1.0, 0.0, closed);
+  let n0 = floor((len + g * k) / (d + g));
+  let n1 = n0 + 1.0;
+  let g0 = (len - n0 * d) / max(n0 - k, 1.0);
+  let g1 = (len - n1 * d) / max(n1 - k, 1.0);
+  return select(g1, g0, g1 <= 0.0 || abs(g0 - g) < abs(g1 - g));
 }
 
-fn edge_perimeter(half : vec2f, r : vec4f) -> f32 {
-  return 4.0 * (half.x + half.y) - (2.0 - 1.5707963) * (r.x + r.y + r.z + r.w);
+// Coverage of the pixel centred at x by the span [x0, x1]; a = pixel size.
+fn span_cov(x : f32, x0 : f32, x1 : f32, a : f32) -> f32 {
+  return clamp(min(x - x0, x1 - x) / a + 0.5, 0.0, 1.0);
 }
 
-// Coverage multiplier for a dashed/dotted/double border at arc length s,
-// ring depth depth (px in from the outer edge) on a side of width w.
-// Dashes are 3w long with ~2w gaps, dots w with w gaps, both with the
-// period stretched so a whole number of them closes the loop (the browser
-// fits the pattern to the path). Dots 3px or wider are round. Double is two
-// w/3 lines with a w/3 gap.
-fn border_style_cov(style : u32, s : f32, depth : f32, w : f32,
-                    perim : f32, aa : f32) -> f32 {
+// Blink's dash pattern at s along a stroked path of whole-px length len,
+// after DashEffectFromStrokeStyle (platform/graphics/styled_stroke_data.cc):
+// dashed is 3w on / 2w off under 3px and 2w / w from 3px, with the gap
+// refitted; dotted up to 3px is w / w square dashes, not refitted; wider
+// dots are round, diameter w, one centred at s = 0, spacing refitted.
+// Paths no longer than two dashes are solid. dc: depth of the path in from
+// the outer edge, depth: the pixel's.
+fn dash_cov(style : u32, s : f32, len : f32, closed : bool, w : f32,
+            depth : f32, dc : f32, a : f32) -> f32 {
+  if (style == 2u && w > 3.0) {
+    var period = 2.0 * w;
+    if (len >= period) {
+      period = best_dash_gap(len, w, w, closed) + w - 0.01;
+    }
+    let u = s - floor(s / period) * period;
+    let c = vec2f(min(u, period - u), depth - dc);
+    return clamp((w * 0.5 - length(c)) / a + 0.5, 0.0, 1.0);
+  }
+  let thin = w < 3.0;
+  var d = w;
+  var g = w;
+  if (style == 1u) {
+    d = select(2.0, 3.0, thin) * w;
+    g = select(1.0, 2.0, thin) * w;
+  }
+  if (len <= 2.0 * d) { return 1.0; }
+  let two = 2.0 * d + g + select(0.0, g, closed);
+  if (len <= two) {
+    d = d * len / two;
+    g = g * len / two;
+  } else if (style == 1u) {
+    g = best_dash_gap(len, d, g, closed);
+  }
+  let period = d + g;
+  let u = s - floor(s / period) * period;
+  return span_cov(u, 0.0, d, a) + span_cov(u, period, period + d, a);
+}
+
+// Square dots (w <= 3) on a straight side, after Blink's
+// EnforceDotsAtEndpoints (core/paint/box_border_painter.cc): a whole dot at
+// each end, grown or with its gap moved by 1px, keyed on len mod 2w.
+fn thin_dots_cov(x : f32, len : f32, w : f32, a : f32) -> f32 {
+  if (len <= 3.0 * w) {
+    return dash_cov(2u, x, len, false, w, 0.0, 0.0, a);
+  }
+  let n = i32(len);
+  let wi = i32(w);
+  let m4 = n % 4;
+  let m6 = n % 6;
+  var sd = false;
+  var sg = 0.0;
+  var so = 0.0;
+  var ed = false;
+  var eg = 0.0;
+  if ((wi == 1 && n % 2 == 0) || (wi == 3 && m6 == 0)) {
+    sd = true;
+    sg = 1.0;
+    so = 1.0;
+  }
+  if ((wi == 2 && m4 <= 1) || (wi == 3 && (m6 == 1 || m6 == 2))) {
+    sd = true;
+    so = -1.0;
+  }
+  if ((wi == 2 && m4 == 0) || (wi == 3 && m6 == 1)) { ed = true; }
+  if ((wi == 2 && m4 == 3) || (wi == 3 && m6 >= 4)) {
+    sd = true;
+    so = 1.0;
+  }
+  if (wi == 3 && m6 == 5) {
+    ed = true;
+  } else if (wi == 3 && m6 == 0) {
+    ed = true;
+    eg = 1.0;
+  }
+  var p1 = 0.0;
+  var p2 = len;
+  var c = 0.0;
+  if (sd) {
+    c = span_cov(x, 0.0, w + sg, a);
+    p1 = 2.0 * w + so;
+  }
+  if (ed) {
+    c = max(c, span_cov(x, len - w - eg, len, a));
+    p2 = len - (w + eg + 1.0);
+  }
+  let t = x - p1;
+  let u = t - floor(t / (2.0 * w)) * 2.0 * w;
+  let dots = span_cov(u, 0.0, w, a) + span_cov(u, 2.0 * w, 3.0 * w, a);
+  return max(c, dots * span_cov(x, p1, p2, a));
+}
+
+// Dashed / dotted / double coverage at centred local p on side (0 top,
+// 1 right, 2 bottom, 3 left) of width w; depth is px in from the outer
+// edge. Blink (core/paint/box_border_painter.cc) strokes a box without
+// radii one side at a time, each from outer corner to outer corner
+// (PaintOneBorderSide -> DrawDashedOrDottedBoxSide), so the pattern is
+// fitted per side and both sides' dashes cover each corner. A box with any
+// radius is stroked as one closed path down the middle of the border
+// (DrawCurvedDashedDottedBoxSide), clockwise from where the top edge leaves
+// the top-left arc, fitted to the whole length; that path is inset by
+// floor(w / 2) (CenterOutsets goes through FromInts). Dash ends are square
+// to the path, so radial on the arcs. Double is two w/3 lines with a w/3
+// gap.
+fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
+                    arc : vec4f, bw : vec4f, side : u32, w : f32,
+                    depth : f32, aa : f32, a : f32) -> f32 {
   if (style == 3u) {
     let t = depth / max(w, 1e-4);
     let inner = smoothstep(2.0 / 3.0 - aa / w, 2.0 / 3.0 + aa / w, t);
     let outer = 1.0 - smoothstep(1.0 / 3.0 - aa / w, 1.0 / 3.0 + aa / w, t);
     return max(inner, outer);
   }
-  let dash = select(w, 3.0 * w, style == 1u);
-  let gap0 = select(w, 2.0 * w, style == 1u);
-  let n = max(1.0, round(perim / (dash + gap0)));
-  let period = perim / n;
-  let u = s - floor(s / period) * period; // 0 .. period
-  if (style == 2u && w >= 3.0) {
-    let c = vec2f(u - dash * 0.5, depth - w * 0.5);
-    return 1.0 - smoothstep(w * 0.5 - aa, w * 0.5 + aa, length(c));
+  let wr = max(round(w), 1.0);
+  if (all(r <= vec4f(0.0))) {
+    let horiz = side == 0u || side == 2u;
+    let len = round(select(2.0 * half.y, 2.0 * half.x, horiz));
+    let x = select(p.y + half.y, p.x + half.x, horiz);
+    if (style == 2u && wr <= 3.0) { return thin_dots_cov(x, len, wr, a); }
+    // Round dots: the line is pulled in by w/2 at each end, the spacing
+    // still fitted to the full length.
+    let s = select(x, x - wr * 0.5, style == 2u);
+    return dash_cov(style, s, len, false, wr, depth, wr * 0.5, a);
   }
-  let e = min(u, dash - u); // signed distance inside the dash, along s
-  return smoothstep(-aa, aa, e);
+  let ins = floor(bw * 0.5); // t, r, b, l
+  let rc = max(r - vec4f(ins.w + ins.x, ins.x + ins.y, ins.y + ins.z,
+                         ins.z + ins.w) * 0.5, vec4f(0.0));
+  let lo = -half + vec2f(ins.w, ins.x);
+  let hi = half - vec2f(ins.y, ins.z);
+  // Centreline corner centres.
+  let ctl = lo + vec2f(rc.x);
+  let ctr = vec2f(hi.x - rc.y, lo.y + rc.y);
+  let cbr = hi - vec2f(rc.z);
+  let cbl = vec2f(lo.x + rc.w, hi.y - rc.w);
+  // Segment starts: top, tr arc, right, br arc, bottom, bl arc, left, tl arc.
+  // Arcs take Skia's measured length (arc, from upload), spread evenly
+  // over the angle.
+  let s1 = ctr.x - ctl.x;
+  let s2 = s1 + arc.y;
+  let s3 = s2 + cbr.y - ctr.y;
+  let s4 = s3 + arc.z;
+  let s5 = s4 + cbr.x - cbl.x;
+  let s6 = s5 + arc.w;
+  let s7 = s6 + cbl.y - ctl.y;
+  let total = s7 + arc.x;
+  let iq = 0.63661977; // 2 / pi
+  var s = 0.0;
+  if (p.x > ctr.x && p.y < ctr.y) {
+    s = s1 + (atan2(p.y - ctr.y, p.x - ctr.x) * iq + 1.0) * arc.y;
+  } else if (p.x > cbr.x && p.y > cbr.y) {
+    s = s3 + atan2(p.y - cbr.y, p.x - cbr.x) * iq * arc.z;
+  } else if (p.x < cbl.x && p.y > cbl.y) {
+    s = s5 + (atan2(p.y - cbl.y, p.x - cbl.x) * iq - 1.0) * arc.w;
+  } else if (p.x < ctl.x && p.y < ctl.y) {
+    s = s7 + (atan2(p.y - ctl.y, p.x - ctl.x) * iq + 2.0) * arc.x;
+  } else {
+    switch (side) {
+      case 0u: { s = p.x - ctl.x; }
+      case 1u: { s = s2 + p.y - ctr.y; }
+      case 2u: { s = s4 + cbr.x - p.x; }
+      default: { s = s6 + cbl.y - p.y; }
+    }
+  }
+  return dash_cov(style, s, floor(total), true, wr, depth,
+                  floor(wr * 0.5), a);
 }
 
 @fragment
@@ -329,11 +432,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let style = (u32(b.params.x + 0.5) >> (2u * side)) & 3u;
   var pat = 1.0;
   if (style != 0u && borderCov > 0.0) {
-    let s = edge_arc_length(in.local, half, b.radius, side);
-    let perim = edge_perimeter(half, b.radius);
     // Depth from the outer edge is -d: exact on the corner arcs too, where
     // the per-side distance would measure to the straight edge instead.
-    pat = border_style_cov(style, s, -d, sw, perim, aa);
+    pat = border_style_cov(style, in.local, half, b.radius, b.shr, bw,
+                           side, sw, -d, aa, apx);
   }
   let bcov = borderCov * pat;
   // Coverage where the fill lies under a painted part of the border.
@@ -378,6 +480,50 @@ fn fs(in : VOut) -> @location(0) vec4f {
   return (bd * bcov + bg * fillCov - bg * (bc.a * under)) * opacity;
 }
 `
+
+type Pt = [number, number]
+const arcCache = new Map<number, number>()
+
+/**
+ * Length SkContourMeasure gives a quarter circle of radius r, the conic
+ * Skia's addRRect emits (weight sqrt(1/2)): the chord sum after halving in
+ * t while the curve midpoint sits more than 0.5px (larger axis) off the
+ * chord (SkContourMeasure.cpp, conic_too_curvy / compute_conic_segs). Blink
+ * fits and places the dashes of a rounded border by this length, which
+ * runs about 0.1-0.3px short of the true arc per corner.
+ */
+function skQuarterArc(r: number): number {
+  if (r <= 0) {
+    return 0
+  }
+  const hit = arcCache.get(r)
+  if (hit !== undefined) {
+    return hit
+  }
+  const at = (t: number): Pt => {
+    const a = (1 - t) * (1 - t)
+    const b = 2 * Math.SQRT1_2 * t * (1 - t)
+    const c = t * t
+    const k = r / (a + b + c)
+    return [(a + b) * k, (b + c) * k]
+  }
+  const seg = (t0: number, p0: Pt, t1: number, p1: Pt, n: number): number => {
+    const th = (t0 + t1) / 2
+    const ph = at(th)
+    const dx = Math.abs(ph[0] - (p0[0] + p1[0]) / 2)
+    const dy = Math.abs(ph[1] - (p0[1] + p1[1]) / 2)
+    if (n < 16 && Math.max(dx, dy) > 0.5) {
+      return seg(t0, p0, th, ph, n + 1) + seg(th, ph, t1, p1, n + 1)
+    }
+    return Math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+  }
+  const len = seg(0, at(0), 1, at(1), 0)
+  if (arcCache.size > 256) {
+    arcCache.clear()
+  }
+  arcCache.set(r, len)
+  return len
+}
 
 /**
  * Instanced rounded-rect pass: one storage-buffer entry per box, one draw call.
@@ -607,8 +753,16 @@ export class BoxPass implements RenderPass {
         for (let k = 0; k < 4; k++) {
           d[o++] = bi ? sw(bi[k] ?? 0) : 0
         }
+        // Dashed/dotted rounded borders: Skia's measured length of each
+        // corner's centreline arc (see border_style_cov).
+        const dashy = bd?.styles.some((s) => s === 1 || s === 2) ?? false
+        const ins = (k: number) => Math.floor(sw(bd?.widths[k] ?? 0) / 2) / 2
         for (let k = 0; k < 4; k++) {
-          d[o++] = 0
+          // Corners tl, tr, br, bl; sides top, right, bottom, left.
+          const side = k === 0 || k === 1 ? 0 : 2
+          const other = k === 0 || k === 3 ? 3 : 1
+          const r = (b.radius[k] ?? 0) - ins(side) - ins(other)
+          d[o++] = dashy ? skQuarterArc(Math.max(r, 0)) : 0
         }
       }
       // Shadow records ignore `border`: zero widths keep the ring empty.

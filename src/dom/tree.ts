@@ -34,6 +34,7 @@ import {
 } from './pseudo'
 import {
   beginRead,
+  boxInset,
   clipRectFor,
   readBox,
   readImageRecord,
@@ -43,7 +44,12 @@ import {
   toDocRect
 } from './styles'
 import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
-import { contentHeight, readTextNode } from './textRuns'
+import {
+  beginTextRead,
+  contentHeight,
+  FAST_TEXT_READ,
+  readTextNode
+} from './textRuns'
 import {
   affine,
   composeIndividual,
@@ -89,6 +95,39 @@ export const MAX_BOUNDARIES = 8
 const RECT_EPSILON = 0.01
 
 type OwnRecord = BoxRecord | ImageRecord
+
+/**
+ * The records to append after the box for a background image. An image
+ * whose painting area reaches into the border (background-clip:
+ * border-box) paints under the border, so the box's border moves to a
+ * second, border-only box drawn after the image; the first box (mutated
+ * here) keeps the fill.
+ */
+function underBorder(
+  own: readonly OwnRecord[],
+  bg: ImageRecord,
+  s: CSSStyleDeclaration,
+  place: Placement,
+  alloc: () => number
+): OwnRecord[] {
+  const box = own.find((r): r is BoxRecord => r.kind === 'box' && !r.shadow)
+  const pad = boxInset(s, 'padding-box')
+  const reaches =
+    bg.local.w > place.local.w - pad[1] - pad[3] + 0.01 ||
+    bg.local.h > place.local.h - pad[0] - pad[2] + 0.01
+  if (!box?.border || !reaches) {
+    return [bg]
+  }
+  const border: BoxRecord = {
+    ...box,
+    id: alloc(),
+    fill: { r: 0, g: 0, b: 0, a: 0 },
+    gradient: null
+  }
+  delete border.bgInset
+  box.border = null
+  return [bg, border]
+}
 const NO_RECORDS: readonly OwnRecord[] = []
 
 export interface ElNode {
@@ -357,6 +396,7 @@ export class SceneReader {
   /** Re-read the whole root subtree and rebuild the scene. */
   fullRead(): void {
     beginRead()
+    beginTextRead()
     this.readElements = 0
     this.ordinals.clear()
     this.readAll()
@@ -388,6 +428,7 @@ export class SceneReader {
     paintOnly?: ReadonlySet<Element>
   ): void {
     beginRead()
+    beginTextRead()
     this.readElements = 0
     this.ordinals.clear()
     const tree = this.tree
@@ -609,7 +650,7 @@ export class SceneReader {
         place
       )
       if (bg) {
-        own = own.length ? [...own, bg] : [bg]
+        own = [...own, ...underBorder(own, bg, s, place, () => scene.allocId())]
       }
     }
     if (layers.has('boxes') && s.boxShadow.includes('inset')) {
@@ -684,7 +725,9 @@ export class SceneReader {
             s,
             scene.allocId(),
             0, // fontId resolved by the text backend in a later stage
-            0
+            0,
+            // Chunk rects are AABBs under a transform; split only upright.
+            FAST_TEXT_READ && !lin
           )
           if (run) {
             if (lin) {

@@ -14,8 +14,9 @@ footer, scroll-top, the portalled nav popup) is excluded with
   placement matches Blink and the capture is grayscale-AA. Goldens are
   local + GPU-specific: run `-- --update` once after `npx playwright install
   chromium` on a new machine.
-- `npm run test:perf` — 400-card page: full read ~370–550 ms (sandbox noise
-  ±30%), partial read ~20–40 ms, encode <1 ms, 114 draws.
+- `npm run test:perf` — 400-card page: full read ~430 ms (587 ms before
+  `FAST_TEXT_READ`, same session; sandbox noise ±30%), partial read
+  ~20–50 ms, encode <1 ms, 114 draws.
 - `npm run test:site -- --url http://localhost:8000/duo` (gatsby develop
   running) — 0.3–1.0% at three offsets, clean console.
 
@@ -29,10 +30,20 @@ once every element is Inter, nothing invalidating the mirror at idle.
    `application/ld+json` block and threw on mds-home's array-form schema.
    Fixed in mds-home (`SEO.jsx` emits one `@graph` object); dev-only,
    never affected production. Safari now scrolls and loads cleanly with
-   the compositor on. Left as a perf item: Safari's full read is ~65×
-   Chrome's (`Range.getBoundingClientRect` per grapheme, `frame 49 ms`
-   steady state vs 0.7 ms) — if it is the floor, batch reads per text node
-   with `getClientRects()`.
+   the compositor on. Perf item: Safari's full read was ~65× Chrome's
+   (`Range.getBoundingClientRect` per grapheme, `frame 49 ms` steady state
+   vs 0.7 ms). `FAST_TEXT_READ` (`dom/textRuns.ts`) now reads one
+   `getClientRects()` per text node and splits lines into graphemes with
+   Canvas 2D suffix widths, falling back to a Range per chunk, then per
+   grapheme, wherever the widths don't match the browser's rects (0.05px).
+   Measured in Chrome/SwiftShader: perf.html Range queries 84k → 15k per
+   full read (12.9% of graphemes still per grapheme: rotated cards and
+   16px opsz titles), text-node read alone ~2× faster, full read −26%
+   (587 → 434 ms), the playground's `duo` section 0% per grapheme, visual
+   regression 0.00% on every section. Not yet measured on Safari: re-run
+   `/duo?gpu=1&stats=1` there and check `stats().textRead.perGrapheme`; if
+   WebKit's canvas doesn't match its layout the width checks send every
+   chunk per grapheme, and each font stops trying after 8 misses.
 2. **Scroll-frame lag (overlay mode)** — done. The loop stays on rAF for
    `SCROLL_SETTLE_MS` after each `scroll` event, and the canvas scrolls with
    the document: `position: absolute`, the viewport plus `canvasMargin`
@@ -46,10 +57,9 @@ once every element is Inter, nothing invalidating the mirror at idle.
    yet used interactively; check hover/focus/selection still work and that
    the excluded chrome stays painted.
 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
-   `letter-spacing` are done (Phase 1/3). Open: dash phase on dashed/dotted
-   borders around corners (the placeholder border still drifts out of
-   phase), `background-clip` / snapping for `url()` backgrounds (image
-   pass), `capitalize` context across text nodes and title-case mappings,
+   `letter-spacing`, dash phase and `url()` background clip/snapping are
+   done (Phase 1/2/3). Open: `capitalize` context across text nodes and
+   title-case mappings,
    `full-width` / `full-size-kana`, Greek final sigma under `lowercase`.
 5. **Housekeeping.** Commit + push compositor-gpu, bump the submodule
    pointer in mds-home (`git -C compositor-gpu pull`), `git submodule`
@@ -164,15 +174,30 @@ perspective transforms · culling · WebGL2 backend.
       `createImageBitmap` (naturalWidth is density-corrected), SVG `<img>`
       rasterised at display size (gatsby-plugin-image sizers stalled lazy loads),
       `process.env` shim for typegpu
-- [x] Border styles: dashed / dotted / double in the box shader (arc-length
-      along the rounded outer edge, pattern period fitted to the perimeter
-      like Chrome; round dots ≥3px)
+- [x] Border styles: dashed / dotted / double in the box shader, ported
+      from Blink's `BoxBorderPainter` + `DashEffectFromStrokeStyle`. Boxes
+      without radii fit the pattern per side over the full outer length
+      (dash or dot flush at both corners, gap refitted; square dots ≤3px
+      keep w/w and get Blink's `EnforceDotsAtEndpoints` 1px end fixes).
+      Rounded boxes stroke one closed centreline path (inset floor(w/2),
+      starting after the top-left arc) with the gap fitted to its whole
+      length, arcs measured as Skia's chord approximation
+      (`skQuarterArc`). Dashed 3w/2w under 3px, 2w/w from 3px; round dots
+      >3px. Left: the doubled AA on round corner dots (both sides paint
+      them in Chrome)
 - [x] Background under translucent borders (`background-clip`
       border/padding/content-box; border source-over the fill, dash gaps
       show it; gradient tile repeats into the border area) and
       pixel-snapped borders (untransformed box edges snapped to device px
       in `BoxPass.upload`, widths floored with a 1 device px minimum,
       box-filter edge AA)
+- [x] `background-clip` / `background-origin` and pixel snapping for
+      `url()` backgrounds (image pass): the record's local box is the clip
+      box, `originInset` the positioning area (tiles repeat into the border
+      area), radii follow the clip box, the border paints over the image
+      (border-only box after it), untransformed image/background
+      destination rects snap like boxes with UVs following the snapped
+      rect; only the first `background-image` layer is painted
 - [ ] External `<use href>` in inline SVG
 - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
       leaks, `visibility`, inline transforms + `rotate/scale/translate`,
@@ -184,6 +209,12 @@ perspective transforms · culling · WebGL2 backend.
 - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)
+- [x] `FAST_TEXT_READ`: per-node `getClientRects()` + Canvas 2D suffix-width
+      split, per-chunk and per-grapheme fallbacks, `stats().textRead`
+      (Range queries 84k → 15k on the 400-card page, full read −26%)
+- [ ] Fast text read under a transform (rotated cards read per grapheme;
+      needs local-space line rects) and for `font-optical-sizing: none` on
+      an opsz axis (the canvas `font` shorthand always uses auto)
 - [x] Batch builder: grid-indexed members + per-glyph text footprints
       (400-card page: 841 → 114 draws)
 - [x] `text-decoration` underline / overline / line-through (per line fragment,
