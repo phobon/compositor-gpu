@@ -53,9 +53,14 @@ once every element is Inter, nothing invalidating the mirror at idle.
    (viewport-space) content still moves with the page between frames. Cost:
    the canvas is up to 3× the viewport area; check fill rate on a real
    device (SwiftShader `steady fps` dropped ~5.5 → ~2 on `test:perf`).
-3. **`mode: 'replace'` on the real page** — exercised by the harness, not
-   yet used interactively; check hover/focus/selection still work and that
-   the excluded chrome stays painted.
+3. **`mode: 'replace'` on the real page.** First interactive run showed a
+   blank page: with `data-gpu-ignore` chrome present, replace mode hides
+   the root's children with `opacity: 0` and the reader turned each into
+   an opacity-0 group and skipped it. Fixed: hidden elements carry
+   `data-gpu-hidden="<previous computed opacity>"`, which `readOpacity()`
+   prefers (playground has an ignored badge so `test:site -- --replace`
+   covers the path). Still to check interactively: hover/focus/selection,
+   links, the nav popup; `::selection` is not mirrored.
 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
    `letter-spacing`, dash phase and `url()` background clip/snapping are
    done (Phase 1/2/3). Open: `capitalize` context across text nodes and

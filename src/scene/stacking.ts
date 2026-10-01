@@ -69,14 +69,15 @@ function isContext(item: Item): item is StackingContext {
  */
 export function createsStackingContext(
   s: CSSStyleDeclaration,
-  transformable = true
+  transformable = true,
+  opacity = Number.parseFloat(s.opacity)
 ): boolean {
   // Any positioned element: a real context when z-index is set, and the
   // documented z=0 pseudo-context (Appendix E step 6) when it's auto.
   if (s.position !== 'static') {
     return true
   }
-  if (Number.parseFloat(s.opacity) < 1) {
+  if (opacity < 1) {
     return true
   }
   if (transformable && hasTransform(s)) {

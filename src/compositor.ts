@@ -1,5 +1,5 @@
 import { BoxPass } from './boxes/boxRenderer'
-import { Dirty, DomSync, IGNORE_ATTR } from './dom/observer'
+import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
 import { SceneReader } from './dom/tree'
 import { initGpu } from './gpu/device'
@@ -352,6 +352,14 @@ export async function createCompositor(
   // paint-free wrappers.
   let sourceHidden = false
   const hiddenEls = new Map<HTMLElement, string>()
+  // The reader must not see the hiding opacity (it would make every
+  // hidden element an opacity-0 group and skip it): HIDDEN_ATTR carries
+  // the computed opacity from before, which readOpacity() prefers.
+  const hide = (el: HTMLElement): void => {
+    hiddenEls.set(el, el.style.opacity)
+    el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
+    el.style.opacity = '0'
+  }
   const hideUnder = (el: Element): void => {
     for (const child of Array.from(el.children)) {
       if (!(child instanceof HTMLElement) || child.hasAttribute(IGNORE_ATTR)) {
@@ -360,8 +368,7 @@ export async function createCompositor(
       if (child.querySelector(`[${IGNORE_ATTR}]`)) {
         hideUnder(child)
       } else {
-        hiddenEls.set(child, child.style.opacity)
-        child.style.opacity = '0'
+        hide(child)
       }
     }
   }
@@ -374,12 +381,12 @@ export async function createCompositor(
       if (root.querySelector(`[${IGNORE_ATTR}]`)) {
         hideUnder(root)
       } else {
-        hiddenEls.set(root, root.style.opacity)
-        root.style.opacity = '0'
+        hide(root)
       }
     } else {
       for (const [el, saved] of hiddenEls) {
         el.style.opacity = saved
+        el.removeAttribute(HIDDEN_ATTR)
       }
       hiddenEls.clear()
     }

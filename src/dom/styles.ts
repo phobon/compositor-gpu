@@ -8,9 +8,11 @@ import type {
   RGBA,
   Space
 } from '../scene/records'
+
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
 import { firstBackgroundLayer, parseGradient } from './gradient'
+import { HIDDEN_ATTR } from './observer'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
 // Scroll offset for the current read pass. `window.scrollX/Y` are native
@@ -138,9 +140,11 @@ export function mapBackgroundPosition(
   return [x, y]
 }
 
-/** The element's own computed opacity, defaulting to 1. */
-export function readOpacity(s: CSSStyleDeclaration): number {
-  const n = Number.parseFloat(s.opacity)
+/** The element's own computed opacity, defaulting to 1. An element that
+ * replace mode hid (`HIDDEN_ATTR`) reports the opacity it had before. */
+export function readOpacity(s: CSSStyleDeclaration, el?: Element): number {
+  const saved = el?.getAttribute(HIDDEN_ATTR)
+  const n = Number.parseFloat(saved ?? s.opacity)
   return Number.isFinite(n) ? n : 1
 }
 

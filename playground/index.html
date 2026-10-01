@@ -486,6 +486,11 @@
   </head>
   <body>
     <div id="stage">
+      <!-- An ignored element inside the root: replace mode must then hide
+           the root's children one by one (hideUnder) and the reader must
+           not treat that hiding as opacity-0 groups. -->
+      <div data-gpu-ignore style="position: fixed; right: 8px; top: 8px;
+        font: 11px/1 ui-monospace, monospace; color: #999">stage</div>
       <section data-vr="text">
         <h1>Every letter can move.</h1>
         <p>

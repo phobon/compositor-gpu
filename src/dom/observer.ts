@@ -156,6 +156,10 @@ function carriesStylesheet(n: Node): boolean {
  * mirrored nor watched: debug overlays, the page's own stats readouts,
  * anything that would otherwise invalidate the mirror every frame. */
 export const IGNORE_ATTR = 'data-gpu-ignore'
+/** Set by replace mode on the elements whose paint it hides with
+ * `opacity: 0`; the value is the element's computed opacity before that,
+ * which the reader uses instead of the hidden one. */
+export const HIDDEN_ATTR = 'data-gpu-hidden'
 
 export const isIgnored = (n: Node): boolean => {
   const el = n instanceof Element ? n : n.parentElement

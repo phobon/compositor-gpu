@@ -589,8 +589,10 @@ export class SceneReader {
     const place = lin
       ? transformedPlacement(el, lin, rect)
       : rectPlacement(rect)
-    const isContext = !isRoot && createsStackingContext(s, transformable)
-    const alpha = isContext ? Math.max(0, readOpacity(s)) : 1
+    const ownAlpha = readOpacity(s, el)
+    const isContext =
+      !isRoot && createsStackingContext(s, transformable, ownAlpha)
+    const alpha = isContext ? Math.max(0, ownAlpha) : 1
     const decor = layers.has('text')
       ? propagateDecorations(el, s, parentDecor)
       : null

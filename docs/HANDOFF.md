@@ -32,8 +32,11 @@ only — the submodule is left for `fetch`/`checkout`):** `CLAUDE.md`,
 `ROADMAP.md`, `docs/UPSTREAM-gvar.md` (new), `playground/index.html`,
 `src/boxes/boxRenderer.ts`, `src/compositor.ts`, `src/dom/backgrounds.ts`,
 `src/dom/styles.ts`, `src/dom/textRuns.ts`, `src/dom/tree.ts`,
-`src/images/imageRenderer.ts`, `src/scene/records.ts`, `src/types.ts`,
-`test/perf/run.ts`. Contents: (1) dashed/dotted borders fitted per side
+`src/dom/observer.ts`, `src/images/imageRenderer.ts`,
+`src/scene/records.ts`, `src/scene/stacking.ts`, `src/types.ts`,
+`test/perf/run.ts`. Contents: (0) replace mode no longer blanks a page
+that has `data-gpu-ignore` chrome (`HIDDEN_ATTR` carries the pre-hide
+opacity so the reader ignores the hiding); (1) dashed/dotted borders fitted per side
 (square corners) or along the inset centre path (rounded), matching
 Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
 the `/duo` placeholder border is now pixel-identical, `duo` parity
