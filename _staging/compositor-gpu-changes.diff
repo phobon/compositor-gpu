@@ -1,0 +1,3098 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index a96f502..2c37be0 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -33,10 +33,15 @@ naga-cli`) before a run.
+ (400 cards, ~4.8k elements, ~84k glyphs) headless and reports full-read,
+ partial-read and frame-encode medians (`test/perf/out/last.json`);
+ `npx tsx test/perf/profile.ts` writes a CPU profile of five full reads to
+-`test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~370 ms
+-(dominated by per-grapheme `Range.getBoundingClientRect`, the approach's
+-floor), partial read ~20 ms (mostly the browser's own reflow), encode <1 ms; timings swing ±30% run to run in the sandbox, so compare A/B in
+-the same session. That page draws in ~114 calls: the batch builder indexes
++`test/perf/out/profile.txt`. Baseline under SwiftShader: full read ~430 ms
++(587 ms with a Range per grapheme, same session), partial read ~20–50 ms
++(mostly the browser's own reflow), encode <1 ms; the run also prints
++`stats().textRead`. Range reads are no longer the floor: `FAST_TEXT_READ`
++cut them from 84k to ~15k per full read (profile: 1103 → 332 ms native
++over five reads); what remains is 40 rotated cards (the split is off under
++a transform), 16px titles (opsz mismatch, see Text), and computed-style
++reads. Timings swing ±30% run to run in the sandbox (more when other
++jobs share the machine), so compare A/B in the same session. That page draws in ~114 calls: the batch builder indexes
+ members in a 128px grid and tests text runs per glyph (a run's union rect
+ spans whole paragraphs and blocked every merge), and shadow records use a
+ 1.5σ `batchRect` footprint.
+@@ -205,6 +210,23 @@ Conventions each pass must follow:
+   into a pooled offscreen texture (own Frame uniform: viewport = texture size,
+   scroll = group origin) and `gpu/composite.ts` draws it back once with the
+   group alpha. Records therefore carry `opacity = 1`; passes stay unaware.
++- **Cutouts** (`boxes/cutoutPass.ts`). A `data-gpu-ignore` element
++  (`IGNORE_ATTR`) is not mirrored: the reader gives it an `ElNode` with one
++  own `CutoutRecord` (border box, radii, local/xform, space, ancestor clip)
++  and no kids, and it keeps its stacking context, so the hole gets the z the
++  element would paint at (never an opacity group). The `cutouts` layer
++  draws it destination-out (`zero` / `one-minus-src-alpha`, fragment
++  `vec4f(0, 0, 0, coverage)`): records painted before it are erased inside
++  the rounded rect, records after it paint over the hole, and the page's
++  own paint of the element shows through the canvas. The layer is added
++  whenever any other layer is; `stats().cutouts` counts the records. Inside
++  an opacity group a cutout clears only the group's target (the parent
++  target's content stays under the hole). Mutations inside an ignored
++  subtree are not observed; attribute changes on the ignored element
++  itself re-read its parent, so class/style toggles move the hole. Not
++  covered: its CSS transitions/animations and size changes driven by its
++  own content (a fixed element doesn't resize the root), until the next
++  read of its parent. Replace mode leaves ignored elements painting.
+ - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
+   bind group; `writeBuffer` only the used prefix.
+ - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is
+@@ -221,7 +243,17 @@ provenance. Pipeline:
+ 
+ 1. `dom/textRuns.ts` ranges over each **grapheme** (`Intl.Segmenter`) in a text
+    node and takes its client rect — this is how the browser's shaping, kerning,
+-   bidi and line breaking are inherited for free. `glyphId` is the
++   bidi and line breaking are inherited for free. With `FAST_TEXT_READ`
++   (on; off under a transform) it takes far fewer rects: one
++   `getClientRects()` per text node (a rect per line fragment), with lines
++   and graphemes placed from Canvas 2D `measureText` suffix widths
++   (`readLines`), else one Range per whitespace-free chunk (`readChunk`),
++   else per grapheme. A split is used only when the canvas widths match the
++   browser's rects within 0.05px; ligature candidates (`f[fijlt]`), non-Latin
++   scripts, emoji, bidi, justify and styles the canvas `font` can't carry
++   (feature/variation settings, `font-optical-sizing: none` on an opsz
++   axis) take the per-grapheme path. `stats().textRead` counts graphemes,
++   per-grapheme reads and Range queries. `glyphId` is the
+    grapheme's **first code point**; `SlugText` remaps it through the font cmap.
+    Ligatures: `font.ts` builds a `liga`/`clig` lookup from GSUB and the
+    rasterizer draws the ligature glyph over adjacent, abutting, same-line
+diff --git a/ROADMAP.md b/ROADMAP.md
+index 74fa725..f3e44a7 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -14,8 +14,9 @@ footer, scroll-top, the portalled nav popup) is excluded with
+   placement matches Blink and the capture is grayscale-AA. Goldens are
+   local + GPU-specific: run `-- --update` once after `npx playwright install
+   chromium` on a new machine.
+-- `npm run test:perf` — 400-card page: full read ~370–550 ms (sandbox noise
+-  ±30%), partial read ~20–40 ms, encode <1 ms, 114 draws.
++- `npm run test:perf` — 400-card page: full read ~430 ms (587 ms before
++  `FAST_TEXT_READ`, same session; sandbox noise ±30%), partial read
++  ~20–50 ms, encode <1 ms, 114 draws.
+ - `npm run test:site -- --url http://localhost:8000/duo` (gatsby develop
+   running) — 0.3–1.0% at three offsets, clean console.
+ 
+@@ -29,10 +30,20 @@ once every element is Inter, nothing invalidating the mirror at idle.
+    `application/ld+json` block and threw on mds-home's array-form schema.
+    Fixed in mds-home (`SEO.jsx` emits one `@graph` object); dev-only,
+    never affected production. Safari now scrolls and loads cleanly with
+-   the compositor on. Left as a perf item: Safari's full read is ~65×
+-   Chrome's (`Range.getBoundingClientRect` per grapheme, `frame 49 ms`
+-   steady state vs 0.7 ms) — if it is the floor, batch reads per text node
+-   with `getClientRects()`.
++   the compositor on. Perf item: Safari's full read was ~65× Chrome's
++   (`Range.getBoundingClientRect` per grapheme, `frame 49 ms` steady state
++   vs 0.7 ms). `FAST_TEXT_READ` (`dom/textRuns.ts`) now reads one
++   `getClientRects()` per text node and splits lines into graphemes with
++   Canvas 2D suffix widths, falling back to a Range per chunk, then per
++   grapheme, wherever the widths don't match the browser's rects (0.05px).
++   Measured in Chrome/SwiftShader: perf.html Range queries 84k → 15k per
++   full read (12.9% of graphemes still per grapheme: rotated cards and
++   16px opsz titles), text-node read alone ~2× faster, full read −26%
++   (587 → 434 ms), the playground's `duo` section 0% per grapheme, visual
++   regression 0.00% on every section. Not yet measured on Safari: re-run
++   `/duo?gpu=1&stats=1` there and check `stats().textRead.perGrapheme`; if
++   WebKit's canvas doesn't match its layout the width checks send every
++   chunk per grapheme, and each font stops trying after 8 misses.
+ 2. **Scroll-frame lag (overlay mode)** — done. The loop stays on rAF for
+    `SCROLL_SETTLE_MS` after each `scroll` event, and the canvas scrolls with
+    the document: `position: absolute`, the viewport plus `canvasMargin`
+@@ -42,14 +53,26 @@ once every element is Inter, nothing invalidating the mirror at idle.
+    (viewport-space) content still moves with the page between frames. Cost:
+    the canvas is up to 3× the viewport area; check fill rate on a real
+    device (SwiftShader `steady fps` dropped ~5.5 → ~2 on `test:perf`).
+-3. **`mode: 'replace'` on the real page** — exercised by the harness, not
+-   yet used interactively; check hover/focus/selection still work and that
+-   the excluded chrome stays painted.
++3. **`mode: 'replace'` on the real page.** First interactive run showed a
++   blank page: with `data-gpu-ignore` chrome present, replace mode hides
++   the root's children with `opacity: 0` and the reader turned each into
++   an opacity-0 group and skipped it. Fixed: hidden elements carry
++   `data-gpu-hidden="<previous computed opacity>"`, which `readOpacity()`
++   prefers (playground has an ignored badge so `test:site -- --replace`
++   covers the path). The mirror painted `body`'s and the sections'
++   backgrounds over ignored chrome, hiding it in both modes; ignored
++   elements now leave a hole (`CutoutRecord`, `boxes/cutoutPass.ts`,
++   destination-out at the element's paint-order position), exercised by
++   the playground `duo` section (fixed nav, rounded overlap, a footer in
++   an ignored `display: contents` wrapper as mds-home does it — the holes
++   then land on the wrapper's children; attribute changes and CSS
++   animations on a hole element re-read its parent). Still to check
++   interactively: hover/focus/selection,
++   links, the nav popup; `::selection` is not mirrored.
+ 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
+-   `letter-spacing` are done (Phase 1/3). Open: dash phase on dashed/dotted
+-   borders around corners (the placeholder border still drifts out of
+-   phase), `background-clip` / snapping for `url()` backgrounds (image
+-   pass), `capitalize` context across text nodes and title-case mappings,
++   `letter-spacing`, dash phase and `url()` background clip/snapping are
++   done (Phase 1/2/3). Open: `capitalize` context across text nodes and
++   title-case mappings,
+    `full-width` / `full-size-kana`, Greek final sigma under `lowercase`.
+ 5. **Housekeeping.** Commit + push compositor-gpu, bump the submodule
+    pointer in mds-home (`git -C compositor-gpu pull`), `git submodule`
+@@ -119,7 +142,11 @@ perspective transforms · culling · WebGL2 backend.
+       `stats().sync` (why the mirror was invalidated, elements tracked as
+       animating, last mutation target). `data-gpu-ignore` on an element
+       excludes its subtree from the mirror and from invalidation — for debug
+-      overlays and anything else that mutates every frame.
++      overlays, site chrome and anything else that mutates every frame —
++      and leaves a hole in the mirror (a `cutouts` layer, destination-out,
++      at the element's z) so the page's own paint of it shows; an ignored
++      `display: contents` element puts the holes on its children; attribute
++      changes and CSS animations on a hole element re-read its parent.
+ - [x] opentype.js 2.0 gvar bug worked around (`text/slug/gvarFix.ts`): a
+       packed point count of 0 means "all points", not "no points"; without it
+       Inter's D/R (shared point list + all-points tuple) render mangled at
+@@ -164,15 +191,30 @@ perspective transforms · culling · WebGL2 backend.
+       `createImageBitmap` (naturalWidth is density-corrected), SVG `<img>`
+       rasterised at display size (gatsby-plugin-image sizers stalled lazy loads),
+       `process.env` shim for typegpu
+-- [x] Border styles: dashed / dotted / double in the box shader (arc-length
+-      along the rounded outer edge, pattern period fitted to the perimeter
+-      like Chrome; round dots ≥3px)
++- [x] Border styles: dashed / dotted / double in the box shader, ported
++      from Blink's `BoxBorderPainter` + `DashEffectFromStrokeStyle`. Boxes
++      without radii fit the pattern per side over the full outer length
++      (dash or dot flush at both corners, gap refitted; square dots ≤3px
++      keep w/w and get Blink's `EnforceDotsAtEndpoints` 1px end fixes).
++      Rounded boxes stroke one closed centreline path (inset floor(w/2),
++      starting after the top-left arc) with the gap fitted to its whole
++      length, arcs measured as Skia's chord approximation
++      (`skQuarterArc`). Dashed 3w/2w under 3px, 2w/w from 3px; round dots
++      >3px. Left: the doubled AA on round corner dots (both sides paint
++      them in Chrome)
+ - [x] Background under translucent borders (`background-clip`
+       border/padding/content-box; border source-over the fill, dash gaps
+       show it; gradient tile repeats into the border area) and
+       pixel-snapped borders (untransformed box edges snapped to device px
+       in `BoxPass.upload`, widths floored with a 1 device px minimum,
+       box-filter edge AA)
++- [x] `background-clip` / `background-origin` and pixel snapping for
++      `url()` backgrounds (image pass): the record's local box is the clip
++      box, `originInset` the positioning area (tiles repeat into the border
++      area), radii follow the clip box, the border paints over the image
++      (border-only box after it), untransformed image/background
++      destination rects snap like boxes with UVs following the snapped
++      rect; only the first `background-image` layer is painted
+ - [ ] External `<use href>` in inline SVG
+ - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
+       leaks, `visibility`, inline transforms + `rotate/scale/translate`,
+@@ -184,6 +226,12 @@ perspective transforms · culling · WebGL2 backend.
+ - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
+ - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
+       and grapheme-segmentation cache (full read −30%)
++- [x] `FAST_TEXT_READ`: per-node `getClientRects()` + Canvas 2D suffix-width
++      split, per-chunk and per-grapheme fallbacks, `stats().textRead`
++      (Range queries 84k → 15k on the 400-card page, full read −26%)
++- [ ] Fast text read under a transform (rotated cards read per grapheme;
++      needs local-space line rects) and for `font-optical-sizing: none` on
++      an opsz axis (the canvas `font` shorthand always uses auto)
+ - [x] Batch builder: grid-indexed members + per-glyph text footprints
+       (400-card page: 841 → 114 draws)
+ - [x] `text-decoration` underline / overline / line-through (per line fragment,
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 638cb2c..0f87263 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -83,7 +83,8 @@ with the page until the next frame.
+    scroll / rAF          │  Renderer      TypeGPU device             │
+    FontFace ready        │                ├─ BoxPass   (instanced)   │
+                          │                ├─ ImagePass (textured)    │
+-                         │                └─ TextPass  (Slug)        │
++                         │                ├─ TextPass  (Slug)        │
++                         │                └─ CutoutPass (dest-out)   │
+                          │                  │                        │
+                          │                  ▼                        │
+                          │         <canvas> (absolute, anchored)     │
+@@ -113,16 +114,17 @@ invalidations, updates buffers, and draws.
+ | `dom/gradient.ts` | Reads CSS `linear-gradient`/`radial-gradient`, interpolates stops in premultiplied sRGB for the box shader. |
+ | `dom/textRuns.ts` | Extracts per-glyph geometry from text nodes using `Range.getClientRects()` / segmentation, mapped to font + colour. The heart of text fidelity. |
+ | `dom/observer.ts` | Resize/Mutation/Intersection observers + scroll + `document.fonts.ready`; coalesces into invalidation flags. |
+-| `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`) in document space. No GPU types here. |
++| `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`, `CutoutRecord`) in document space. No GPU types here. |
+ | `scene/scene.ts` | Holds records, assigns stable ids, produces instance buffers, tracks dirty ranges. |
+ | `scene/stacking.ts` | Builds a simplified CSS stacking-context tree while walking and flattens it (Appendix E) into each record's integer paint order `z`; also produces opacity `OpacityGroup`s. |
+-| `scene/batches.ts` | Merges boxes/images/text into cross-layer draw batches (splitting only where overlap forces it) and threads in push/pop markers for opacity groups. |
++| `scene/batches.ts` | Merges boxes/images/text/cutouts into cross-layer draw batches (splitting only where overlap forces it) and threads in push/pop markers for opacity groups. |
+ | `text/textRasterizer.ts` | Interface a text backend must satisfy (`Slug` is the default impl; an MSDF impl can slot in). |
+ | `text/slug/*` | Font outline extraction → banded curve data → GPU buffers; the Slug WGSL fragment shader. |
+ | `text/glyphAtlas.ts` | Canvas-2D-rasterised fallback atlas (emoji, uncovered code points, multi-code-point clusters, unregistered faces), packed as a shared `rgba8unorm` texture. |
+ | `text/atlasShader.ts` | Second pipeline in the text pass drawing textured quads from the fallback atlas, sharing one instance index space with Slug so cross-layer batches stay aligned. |
+ | `text/fontSource.ts` | Resolves a `FontFace`/`@font-face` rule to its `url()` source and fetches the bytes at runtime for `SlugText.prepare()`. |
+ | `boxes/boxRenderer.ts` | Instanced rounded-rect pass (backgrounds, borders, gradients, shadows). The simplest full vertical slice of the sync loop. |
++| `boxes/cutoutPass.ts` | Erases the mirror under `data-gpu-ignore` elements: one rounded-rect quad per `CutoutRecord`, blended destination-out at the record's paint-order position, so the page's own paint of the ignored element shows through the canvas. |
+ | `images/imageRenderer.ts` | Uploads `<img>` / `<canvas>` / `<video>` / background images to textures, draws textured quads; collapses consecutive atlas-backed instances into one draw. |
+ | `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
+ | `gpu/frame.ts` | Shared `Frame` uniform (target size, target origin, time, dpr, vscroll) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
+diff --git a/docs/HANDOFF.md b/docs/HANDOFF.md
+index aeb83fd..9a1788b 100644
+--- a/docs/HANDOFF.md
++++ b/docs/HANDOFF.md
+@@ -23,26 +23,54 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
+ MDS-home `git -C compositor-gpu checkout -- . && git -C compositor-gpu pull`,
+ then commit the pointer.
+ 
+-**Uncommitted in compositor-gpu (and mirrored in the submodule):**
+-`ROADMAP.md`, `src/compositor.ts`, `src/dom/observer.ts`, `src/dom/tree.ts`,
+-`src/text/glyphAtlas.ts`, `src/text/slug/rasterizer.ts`,
+-`src/text/slug/shaders.ts`, `src/types.ts`, `test/lib/browser.ts`. That is:
+-Blink-style glyph placement (rounded ascent/descent, snapped baseline),
+-`data-gpu-ignore`, `stats().sync` / `fallbackSamples` / `frameMs` /
+-`maxDtMs`, replace mode honouring ignored subtrees, the emoji classifier
+-fix, and the `--disable-lcd-text` harness flag. Typecheck, biome and all
+-three harnesses pass on this tree (run in a Linux sandbox; see Gotchas).
+-
+-**Uncommitted in MDS-home:** `src/components/utils/SEO.jsx` (JSON-LD as
+-`@graph`), `src/components/Duo/{DuoFont,GpuCompositor,
+-GpuStats,index,useGpuFlag}.js*`, `src/components/primitives/SharedLayout.jsx`
+-(`gpuIgnoreChrome` prop), `src/components/TopNav/HeaderMenu/NavMenu.jsx`
+-(`data-gpu-ignore` on the portalled popup). Prettier + ESLint pass.
+-
+-Stale git lock files were left by git runs from the Cowork VM (it cannot
+-delete): remove `.git/index.lock` under `~/code/compositor-gpu`, MDS-home,
+-and MDS-home's `.git/modules/compositor-gpu/` before any git work. Also
+-delete `MDS-home/_to_delete/` and `compositor-gpu/_to_delete_ROADMAP.md.tmp`.
++**Committed:** `d916275 Scroll-driven canvas` (everything up to the
++document-scrolling canvas) is on `origin/main`, and mds-home `ea95f754`
++points the submodule at it.
++
++**Uncommitted in compositor-gpu (2026-09-30 batch c, standalone checkout
++only — the submodule is left for `fetch`/`checkout`):** `CLAUDE.md`,
++`ROADMAP.md`, `docs/UPSTREAM-gvar.md` (new), `playground/index.html`,
++`src/boxes/boxRenderer.ts`, `src/compositor.ts`, `src/dom/backgrounds.ts`,
++`src/dom/styles.ts`, `src/dom/textRuns.ts`, `src/dom/tree.ts`,
++`src/dom/observer.ts`, `src/images/imageRenderer.ts`,
++`src/scene/records.ts`, `src/scene/stacking.ts`, `src/types.ts`,
++`test/perf/run.ts`, `src/boxes/cutoutPass.ts` (new), `src/scene/scene.ts`,
++`src/scene/batches.ts`. Contents: (0) `data-gpu-ignore` elements now punch
++HOLES in the mirror (`CutoutRecord`, a `cutouts` layer drawn
++destination-out at the element's paint-order z) so the site's nav, footer,
++scroll-to-top and nav popup show through in overlay and replace mode —
++before, body's opaque mirrored background covered them; and replace mode
++no longer blanks a page that has ignored chrome (`HIDDEN_ATTR` carries the
++pre-hide opacity so the reader ignores the hiding). An ignored
++`display: contents` wrapper (how `SharedLayout`'s `GpuIgnore` works) puts
++the holes on its children; attribute changes and CSS animations on a hole
++element re-read its parent so the hole follows (deeper mutations stay
++unwatched); (1) dashed/dotted borders fitted per side
++(square corners) or along the inset centre path (rounded), matching
++Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
++the `/duo` placeholder border is now pixel-identical, `duo` parity
++1.15 → 0.56; (2) `url()` backgrounds honour `background-clip` /
++`background-origin`, tile into the border area, and snap to device pixels
++like boxes (`ImageRecord.originInset`, shared `boxInset` helper, border
++split into a border-only box when an image reaches under it);
++(3) `FAST_TEXT_READ` in `dom/textRuns.ts`: one `getClientRects()` per text
++node, then per-chunk / per-grapheme fallbacks, with canvas-measured splits
++verified against the browser rect within 0.05 px — Range queries on
++perf.html 84k → 15k, full read ~26% faster, geometry within 0.031 px,
++`stats().textRead` counts the fallbacks. Typecheck, biome, test:visual
++(all parity ≤ previous; goldens rewritten), test:perf (full read 425 ms,
++123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Full diff
++of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
++untracked; delete after reading).
++
++**MDS-home:** clean at `ea95f754` (Duo wiring, SEO `@graph` fix,
++submodule pointer). Next bump after committing batch (c): `git -C
++compositor-gpu fetch origin && git -C compositor-gpu checkout origin/main
++&& git add compositor-gpu && git commit`.
++
++Git runs from the Cowork VM leave lock files it cannot delete
++(`.git/index.lock`, `.git/modules/compositor-gpu/index.lock`); remove
++any that exist before git work.
+ 
+ ## Running it
+ 
+diff --git a/docs/UPSTREAM-gvar.md b/docs/UPSTREAM-gvar.md
+new file mode 100644
+index 0000000..91e724a
+--- /dev/null
++++ b/docs/UPSTREAM-gvar.md
+@@ -0,0 +1,119 @@
++# Draft upstream issue for opentypejs/opentype.js
++
++Status check (2026-09-30): no existing issue or PR found with this diagnosis.
++Searches only turned up #754 (variable fonts rendering wrongly in 2.0.0), which
++has no diagnosis and may or may not share this cause. The repro below has not
++been run against the live Inter download.
++
++Below the rule is the issue text.
++---
++
++**Title:** gvar: packed point count 0 ("all points") is handled as "no points", so tuples with all points use the shared point list
++
++**Version:** opentype.js 2.0.0 (npm, `dist/opentype.mjs`)
++
++## Description
++
++OpenType spec, "Packed point numbers"
++(https://learn.microsoft.com/en-us/typography/opentype/spec/otvarcommonformats#packed-point-numbers):
++
++> If the first byte is 0, then a second count byte is not used. This value has
++> a special meaning: the tuple variation data provides deltas for all glyph
++> points (including the "phantom" points), or for all CVTs.
++
++`Parser.prototype.parsePackedPointNumbers` returns `[]` for a count of 0. That
++is also what the parser uses for "no private points, use the shared ones", so
++two places get it wrong:
++
++1. `parseTupleVariationStore`, in `parseDeltas`:
++   `pointsCount = header.privatePoints.length || sharedPoints.length`.
++   A tuple with private points and count 0 gets `sharedPoints.length` as its
++   delta count; the all-points fallback (`glyph.points.length + 4`) runs only if
++   the shared list is empty too. Too few x deltas are read and the y deltas
++   start in the middle of the x data.
++2. `applyTupleVariationStore`:
++   `tuplePoints = header.privatePoints.length ? header.privatePoints : sharedPoints`.
++   The tuple is applied to the shared point indices instead of every point.
++
++It only shows when a glyph has a non-empty shared point list and a tuple with
++private points and count 0. Glyphs without a shared list work.
++
++## Symptom
++Inter Variable (https://rsms.me/inter/): D, R and similar glyphs are mangled at
++any non-default weight. Some points get other points' deltas, the rest do not
++move. The default instance and other glyphs are fine.
++
++## Repro
++
++```js
++import { parse } from 'opentype.js'
++
++// Download the variable TTF from https://rsms.me/inter/ and serve it locally.
++const font = parse(await (await fetch('/InterVariable.ttf')).arrayBuffer())
++
++const g = font.charToGlyph('D')
++g.path // parse the glyph so g.points is populated
++const store = font.tables.gvar.glyphVariations[g.index]
++for (const h of store.headers) {
++  console.log(h.privatePoints.length, store.sharedPoints.length,
++    h.deltas.length, g.points.length + 4)
++}
++// Rows with privatePoints.length 0 and sharedPoints.length > 0 print
++// deltas.length === sharedPoints.length instead of g.points.length + 4.
++// Drawing D and R after font.variation.set({ wght: 700 }) shows broken outlines.
++```
++
++## Fix
++
++Keep "all points" distinct from "not present" (`parser.js`, then
++`applyTupleVariationStore`):
++
++```diff
++ Parser.prototype.parsePackedPointNumbers = function() {
++   const countByte1 = this.parseByte();
+++  if (countByte1 === 0) return null;   // all points incl. phantoms
++   const points = [];
++```
++
++```diff
++-    header.privatePoints = [];
+++    header.privatePoints = undefined;   // undefined: use shared; null: all
++ ...
++-      pointsCount = header.privatePoints.length || sharedPoints.length;
++-      if (!pointsCount) {
+++      const pts = header.privatePoints === undefined
+++        ? sharedPoints : header.privatePoints;
+++      if (pts === null) {
++         const glyph = glyphs.get(glyphIndex);
++         glyph.path;
++-        pointsCount = glyph.points.length;
++-        pointsCount += 4;
+++        pointsCount = glyph.points.length + 4;
+++      } else {
+++        pointsCount = pts.length;
++       }
++```
++
++```diff
++-      const tuplePoints = header.privatePoints.length ? header.privatePoints : sharedPoints;
+++      let tuplePoints = header.privatePoints === undefined
+++        ? sharedPoints : header.privatePoints;
+++      if (tuplePoints === null) {
+++        tuplePoints = Array.from({ length: points.length }, (_, i) => i);
+++      }
++```
++
++`sharedPoints` needs the same `null` handling. `points` already includes the
++four phantom points. Callers reading `privatePoints`/`sharedPoints` would see
++`null`/`undefined` where they saw `[]`; a lazily materialised `[0 .. n-1]` array
++avoids that (lazy because `glyph.points` exists only after the glyph parse).
++
++## Workaround
++We patch the prototype at startup: `parsePackedPointNumbers` returns a lazily
++filled `[0 .. glyph.points.length + 3]` when the result is empty (about 100
++lines, `src/text/slug/gvarFix.ts` in our repo).
++
++## Offer
++I can send a PR with this fix and a test using a small variable font that has a
++shared point list and an all-points tuple on one glyph. Tell me whether you
++prefer the `null` sentinel or a materialised array. Possibly related: #754.
+diff --git a/playground/index.html b/playground/index.html
+index 611f860..5f56d25 100644
+--- a/playground/index.html
++++ b/playground/index.html
+@@ -65,8 +65,14 @@
+         width: 110px; height: 56px; background: #3b82f6;
+         padding: 6px; font-size: 13px; color: #f2f2f2;
+       }
++      .bgimg {
++        background: url(./test.png) center/cover;
++        border: 6px dashed rgba(0,0,0,.3);
++      }
+       .hairrow { gap: 13px; height: 28px; }
+       .hair { width: 40px; height: 24px; border: 1px solid #e2e8f0; }
++      .dashrow { gap: 12px; }
++      .dt { width: 60px; height: 34px; }
+       .shtile {
+         width: 120px; height: 90px; border-radius: 12px; background: #3a3a48;
+         padding: 10px; font-size: 13px; color: #d6d6e0;
+@@ -456,6 +462,50 @@
+         border-radius: 6px;
+         background: #f472b6;
+       }
++      /* data-gpu-ignore site chrome (duo section). The fixed nav shows only
++         under body.show-duo (the harness sets it for the duo capture) or in
++         the live playground, so it doesn't cover other captures. The
++         mirror leaves a hole over each ignored element. */
++      .duo-nav { display: none; }
++      body.show-duo #panel { visibility: hidden; }
++      body.show-duo .duo-nav, body.live .duo-nav {
++        display: flex;
++        position: fixed;
++        top: 0;
++        left: 0;
++        right: 0;
++        z-index: 10;
++        height: 56px;
++        align-items: center;
++        gap: 28px;
++        padding: 0 32px;
++        background: #f5f5f0;
++        color: #111114;
++        font-size: 15px;
++        font-weight: 600;
++      }
++      .duo-nav b { font-size: 18px; margin-right: auto; }
++      .duo-overlap { position: relative; height: 140px; margin-top: 24px; }
++      .duo-overlap .box {
++        position: absolute; left: 0; top: 0; width: 320px; height: 140px;
++        background: #3b82f6;
++      }
++      .duo-overlap .ign {
++        position: absolute; left: 200px; top: 30px; width: 220px; height: 80px;
++        border-radius: 28px; background: #f59e0b; color: #1c1917;
++        display: flex; align-items: center; justify-content: center;
++        font-weight: 700;
++      }
++      .duo-overlap .over {
++        position: absolute; z-index: 2; left: 380px; top: 50px;
++        width: 40px; height: 40px; border-radius: 50%; background: #10b981;
++      }
++      .duo-footwrap { margin-top: 48px; padding: 24px; background: #1d1d24; }
++      .duo-footer {
++        padding: 32px; border-radius: 0;
++        background: #e7e5e4; color: #1c1917; font-size: 14px;
++      }
++      .duo-footer b { display: block; font-size: 18px; margin-bottom: 6px; }
+       /* position: sticky */
+       .sticky-block {
+         height: 900px;
+@@ -480,6 +530,11 @@
+   </head>
+   <body>
+     <div id="stage">
++      <!-- An ignored element inside the root: replace mode must then hide
++           the root's children one by one (hideUnder) and the reader must
++           not treat that hiding as opacity-0 groups. -->
++      <div data-gpu-ignore style="position: fixed; right: 8px; top: 8px;
++        font: 11px/1 ui-monospace, monospace; color: #999">stage</div>
+       <section data-vr="text">
+         <h1>Every letter can move.</h1>
+         <p>
+@@ -580,12 +635,30 @@
+           <div class="bftile" style="border: 6px dotted rgba(250,204,21,.5); background-clip: padding-box;">padding-box</div>
+           <div class="bftile" style="border: 3px double rgba(255,255,255,.4); background-clip: content-box;">content-box</div>
+         </div>
++        <div class="borderrow">
++          <div class="bftile bgimg"></div>
++          <div class="bftile bgimg" style="background-clip: padding-box;"></div>
++          <div class="bftile bgimg" style="background-origin: border-box;"></div>
++          <div class="bftile bgimg" style="border-radius: 12px;"></div>
++          <div class="bftile bgimg" style="border: 1px solid rgba(0,0,0,.5); position: relative; top: 0.4px; left: 0.3px;"></div>
++        </div>
+         <div class="borderrow hairrow">
+           <div class="hair" style="margin-left: 0.5px;"></div>
+           <div class="hair" style="margin-left: 0.3px; margin-top: 0.4px;"></div>
+           <div class="hair" style="margin-left: 0.7px; margin-top: 0.6px;"></div>
+           <div class="hair" style="margin-left: 0.25px; width: 40.5px; border-color: rgba(255,255,255,.5);"></div>
+         </div>
++        <div class="borderrow dashrow">
++          <div class="dt" style="border: 1px dashed #e2e8f0;"></div>
++          <div class="dt" style="border: 2px dashed #e2e8f0;"></div>
++          <div class="dt" style="border: 4px dashed #e2e8f0;"></div>
++          <div class="dt" style="border: 3px dashed #f472b6; border-radius: 12px;"></div>
++          <div class="dt" style="border: 1px dotted #facc15;"></div>
++          <div class="dt" style="border: 3px dotted #facc15;"></div>
++          <div class="dt" style="border: 6px dotted #facc15;"></div>
++          <div class="dt" style="width: 400px; border: 2px dashed #a78bfa;"></div>
++          <div class="dt" style="width: 40px; border: 2px dashed #a78bfa;"></div>
++        </div>
+       </section>
+ 
+       <section data-vr="shadows">
+@@ -807,7 +880,8 @@
+         </div>
+       </section>
+ 
+-      <section data-vr="duo" style="font-optical-sizing: auto;">
++      <section data-vr="duo" data-vr-body-class="show-duo" data-vr-capture="viewport" data-vr-scroll2="900" style="font-optical-sizing: auto;">
++        <nav class="duo-nav" data-gpu-ignore><b>Bonobo Labs</b><span>Apps</span><span>Duo</span><span>About</span></nav>
+         <h1 style="font-weight: 700; font-size: 96px; letter-spacing: 0; text-align: center; margin: 0 0 24px;">made for iPhone Duo</h1>
+         <p style="font-weight: 600; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 16px;">Timepage on iPhone Duo — DUO BOLD</p>
+         <div style="display: flex; align-items: center; gap: 24px; margin: 0 0 24px;">
+@@ -827,12 +901,31 @@
+           <div style="width: 160px; height: 80px; border-radius: 8px; border: 6px double #fbbf24;"></div>
+           <div style="width: 160px; height: 80px; border: 2px dashed #f2f2f2; border-radius: 0;"></div>
+         </div>
++        <!-- An ignored rounded element over a mirrored box (rounded hole),
++             under a positioned circle painted after it (covers the hole). -->
++        <div class="duo-overlap">
++          <div class="box"></div>
++          <div class="ign" data-gpu-ignore>ignored, rounded</div>
++          <div class="over"></div>
++        </div>
+       </section>
+ 
+       <section data-vr="canvas">
+         <h2>Live canvas mirrors</h2>
+         <canvas class="livecanvas" width="480" height="160"></canvas>
+       </section>
++
++      <div class="duo-footwrap">
++        <!-- Wrapped the way mds-home does it: the ignored element is a
++             paint-free display:contents wrapper, so the hole must land on
++             its children. -->
++        <div data-gpu-ignore style="display: contents">
++          <footer class="duo-footer">
++            <b>Footer (data-gpu-ignore via a display:contents wrapper)</b>
++            Static, in flow: the page paints it; the mirror leaves a hole.
++          </footer>
++        </div>
++      </div>
+     </div>
+ 
+     <div id="panel">
+diff --git a/src/boxes/boxRenderer.ts b/src/boxes/boxRenderer.ts
+index 64bc807..6f75efc 100644
+--- a/src/boxes/boxRenderer.ts
++++ b/src/boxes/boxRenderer.ts
+@@ -26,7 +26,8 @@ struct Box {
+   sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
+                     // element box (outer) or the shadow box (inset);
+                     // plain box: background-clip insets t, r, b, l
+-  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl
++  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl; plain box:
++                    // dash path arc lengths tl, tr, br, bl
+   bw     : vec4f,   // border widths top, right, bottom, left
+   bc1    : vec4f,   // right border colour
+   bc2    : vec4f,   // bottom border colour
+@@ -156,85 +157,187 @@ fn gradient_at(t : f32, start : u32, count : u32) -> vec4f {
+   return c0;
+ }
+ 
+-// Arc length along the outer rounded-rect edge, clockwise from the start
+-// of the top edge (just after the top-left arc), for the point on the edge
+-// nearest p (centred local coords, y down). side is the winning border
+-// side (0 top, 1 right, 2 bottom, 3 left), so straight runs never bleed
+-// into a neighbour's parameterisation; corner arcs take the angle about
+-// the corner centre. Used to lay dashes and dots along the border.
+-fn edge_arc_length(p : vec2f, half : vec2f, r : vec4f, side : u32) -> f32 {
+-  let q = 1.5707963;
+-  let lt = 2.0 * half.x - r.x - r.y;
+-  let lr = 2.0 * half.y - r.y - r.z;
+-  let lb = 2.0 * half.x - r.z - r.w;
+-  let ll = 2.0 * half.y - r.w - r.x;
+-  // Segment starts: top, tr arc, right, br arc, bottom, bl arc, left, tl arc.
+-  let s1 = lt;
+-  let s2 = s1 + q * r.y;
+-  let s3 = s2 + lr;
+-  let s4 = s3 + q * r.z;
+-  let s5 = s4 + lb;
+-  let s6 = s5 + q * r.w;
+-  let s7 = s6 + ll;
+-  let total = s7 + q * r.x;
+-  // Corner arcs: p inside a corner's radius square.
+-  if (p.x > half.x - r.y && p.y < -half.y + r.y) {
+-    let c = vec2f(half.x - r.y, -half.y + r.y);
+-    let a = atan2(p.y - c.y, p.x - c.x); // -q (top) .. 0 (right)
+-    return s1 + (a + q) * r.y;
+-  }
+-  if (p.x > half.x - r.z && p.y > half.y - r.z) {
+-    let c = vec2f(half.x - r.z, half.y - r.z);
+-    let a = atan2(p.y - c.y, p.x - c.x); // 0 .. q
+-    return s3 + a * r.z;
+-  }
+-  if (p.x < -half.x + r.w && p.y > half.y - r.w) {
+-    let c = vec2f(-half.x + r.w, half.y - r.w);
+-    let a = atan2(p.y - c.y, p.x - c.x); // q .. pi
+-    return s5 + (a - q) * r.w;
++// Blink's SelectBestDashGap (platform/graphics/styled_stroke_data.cc): the
++// gap nearest g that fits a whole number of d-long dashes into len; an open
++// path ends on a dash at both ends.
++fn best_dash_gap(len : f32, d : f32, g : f32, closed : bool) -> f32 {
++  let k = select(1.0, 0.0, closed);
++  let n0 = floor((len + g * k) / (d + g));
++  let n1 = n0 + 1.0;
++  let g0 = (len - n0 * d) / max(n0 - k, 1.0);
++  let g1 = (len - n1 * d) / max(n1 - k, 1.0);
++  return select(g1, g0, g1 <= 0.0 || abs(g0 - g) < abs(g1 - g));
++}
++
++// Coverage of the pixel centred at x by the span [x0, x1]; a = pixel size.
++fn span_cov(x : f32, x0 : f32, x1 : f32, a : f32) -> f32 {
++  return clamp(min(x - x0, x1 - x) / a + 0.5, 0.0, 1.0);
++}
++
++// Blink's dash pattern at s along a stroked path of whole-px length len,
++// after DashEffectFromStrokeStyle (platform/graphics/styled_stroke_data.cc):
++// dashed is 3w on / 2w off under 3px and 2w / w from 3px, with the gap
++// refitted; dotted up to 3px is w / w square dashes, not refitted; wider
++// dots are round, diameter w, one centred at s = 0, spacing refitted.
++// Paths no longer than two dashes are solid. dc: depth of the path in from
++// the outer edge, depth: the pixel's.
++fn dash_cov(style : u32, s : f32, len : f32, closed : bool, w : f32,
++            depth : f32, dc : f32, a : f32) -> f32 {
++  if (style == 2u && w > 3.0) {
++    var period = 2.0 * w;
++    if (len >= period) {
++      period = best_dash_gap(len, w, w, closed) + w - 0.01;
++    }
++    let u = s - floor(s / period) * period;
++    let c = vec2f(min(u, period - u), depth - dc);
++    return clamp((w * 0.5 - length(c)) / a + 0.5, 0.0, 1.0);
+   }
+-  if (p.x < -half.x + r.x && p.y < -half.y + r.x) {
+-    let c = vec2f(-half.x + r.x, -half.y + r.x);
+-    let a = atan2(p.y - c.y, p.x - c.x); // -pi .. -q
+-    return s7 + (a + 3.1415927) * r.x;
++  let thin = w < 3.0;
++  var d = w;
++  var g = w;
++  if (style == 1u) {
++    d = select(2.0, 3.0, thin) * w;
++    g = select(1.0, 2.0, thin) * w;
+   }
+-  switch (side) {
+-    case 0u: { return p.x + half.x - r.x; }
+-    case 1u: { return s2 + p.y + half.y - r.y; }
+-    case 2u: { return s4 + half.x - r.z - p.x; }
+-    default: { return s6 + half.y - r.w - p.y; }
++  if (len <= 2.0 * d) { return 1.0; }
++  let two = 2.0 * d + g + select(0.0, g, closed);
++  if (len <= two) {
++    d = d * len / two;
++    g = g * len / two;
++  } else if (style == 1u) {
++    g = best_dash_gap(len, d, g, closed);
+   }
++  let period = d + g;
++  let u = s - floor(s / period) * period;
++  return span_cov(u, 0.0, d, a) + span_cov(u, period, period + d, a);
+ }
+ 
+-fn edge_perimeter(half : vec2f, r : vec4f) -> f32 {
+-  return 4.0 * (half.x + half.y) - (2.0 - 1.5707963) * (r.x + r.y + r.z + r.w);
++// Square dots (w <= 3) on a straight side, after Blink's
++// EnforceDotsAtEndpoints (core/paint/box_border_painter.cc): a whole dot at
++// each end, grown or with its gap moved by 1px, keyed on len mod 2w.
++fn thin_dots_cov(x : f32, len : f32, w : f32, a : f32) -> f32 {
++  if (len <= 3.0 * w) {
++    return dash_cov(2u, x, len, false, w, 0.0, 0.0, a);
++  }
++  let n = i32(len);
++  let wi = i32(w);
++  let m4 = n % 4;
++  let m6 = n % 6;
++  var sd = false;
++  var sg = 0.0;
++  var so = 0.0;
++  var ed = false;
++  var eg = 0.0;
++  if ((wi == 1 && n % 2 == 0) || (wi == 3 && m6 == 0)) {
++    sd = true;
++    sg = 1.0;
++    so = 1.0;
++  }
++  if ((wi == 2 && m4 <= 1) || (wi == 3 && (m6 == 1 || m6 == 2))) {
++    sd = true;
++    so = -1.0;
++  }
++  if ((wi == 2 && m4 == 0) || (wi == 3 && m6 == 1)) { ed = true; }
++  if ((wi == 2 && m4 == 3) || (wi == 3 && m6 >= 4)) {
++    sd = true;
++    so = 1.0;
++  }
++  if (wi == 3 && m6 == 5) {
++    ed = true;
++  } else if (wi == 3 && m6 == 0) {
++    ed = true;
++    eg = 1.0;
++  }
++  var p1 = 0.0;
++  var p2 = len;
++  var c = 0.0;
++  if (sd) {
++    c = span_cov(x, 0.0, w + sg, a);
++    p1 = 2.0 * w + so;
++  }
++  if (ed) {
++    c = max(c, span_cov(x, len - w - eg, len, a));
++    p2 = len - (w + eg + 1.0);
++  }
++  let t = x - p1;
++  let u = t - floor(t / (2.0 * w)) * 2.0 * w;
++  let dots = span_cov(u, 0.0, w, a) + span_cov(u, 2.0 * w, 3.0 * w, a);
++  return max(c, dots * span_cov(x, p1, p2, a));
+ }
+ 
+-// Coverage multiplier for a dashed/dotted/double border at arc length s,
+-// ring depth depth (px in from the outer edge) on a side of width w.
+-// Dashes are 3w long with ~2w gaps, dots w with w gaps, both with the
+-// period stretched so a whole number of them closes the loop (the browser
+-// fits the pattern to the path). Dots 3px or wider are round. Double is two
+-// w/3 lines with a w/3 gap.
+-fn border_style_cov(style : u32, s : f32, depth : f32, w : f32,
+-                    perim : f32, aa : f32) -> f32 {
++// Dashed / dotted / double coverage at centred local p on side (0 top,
++// 1 right, 2 bottom, 3 left) of width w; depth is px in from the outer
++// edge. Blink (core/paint/box_border_painter.cc) strokes a box without
++// radii one side at a time, each from outer corner to outer corner
++// (PaintOneBorderSide -> DrawDashedOrDottedBoxSide), so the pattern is
++// fitted per side and both sides' dashes cover each corner. A box with any
++// radius is stroked as one closed path down the middle of the border
++// (DrawCurvedDashedDottedBoxSide), clockwise from where the top edge leaves
++// the top-left arc, fitted to the whole length; that path is inset by
++// floor(w / 2) (CenterOutsets goes through FromInts). Dash ends are square
++// to the path, so radial on the arcs. Double is two w/3 lines with a w/3
++// gap.
++fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
++                    arc : vec4f, bw : vec4f, side : u32, w : f32,
++                    depth : f32, aa : f32, a : f32) -> f32 {
+   if (style == 3u) {
+     let t = depth / max(w, 1e-4);
+     let inner = smoothstep(2.0 / 3.0 - aa / w, 2.0 / 3.0 + aa / w, t);
+     let outer = 1.0 - smoothstep(1.0 / 3.0 - aa / w, 1.0 / 3.0 + aa / w, t);
+     return max(inner, outer);
+   }
+-  let dash = select(w, 3.0 * w, style == 1u);
+-  let gap0 = select(w, 2.0 * w, style == 1u);
+-  let n = max(1.0, round(perim / (dash + gap0)));
+-  let period = perim / n;
+-  let u = s - floor(s / period) * period; // 0 .. period
+-  if (style == 2u && w >= 3.0) {
+-    let c = vec2f(u - dash * 0.5, depth - w * 0.5);
+-    return 1.0 - smoothstep(w * 0.5 - aa, w * 0.5 + aa, length(c));
++  let wr = max(round(w), 1.0);
++  if (all(r <= vec4f(0.0))) {
++    let horiz = side == 0u || side == 2u;
++    let len = round(select(2.0 * half.y, 2.0 * half.x, horiz));
++    let x = select(p.y + half.y, p.x + half.x, horiz);
++    if (style == 2u && wr <= 3.0) { return thin_dots_cov(x, len, wr, a); }
++    // Round dots: the line is pulled in by w/2 at each end, the spacing
++    // still fitted to the full length.
++    let s = select(x, x - wr * 0.5, style == 2u);
++    return dash_cov(style, s, len, false, wr, depth, wr * 0.5, a);
+   }
+-  let e = min(u, dash - u); // signed distance inside the dash, along s
+-  return smoothstep(-aa, aa, e);
++  let ins = floor(bw * 0.5); // t, r, b, l
++  let rc = max(r - vec4f(ins.w + ins.x, ins.x + ins.y, ins.y + ins.z,
++                         ins.z + ins.w) * 0.5, vec4f(0.0));
++  let lo = -half + vec2f(ins.w, ins.x);
++  let hi = half - vec2f(ins.y, ins.z);
++  // Centreline corner centres.
++  let ctl = lo + vec2f(rc.x);
++  let ctr = vec2f(hi.x - rc.y, lo.y + rc.y);
++  let cbr = hi - vec2f(rc.z);
++  let cbl = vec2f(lo.x + rc.w, hi.y - rc.w);
++  // Segment starts: top, tr arc, right, br arc, bottom, bl arc, left, tl arc.
++  // Arcs take Skia's measured length (arc, from upload), spread evenly
++  // over the angle.
++  let s1 = ctr.x - ctl.x;
++  let s2 = s1 + arc.y;
++  let s3 = s2 + cbr.y - ctr.y;
++  let s4 = s3 + arc.z;
++  let s5 = s4 + cbr.x - cbl.x;
++  let s6 = s5 + arc.w;
++  let s7 = s6 + cbl.y - ctl.y;
++  let total = s7 + arc.x;
++  let iq = 0.63661977; // 2 / pi
++  var s = 0.0;
++  if (p.x > ctr.x && p.y < ctr.y) {
++    s = s1 + (atan2(p.y - ctr.y, p.x - ctr.x) * iq + 1.0) * arc.y;
++  } else if (p.x > cbr.x && p.y > cbr.y) {
++    s = s3 + atan2(p.y - cbr.y, p.x - cbr.x) * iq * arc.z;
++  } else if (p.x < cbl.x && p.y > cbl.y) {
++    s = s5 + (atan2(p.y - cbl.y, p.x - cbl.x) * iq - 1.0) * arc.w;
++  } else if (p.x < ctl.x && p.y < ctl.y) {
++    s = s7 + (atan2(p.y - ctl.y, p.x - ctl.x) * iq + 2.0) * arc.x;
++  } else {
++    switch (side) {
++      case 0u: { s = p.x - ctl.x; }
++      case 1u: { s = s2 + p.y - ctr.y; }
++      case 2u: { s = s4 + cbr.x - p.x; }
++      default: { s = s6 + cbl.y - p.y; }
++    }
++  }
++  return dash_cov(style, s, floor(total), true, wr, depth,
++                  floor(wr * 0.5), a);
+ }
+ 
+ @fragment
+@@ -329,11 +432,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
+   let style = (u32(b.params.x + 0.5) >> (2u * side)) & 3u;
+   var pat = 1.0;
+   if (style != 0u && borderCov > 0.0) {
+-    let s = edge_arc_length(in.local, half, b.radius, side);
+-    let perim = edge_perimeter(half, b.radius);
+     // Depth from the outer edge is -d: exact on the corner arcs too, where
+     // the per-side distance would measure to the straight edge instead.
+-    pat = border_style_cov(style, s, -d, sw, perim, aa);
++    pat = border_style_cov(style, in.local, half, b.radius, b.shr, bw,
++                           side, sw, -d, aa, apx);
+   }
+   let bcov = borderCov * pat;
+   // Coverage where the fill lies under a painted part of the border.
+@@ -379,6 +481,50 @@ fn fs(in : VOut) -> @location(0) vec4f {
+ }
+ `
+ 
++type Pt = [number, number]
++const arcCache = new Map<number, number>()
++
++/**
++ * Length SkContourMeasure gives a quarter circle of radius r, the conic
++ * Skia's addRRect emits (weight sqrt(1/2)): the chord sum after halving in
++ * t while the curve midpoint sits more than 0.5px (larger axis) off the
++ * chord (SkContourMeasure.cpp, conic_too_curvy / compute_conic_segs). Blink
++ * fits and places the dashes of a rounded border by this length, which
++ * runs about 0.1-0.3px short of the true arc per corner.
++ */
++function skQuarterArc(r: number): number {
++  if (r <= 0) {
++    return 0
++  }
++  const hit = arcCache.get(r)
++  if (hit !== undefined) {
++    return hit
++  }
++  const at = (t: number): Pt => {
++    const a = (1 - t) * (1 - t)
++    const b = 2 * Math.SQRT1_2 * t * (1 - t)
++    const c = t * t
++    const k = r / (a + b + c)
++    return [(a + b) * k, (b + c) * k]
++  }
++  const seg = (t0: number, p0: Pt, t1: number, p1: Pt, n: number): number => {
++    const th = (t0 + t1) / 2
++    const ph = at(th)
++    const dx = Math.abs(ph[0] - (p0[0] + p1[0]) / 2)
++    const dy = Math.abs(ph[1] - (p0[1] + p1[1]) / 2)
++    if (n < 16 && Math.max(dx, dy) > 0.5) {
++      return seg(t0, p0, th, ph, n + 1) + seg(th, ph, t1, p1, n + 1)
++    }
++    return Math.hypot(p1[0] - p0[0], p1[1] - p0[1])
++  }
++  const len = seg(0, at(0), 1, at(1), 0)
++  if (arcCache.size > 256) {
++    arcCache.clear()
++  }
++  arcCache.set(r, len)
++  return len
++}
++
+ /**
+  * Instanced rounded-rect pass: one storage-buffer entry per box, one draw call.
+  * The simplest full vertical slice of the DOM -> GPU sync loop.
+@@ -607,8 +753,16 @@ export class BoxPass implements RenderPass {
+         for (let k = 0; k < 4; k++) {
+           d[o++] = bi ? sw(bi[k] ?? 0) : 0
+         }
++        // Dashed/dotted rounded borders: Skia's measured length of each
++        // corner's centreline arc (see border_style_cov).
++        const dashy = bd?.styles.some((s) => s === 1 || s === 2) ?? false
++        const ins = (k: number) => Math.floor(sw(bd?.widths[k] ?? 0) / 2) / 2
+         for (let k = 0; k < 4; k++) {
+-          d[o++] = 0
++          // Corners tl, tr, br, bl; sides top, right, bottom, left.
++          const side = k === 0 || k === 1 ? 0 : 2
++          const other = k === 0 || k === 3 ? 3 : 1
++          const r = (b.radius[k] ?? 0) - ins(side) - ins(other)
++          d[o++] = dashy ? skQuarterArc(Math.max(r, 0)) : 0
+         }
+       }
+       // Shadow records ignore `border`: zero widths keep the ring empty.
+diff --git a/src/boxes/cutoutPass.ts b/src/boxes/cutoutPass.ts
+new file mode 100644
+index 0000000..071bb6f
+--- /dev/null
++++ b/src/boxes/cutoutPass.ts
+@@ -0,0 +1,216 @@
++import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
++import type { Scene } from '../scene/scene'
++import { reportShaderErrors } from '../util/log'
++
++const FLOATS_PER_CUT = 20 // 5 * vec4f
++const BYTES_PER_CUT = FLOATS_PER_CUT * 4
++
++const SHADER = /* wgsl */ `
++${FRAME_WGSL}
++
++struct Cut {
++  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
++  xf1    : vec4f,   // tx, ty (record space), w, h (local size, CSS px)
++  radius : vec4f,   // tl, tr, br, bl
++  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
++  params : vec4f,   // space, 0, 0, 0
++};
++@group(1) @binding(0) var<storage, read> cuts : array<Cut>;
++
++struct VOut {
++  @builtin(position) pos : vec4f,
++  @location(0) local : vec2f,
++  @location(1) half  : vec2f,
++  @location(2) @interpolate(flat) idx : u32,
++  @location(3) docp : vec2f,
++};
++
++@vertex
++fn vs(@builtin(vertex_index) vi : u32,
++      @builtin(instance_index) ii : u32) -> VOut {
++  var uv = array<vec2f, 6>(
++    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
++    vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
++  let c = cuts[ii];
++  let size = c.xf1.zw;
++  let lp = uv[vi] * size;
++  let m = c.xf0;
++  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + c.xf1.xy;
++  var out : VOut;
++  out.pos = to_clip(p, c.params.x);
++  out.half = size * 0.5;
++  out.local = lp - size * 0.5;
++  out.idx = ii;
++  out.docp = p;
++  return out;
++}
++
++// Same SDF and edge ramp as the box pass, so a hole lines up with a box
++// of the same geometry.
++fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
++  let top = select(r4.x, r4.y, p.x > 0.0);
++  let bot = select(r4.w, r4.z, p.x > 0.0);
++  let r = select(top, bot, p.y > 0.0);
++  let q = abs(p) - b + vec2f(r);
++  return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
++}
++
++fn edge_cov(d : f32, fw : f32) -> f32 {
++  return clamp(0.5 - d / fw, 0.0, 1.0);
++}
++
++// Output alpha = coverage; the pipeline blends it destination-out
++// (dst * (1 - a)), erasing what was drawn before.
++@fragment
++fn fs(in : VOut) -> @location(0) vec4f {
++  let c = cuts[in.idx];
++  let apx = max(length(vec2f(length(dpdx(in.local)),
++                             length(dpdy(in.local)))) * 0.70710678, 1e-4);
++  let cl = c.clip;
++  if (in.docp.x < cl.x || in.docp.y < cl.y ||
++      in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
++  let d = sd_round_box(in.local, in.half, c.radius);
++  return vec4f(0.0, 0.0, 0.0, edge_cov(d, apx));
++}
++`
++
++/**
++ * Erases the mirror under `data-gpu-ignore` elements (CutoutRecords), at
++ * their paint-order position: one rounded-rect quad per record, blended
++ * destination-out, so the element's own DOM paint shows through the
++ * canvas. Inside an opacity group it clears the group's target only.
++ */
++export class CutoutPass implements RenderPass {
++  readonly layer = 'cutouts' as const
++  private pipeline: GPURenderPipeline
++  private group1Layout: GPUBindGroupLayout
++  private buffer: GPUBuffer | null = null
++  private bindGroup: GPUBindGroup | null = null
++  private capacity = 0
++  private count = 0
++  private data = new Float32Array(0)
++
++  constructor(private readonly shared: Shared) {
++    const { device, format, frameLayout } = shared
++    this.group1Layout = device.createBindGroupLayout({
++      entries: [
++        {
++          binding: 0,
++          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
++          buffer: { type: 'read-only-storage' }
++        }
++      ]
++    })
++    const module = device.createShaderModule({ code: SHADER })
++    reportShaderErrors(module, 'cutout')
++    const erase: GPUBlendComponent = {
++      srcFactor: 'zero',
++      dstFactor: 'one-minus-src-alpha'
++    }
++    this.pipeline = device.createRenderPipeline({
++      layout: device.createPipelineLayout({
++        bindGroupLayouts: [frameLayout, this.group1Layout]
++      }),
++      vertex: { module, entryPoint: 'vs' },
++      fragment: {
++        module,
++        entryPoint: 'fs',
++        targets: [{ format, blend: { color: erase, alpha: erase } }]
++      },
++      primitive: { topology: 'triangle-list' }
++    })
++  }
++
++  private ensureCapacity(n: number): boolean {
++    if (n <= this.capacity) {
++      return false
++    }
++    const cap = Math.max(n, this.capacity ? this.capacity * 2 : 16)
++    this.buffer?.destroy()
++    this.buffer = this.shared.device.createBuffer({
++      size: cap * BYTES_PER_CUT,
++      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
++    })
++    this.data = new Float32Array(cap * FLOATS_PER_CUT)
++    this.capacity = cap
++    return true
++  }
++
++  upload(scene: Scene): void {
++    const cuts = scene.cutouts
++    this.count = cuts.length
++    if (this.count === 0) {
++      return
++    }
++    if (this.ensureCapacity(this.count) || !this.bindGroup) {
++      this.bindGroup = this.shared.device.createBindGroup({
++        layout: this.group1Layout,
++        entries: [
++          { binding: 0, resource: { buffer: this.buffer as GPUBuffer } }
++        ]
++      })
++    }
++    const d = this.data
++    const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
++    const snap = (v: number) => Math.round(v * dpr) / dpr
++    let o = 0
++    for (const c of cuts) {
++      const xf = c.xform
++      // Snap untransformed edges to device px, as the box pass does.
++      const flat = xf[0] === 1 && xf[1] === 0 && xf[2] === 0 && xf[3] === 1
++      let tx = xf[4]
++      let ty = xf[5]
++      let w = c.local.w
++      let h = c.local.h
++      if (flat) {
++        const x0 = snap(tx)
++        const y0 = snap(ty)
++        w = Math.max(snap(tx + w) - x0, 0)
++        h = Math.max(snap(ty + h) - y0, 0)
++        tx = x0
++        ty = y0
++      }
++      d[o++] = xf[0]
++      d[o++] = xf[1]
++      d[o++] = xf[2]
++      d[o++] = xf[3]
++      d[o++] = tx
++      d[o++] = ty
++      d[o++] = w
++      d[o++] = h
++      for (let k = 0; k < 4; k++) {
++        d[o++] = c.radius[k] ?? 0
++      }
++      const cl = c.clip
++      d[o++] = cl ? cl.x : -1e9
++      d[o++] = cl ? cl.y : -1e9
++      d[o++] = cl ? cl.x + cl.width : 1e9
++      d[o++] = cl ? cl.y + cl.height : 1e9
++      d[o++] = c.space === 'viewport' ? 1 : 0
++      d[o++] = 0
++      d[o++] = 0
++      d[o++] = 0
++    }
++    this.shared.device.queue.writeBuffer(
++      this.buffer as GPUBuffer,
++      0,
++      d,
++      0,
++      this.count * FLOATS_PER_CUT
++    )
++  }
++
++  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
++    if (count === 0 || !this.bindGroup) {
++      return 0
++    }
++    encoder.setPipeline(this.pipeline)
++    encoder.setBindGroup(1, this.bindGroup)
++    encoder.draw(6, count, 0, first)
++    return 1
++  }
++
++  destroy(): void {
++    this.buffer?.destroy()
++  }
++}
+diff --git a/src/compositor.ts b/src/compositor.ts
+index a3438da..7716dca 100644
+--- a/src/compositor.ts
++++ b/src/compositor.ts
+@@ -1,5 +1,7 @@
+ import { BoxPass } from './boxes/boxRenderer'
+-import { Dirty, DomSync, IGNORE_ATTR } from './dom/observer'
++import { CutoutPass } from './boxes/cutoutPass'
++import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
++import { textReadStats } from './dom/textRuns'
+ import { SceneReader } from './dom/tree'
+ import { initGpu } from './gpu/device'
+ import { Renderer } from './gpu/renderer'
+@@ -28,6 +30,10 @@ export async function createCompositor(
+ ): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
+   const root = options.root ?? document.body
+   const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
++  // Holes for data-gpu-ignore elements go with any painted layer.
++  if (layers.size > 0) {
++    layers.add('cutouts')
++  }
+   const fallback = options.fallback ?? 'passthrough'
+   const mode = options.mode ?? 'overlay'
+   const hideSource = options.hideSource ?? true
+@@ -83,6 +89,9 @@ export async function createCompositor(
+     text = new SlugText(renderer.shared)
+     renderer.addPass(text)
+   }
++  if (layers.has('cutouts')) {
++    renderer.addPass(new CutoutPass(renderer.shared))
++  }
+   gpu.device.popErrorScope().then((e) => {
+     if (e) {
+       log.error('GPU validation error during setup:', e.message)
+@@ -351,6 +360,14 @@ export async function createCompositor(
+   // paint-free wrappers.
+   let sourceHidden = false
+   const hiddenEls = new Map<HTMLElement, string>()
++  // The reader must not see the hiding opacity (it would make every
++  // hidden element an opacity-0 group and skip it): HIDDEN_ATTR carries
++  // the computed opacity from before, which readOpacity() prefers.
++  const hide = (el: HTMLElement): void => {
++    hiddenEls.set(el, el.style.opacity)
++    el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
++    el.style.opacity = '0'
++  }
+   const hideUnder = (el: Element): void => {
+     for (const child of Array.from(el.children)) {
+       if (!(child instanceof HTMLElement) || child.hasAttribute(IGNORE_ATTR)) {
+@@ -359,8 +376,7 @@ export async function createCompositor(
+       if (child.querySelector(`[${IGNORE_ATTR}]`)) {
+         hideUnder(child)
+       } else {
+-        hiddenEls.set(child, child.style.opacity)
+-        child.style.opacity = '0'
++        hide(child)
+       }
+     }
+   }
+@@ -373,12 +389,12 @@ export async function createCompositor(
+       if (root.querySelector(`[${IGNORE_ATTR}]`)) {
+         hideUnder(root)
+       } else {
+-        hiddenEls.set(root, root.style.opacity)
+-        root.style.opacity = '0'
++        hide(root)
+       }
+     } else {
+       for (const [el, saved] of hiddenEls) {
+         el.style.opacity = saved
++        el.removeAttribute(HIDDEN_ATTR)
+       }
+       hiddenEls.clear()
+     }
+@@ -415,6 +431,7 @@ export async function createCompositor(
+       boxes: scene.boxes.length,
+       images: scene.images.length,
+       glyphs: scene.glyphCount(),
++      cutouts: scene.cutouts.length,
+       fallback: text?.fallbackCount ?? 0,
+       fallbackSamples: text ? Array.from(text.fallbackSamples) : [],
+       ligatures: text?.ligatureCount ?? 0,
+@@ -426,6 +443,7 @@ export async function createCompositor(
+       readElements: reader.readElements,
+       partialReads: reader.partialReads,
+       sync: { ...sync.diag },
++      textRead: { ...textReadStats },
+       readMs,
+       uploadMs: renderer.lastUploadMs,
+       encodeMs: renderer.lastEncodeMs,
+@@ -483,6 +501,7 @@ function inert(): Compositor & { text: null; scene: null } {
+       boxes: 0,
+       images: 0,
+       glyphs: 0,
++      cutouts: 0,
+       fallback: 0,
+       fallbackSamples: [],
+       ligatures: 0,
+@@ -501,6 +520,7 @@ function inert(): Compositor & { text: null; scene: null } {
+         animating: 0,
+         last: ''
+       },
++      textRead: { graphemes: 0, perGrapheme: 0, ranges: 0 },
+       readMs: 0,
+       uploadMs: 0,
+       encodeMs: 0,
+diff --git a/src/dom/backgrounds.ts b/src/dom/backgrounds.ts
+index 51a1301..031683f 100644
+--- a/src/dom/backgrounds.ts
++++ b/src/dom/backgrounds.ts
+@@ -1,8 +1,12 @@
+ import type { ImageRecord, Rect } from '../scene/records'
+ import { splitTopLevel } from '../util/css'
+-import { paddingPlacement } from './pseudo'
+-import { mapBackgroundPosition, readCorners } from './styles'
+-import { type Placement, placementAabb } from './transform'
++import {
++  boxInset,
++  insetCorners,
++  mapBackgroundPosition,
++  readCorners
++} from './styles'
++import { type Placement, placementAabb, subPlacement } from './transform'
+ 
+ /**
+  * The URL of the first `background-image` layer, or null when that layer
+@@ -131,17 +135,26 @@ export function disposeBackgrounds(owner: object): void {
+   }
+ }
+ 
++/** Layer `i` of a comma list; the list repeats to cover every layer. */
++function layerValue(list: string, i: number, fallback: string): string {
++  const parts = splitTopLevel(list, ',')
++  return (
++    (parts.length ? (parts[i % parts.length] ?? '') : '').trim() || fallback
++  )
++}
++
+ /**
+  * Build an ImageRecord for an element's first `background-image` url layer,
+- * or null when there isn't one (none, a gradient, or still loading).
+- * `place` is the element's border-box placement (see transform.ts). The
+- * tile/cover/contain area is the padding box (CSS `background-origin:
+- * padding-box`, the default), so the record's local box is the border box
+- * inset by the border widths (its `rect` is that box's doc-space AABB).
+- * `ImageRecord` has only one local box, used for both placement and the
+- * border-radius clip, so the clip ends up applied to the padding box too
+- * — a minor approximation (the border ring itself isn't otherwise clipped
+- * by the radius here anyway). `onReady` is called once the image finishes
++ * or null when there isn't one (none, a gradient, or still loading). Later
++ * layers are not painted. `place` is the element's border-box placement
++ * (see transform.ts).
++ *
++ * The record's local box is the layer's painting area (`background-clip`,
++ * border-box by default) and its radii follow that box (outer radii minus
++ * the insets). The tile/cover/contain area is the `background-origin` box
++ * (padding-box by default), carried as `originInset` relative to the local
++ * box. `background-clip` and `-origin` are read at the layer's index (0);
++ * `text` clips as border-box. `onReady` is called once the image finishes
+  * loading, so the caller can re-read the element (see loadBackground for
+  * `owner`).
+  */
+@@ -165,26 +178,51 @@ export function readBackgroundImage(
+   if (!img) {
+     return null
+   }
+-  const pad = paddingPlacement(s, place)
+-  if (pad.local.w <= 0 || pad.local.h <= 0) {
++  const clipBox = layerValue(s.backgroundClip, 0, 'border-box')
++  const originBox = layerValue(s.backgroundOrigin, 0, 'padding-box')
++  const ci = boxInset(s, clipBox)
++  const oi = boxInset(s, originBox)
++  const area = subPlacement(
++    place,
++    ci[3],
++    ci[0],
++    Math.max(0, place.local.w - ci[1] - ci[3]),
++    Math.max(0, place.local.h - ci[0] - ci[2])
++  )
++  const origin: [number, number, number, number] = [
++    oi[0] - ci[0],
++    oi[1] - ci[1],
++    oi[2] - ci[2],
++    oi[3] - ci[3]
++  ]
++  if (
++    area.local.w <= 0 ||
++    area.local.h <= 0 ||
++    area.local.w - origin[1] - origin[3] <= 0 ||
++    area.local.h - origin[0] - origin[2] <= 0
++  ) {
+     return null
+   }
+   return {
+     kind: 'image',
+     id,
+-    rect: placementAabb(pad),
+-    xform: pad.xform,
+-    local: pad.local,
++    rect: placementAabb(area),
++    xform: area.xform,
++    local: area.local,
+     source: img,
+     objectFit: mapBackgroundSize(s.backgroundSize),
+     position: mapBackgroundPosition(s.backgroundPosition),
+     repeat: mapBackgroundRepeat(s.backgroundRepeat),
+-    radius: readCorners(s, {
+-      x: 0,
+-      y: 0,
+-      width: place.local.w,
+-      height: place.local.h
+-    }),
++    radius: insetCorners(
++      readCorners(s, {
++        x: 0,
++        y: 0,
++        width: place.local.w,
++        height: place.local.h
++      }),
++      ci
++    ),
++    ...(origin.some((v) => v !== 0) ? { originInset: origin } : {}),
+     opacity: 1,
+     z: 0,
+     clip,
+diff --git a/src/dom/observer.ts b/src/dom/observer.ts
+index 99fb837..26dfa8b 100644
+--- a/src/dom/observer.ts
++++ b/src/dom/observer.ts
+@@ -152,16 +152,59 @@ function carriesStylesheet(n: Node): boolean {
+  * (captured on the root) in `animating`; while any run, the frame re-reads
+  * `animatingScopes()` every frame.
+  */
+-/** Elements carrying this attribute (and their subtrees) are neither
+- * mirrored nor watched: debug overlays, the page's own stats readouts,
+- * anything that would otherwise invalidate the mirror every frame. */
++/** Elements carrying this attribute (and their subtrees) are not mirrored
++ * and their subtrees are not watched: debug overlays, the page's own stats
++ * readouts, site chrome the page paints itself. The reader leaves a hole
++ * (a CutoutRecord) over each one so its DOM paint shows through the
++ * canvas; an attribute change on the element itself still re-reads its
++ * parent, so the hole follows class/style toggles. */
+ export const IGNORE_ATTR = 'data-gpu-ignore'
++/** Set by replace mode on the elements whose paint it hides with
++ * `opacity: 0`; the value is the element's computed opacity before that,
++ * which the reader uses instead of the hidden one. */
++export const HIDDEN_ATTR = 'data-gpu-hidden'
+ 
+ export const isIgnored = (n: Node): boolean => {
+   const el = n instanceof Element ? n : n.parentElement
+   return el !== null && el.closest(`[${IGNORE_ATTR}]`) !== null
+ }
+ 
++/** Does `t` own a hole? The ignored root itself, or — when the root (and
++ * every element between) is `display: contents` — one of its children, which
++ * then carry the cutouts. Nested ignored subtrees don't count. */
++const isHoleElement = (t: Element): boolean => {
++  let a: Element | null = t
++  while (a) {
++    if (a.hasAttribute(IGNORE_ATTR)) {
++      return a.parentElement === null || !isIgnored(a.parentElement)
++    }
++    a = a.parentElement
++    if (a && getComputedStyle(a).display !== 'contents') {
++      return false
++    }
++  }
++  return false
++}
++
++/** A mutation that can move, resize, add or remove a hole: an attribute
++ * change on a hole element, or a childList change on an ignored
++ * `display: contents` root (its children are the holes). */
++const isIgnoreRoot = (r: MutationRecord): boolean => {
++  const t = r.target
++  if (!(t instanceof Element)) {
++    return false
++  }
++  if (r.type === 'attributes') {
++    return isHoleElement(t)
++  }
++  return (
++    r.type === 'childList' &&
++    t.hasAttribute(IGNORE_ATTR) &&
++    getComputedStyle(t).display === 'contents' &&
++    (t.parentElement === null || !isIgnored(t.parentElement))
++  )
++}
++
+ /** Why the mirror was invalidated, cumulative since start(), plus the last
+  * mutation's target — for `stats().sync`. */
+ export interface SyncDiagnostics {
+@@ -217,7 +260,7 @@ export class DomSync {
+     this.mo = new MutationObserver((records) => {
+       let flag = Dirty.NONE
+       for (const r of records) {
+-        if (isIgnored(r.target)) {
++        if (isIgnored(r.target) && !isIgnoreRoot(r)) {
+           continue
+         }
+         const f = this.scope(r)
+@@ -324,7 +367,8 @@ export class DomSync {
+ 
+   private onAnimStart = (e: Event): void => {
+     const t = e.target
+-    if (!(t instanceof Element) || isIgnored(t)) {
++    // Hole elements animate their own hole; anything deeper is unwatched.
++    if (!(t instanceof Element) || (isIgnored(t) && !isHoleElement(t))) {
+       return
+     }
+     const had = this.animating.size
+diff --git a/src/dom/styles.ts b/src/dom/styles.ts
+index b9485f7..e3e50f0 100644
+--- a/src/dom/styles.ts
++++ b/src/dom/styles.ts
+@@ -8,9 +8,11 @@ import type {
+   RGBA,
+   Space
+ } from '../scene/records'
++
+ import { parseColor } from '../util/color'
+ import { splitTopLevel } from '../util/css'
+ import { firstBackgroundLayer, parseGradient } from './gradient'
++import { HIDDEN_ATTR } from './observer'
+ import { type Placement, placementAabb, subPlacement } from './transform'
+ 
+ // Scroll offset for the current read pass. `window.scrollX/Y` are native
+@@ -138,9 +140,11 @@ export function mapBackgroundPosition(
+   return [x, y]
+ }
+ 
+-/** The element's own computed opacity, defaulting to 1. */
+-export function readOpacity(s: CSSStyleDeclaration): number {
+-  const n = Number.parseFloat(s.opacity)
++/** The element's own computed opacity, defaulting to 1. An element that
++ * replace mode hid (`HIDDEN_ATTR`) reports the opacity it had before. */
++export function readOpacity(s: CSSStyleDeclaration, el?: Element): number {
++  const saved = el?.getAttribute(HIDDEN_ATTR)
++  const n = Number.parseFloat(saved ?? s.opacity)
+   return Number.isFinite(n) ? n : 1
+ }
+ 
+@@ -226,20 +230,31 @@ function readBgInset(
+ ): [number, number, number, number] | null {
+   const layers = splitTopLevel(s.backgroundClip || 'border-box', ',')
+   const clip = (layers[layers.length - 1] ?? '').trim()
+-  if (clip !== 'padding-box' && clip !== 'content-box') {
+-    return null
+-  }
+-  // Read the widths directly: `border` is null when no side paints, but a
+-  // transparent border still insets the padding box.
++  return clip === 'padding-box' || clip === 'content-box'
++    ? boxInset(s, clip)
++    : null
++}
++
++/**
++ * Insets [top, right, bottom, left] of a CSS box (`border-box`,
++ * `padding-box`, `content-box`) from the border box. Reads the widths
++ * directly: a transparent border still insets the padding box.
++ */
++export function boxInset(
++  s: CSSStyleDeclaration,
++  box: string
++): [number, number, number, number] {
+   const w = (width: string, style: string) =>
+     NO_BORDER_STYLE.has(style) ? 0 : px(width)
+-  const inset: [number, number, number, number] = [
+-    w(s.borderTopWidth, s.borderTopStyle),
+-    w(s.borderRightWidth, s.borderRightStyle),
+-    w(s.borderBottomWidth, s.borderBottomStyle),
+-    w(s.borderLeftWidth, s.borderLeftStyle)
+-  ]
+-  if (clip === 'content-box') {
++  const inset: [number, number, number, number] = [0, 0, 0, 0]
++  if (box !== 'padding-box' && box !== 'content-box') {
++    return inset
++  }
++  inset[0] = w(s.borderTopWidth, s.borderTopStyle)
++  inset[1] = w(s.borderRightWidth, s.borderRightStyle)
++  inset[2] = w(s.borderBottomWidth, s.borderBottomStyle)
++  inset[3] = w(s.borderLeftWidth, s.borderLeftStyle)
++  if (box === 'content-box') {
+     inset[0] += px(s.paddingTop)
+     inset[1] += px(s.paddingRight)
+     inset[2] += px(s.paddingBottom)
+@@ -248,6 +263,20 @@ function readBgInset(
+   return inset
+ }
+ 
++/** Border radii of an inset box: each corner's radius minus the larger of
++ * its two adjacent insets, clamped at 0. */
++export function insetCorners(
++  radius: Corners,
++  [t, r, b, l]: [number, number, number, number]
++): Corners {
++  return [
++    Math.max(0, radius[0] - Math.max(t, l)),
++    Math.max(0, radius[1] - Math.max(t, r)),
++    Math.max(0, radius[2] - Math.max(b, r)),
++    Math.max(0, radius[3] - Math.max(b, l))
++  ]
++}
++
+ const NO_BORDER_STYLE = new Set(['none', 'hidden'])
+ const BORDER_STYLE_CODE: Record<string, BorderStyle> = {
+   dashed: 1,
+diff --git a/src/dom/textRuns.ts b/src/dom/textRuns.ts
+index ec62fec..51d0c7c 100644
+--- a/src/dom/textRuns.ts
++++ b/src/dom/textRuns.ts
+@@ -1,9 +1,39 @@
+-import type { Glyph, GlyphRun, TextShadow } from '../scene/records'
++import type { Glyph, GlyphRun, Rect, RGBA, TextShadow } from '../scene/records'
+ import { isColorGrapheme } from '../text/glyphAtlas'
+ import { parseColor } from '../util/color'
+ import { splitTopLevel } from '../util/css'
+ import { toDocRect } from './styles'
+ 
++/** Read text by line fragment or by whitespace-free chunk and split it
++ * into graphemes with Canvas 2D advances (see `readTextNode`). False reads
++ * every grapheme with its own Range. */
++export const FAST_TEXT_READ = true
++
++/** Text-read counts since the last `beginTextRead` (`stats().textRead`). */
++export interface TextReadStats {
++  /** Graphemes given a glyph. */
++  graphemes: number
++  /** Of those, read with their own Range (not split from a chunk). */
++  perGrapheme: number
++  /** Range layout queries issued. */
++  ranges: number
++}
++
++export const textReadStats: TextReadStats = {
++  graphemes: 0,
++  perGrapheme: 0,
++  ranges: 0
++}
++
++/** Start a read pass: zero the counts and forget the per-style fields
++ * (`runStyle`), which only hold within one synchronous pass. */
++export function beginTextRead(): void {
++  textReadStats.graphemes = 0
++  textReadStats.perGrapheme = 0
++  textReadStats.ranges = 0
++  runStyles = new WeakMap()
++}
++
+ // Grapheme segmenter (browser-native). Falls back to Array.from for old envs.
+ const segmenter =
+   typeof Intl !== 'undefined' && 'Segmenter' in Intl
+@@ -72,7 +102,15 @@ export function graphemeClass(cell: string): GraphemeClass {
+  * text". Chrome splits a ligature's advance across its graphemes' rects;
+  * the Slug backend merges those back into the ligature glyph.
+  *
+- * NOTE: getClientRects here is a forced layout read. The caller MUST batch all
++ * With `fast` (FAST_TEXT_READ, off under a transform) the node is read
++ * with one `getClientRects()` and its lines are split into graphemes from
++ * Canvas 2D advances (`readLines`); failing that, each whitespace-free
++ * chunk is read with one Range and split the same way (`readChunk`);
++ * failing that, per grapheme. A split is used only when the canvas widths
++ * match the browser's rects, so the output matches the per-grapheme read
++ * to within 0.05px.
++ *
++ * NOTE: each Range rect is a forced layout read. The caller MUST batch all
+  * of these before any GPU write in a frame (see observer/sync).
+  *
+  * `s` is the computed style of the text node's parent element.
+@@ -94,98 +132,611 @@ export function readTextNode(
+   s: CSSStyleDeclaration,
+   runId: number,
+   fontId: number,
+-  startIndex: number
++  startIndex: number,
++  fast = FAST_TEXT_READ
+ ): GlyphRun | null {
+   const text = node.nodeValue
+   if (!text?.trim()) {
+     return null
+   }
++  const rs = runStyle(s)
+   // Hidden text paints nothing (and so no decorations); a descendant
+   // element can still set `visibility: visible` for its own text.
+-  if (s.visibility !== 'visible') {
++  if (!rs.visible) {
+     return null
+   }
+-  const color = parseColor(s.color)
+-  const fontSize = Number.parseFloat(s.fontSize) || 16
+-  const fontFamily = (s.fontFamily.split(',')[0] ?? '')
+-    .trim()
+-    .replace(/^['"]|['"]$/g, '')
+-  const fontWeight = Number.parseInt(s.fontWeight, 10) || 400
+-  const italic = s.fontStyle === 'italic' || s.fontStyle.startsWith('oblique')
+-  const opsz = opticalSize(s, fontSize)
++  const { color, fontSize, tt } = rs
+   const glyphs: Glyph[] = []
+-  const tt = textTransformOf(s)
+   const lang = tt ? langOf(node.parentElement) : undefined
+   // The two source graphemes before the current one (capitalize context).
+   let b1 = ''
+   let b2 = ''
+ 
+-  const range = document.createRange()
+   const cells = graphemes(text)
+-  let offset = 0
+-  let index = startIndex
+-  for (const cell of cells) {
+-    const len = cell.length
+-    const before = b1
+-    const before2 = b2
++  const n = cells.length
++  // Source offset and displayed (text-transformed) form of each cell. The
++  // browser paints the transformed text in the source grapheme's rect; a
++  // transform that adds code points (ß -> SS) makes the cell a
++  // multi-code-point cluster, which the fallback atlas draws.
++  const offs = new Array<number>(n)
++  const shown = new Array<string>(n)
++  let off = 0
++  for (let i = 0; i < n; i++) {
++    const cell = cells[i] ?? ''
++    offs[i] = off
++    shown[i] = tt ? transformCell(cell, b1, b2, tt, lang) : cell
+     b2 = b1
+     b1 = cell
+-    if (cell.trim().length === 0) {
+-      offset += len
+-      index += 1
++    off += cell.length
++  }
++  const push = (i: number, rect: Rect): void => {
++    const cell = shown[i] ?? ''
++    const cls = graphemeClass(cell)
++    glyphs.push({
++      index: startIndex + i,
++      rect,
++      // Untransformed; the reader re-derives these under a transform.
++      xform: [1, 0, 0, 1, rect.x, rect.y],
++      local: { w: rect.width, h: rect.height },
++      glyphId: cell.codePointAt(0) ?? 0,
++      text: cell,
++      colour: cls.colour,
++      codePoints: cls.codePoints,
++      fontId,
++      fontSize,
++      color,
++      offset: { x: 0, y: 0 }
++    })
++  }
++  const range = document.createRange()
++  const split = fast ? splitSetup(s) : null
++  const stats = textReadStats
++  const lined =
++    split?.lines === true &&
++    readLines(node, range, split, cells, offs, shown, push)
++  for (let i = lined ? n : 0; i < n; ) {
++    if (isBlank(cells[i] ?? '')) {
++      i++
+       continue
+     }
+-    range.setStart(node, offset)
+-    range.setEnd(node, offset + len)
+-    const r = range.getBoundingClientRect()
+-    if (r.width > 0 && r.height > 0) {
+-      const rect = toDocRect(r)
+-      // The browser paints the transformed text in the source grapheme's
+-      // rect; a transform that adds code points (ß -> SS) makes the cell a
+-      // multi-code-point cluster, which the fallback atlas draws.
+-      const shown = tt ? transformCell(cell, before, before2, tt, lang) : cell
+-      const cls = graphemeClass(shown)
+-      glyphs.push({
+-        index,
+-        rect,
+-        // Untransformed; the reader re-derives these under a transform.
+-        xform: [1, 0, 0, 1, rect.x, rect.y],
+-        local: { w: rect.width, h: rect.height },
+-        glyphId: shown.codePointAt(0) ?? 0,
+-        text: shown,
+-        colour: cls.colour,
+-        codePoints: cls.codePoints,
+-        fontId,
+-        fontSize,
+-        color,
+-        offset: { x: 0, y: 0 }
+-      })
++    let j = i + 1
++    while (j < n && !isBlank(cells[j] ?? '')) {
++      j++
++    }
++    const done =
++      split !== null &&
++      j - i > 1 &&
++      readChunk(node, range, split, offs, shown, i, j, push)
++    if (!done) {
++      for (let k = i; k < j; k++) {
++        const start = offs[k] ?? 0
++        range.setStart(node, start)
++        range.setEnd(node, start + (cells[k] ?? '').length)
++        const r = range.getBoundingClientRect()
++        stats.ranges++
++        if (r.width > 0 && r.height > 0) {
++          push(k, toDocRect(r))
++          stats.perGrapheme++
++        }
++      }
+     }
+-    offset += len
+-    index += 1
++    i = j
+   }
+   range.detach?.()
+   if (glyphs.length === 0) {
+     return null
+   }
++  stats.graphemes += glyphs.length
+   return {
+     kind: 'text',
+     id: runId,
+     fontId,
+-    fontFamily,
+-    fontStack: s.fontFamily,
+-    fontWeight,
+-    opsz,
+-    italic,
+-    ligatures: ligaturesEnabled(s),
++    fontFamily: rs.fontFamily,
++    fontStack: rs.fontStack,
++    fontWeight: rs.fontWeight,
++    opsz: rs.opsz,
++    italic: rs.italic,
++    ligatures: rs.ligatures,
+     color,
+     glyphs,
+-    textShadows: readTextShadows(s.textShadow, s.color),
++    textShadows: rs.textShadows,
+     opacity: 1,
+     z: 0
+   }
+ }
+ 
++/** The run-level fields `readTextNode` derives from a computed style. */
++interface RunStyle {
++  visible: boolean
++  color: RGBA
++  fontSize: number
++  fontFamily: string
++  fontStack: string
++  fontWeight: number
++  italic: boolean
++  opsz: number | null
++  tt: TextTransform | null
++  ligatures: boolean
++  letterSpacing: number
++  textShadows: TextShadow[]
++  /** Canvas font shorthand: style, weight, size, family. */
++  font: string
++  /** `readSplitSetup`, read on first use. */
++  split?: SplitSetup | null
++}
++
++// Per read pass (see beginTextRead): an element's text nodes share its
++// computed style object, and the style can't change within a pass.
++let runStyles = new WeakMap<CSSStyleDeclaration, RunStyle>()
++
++function runStyle(s: CSSStyleDeclaration): RunStyle {
++  const hit = runStyles.get(s)
++  if (hit) {
++    return hit
++  }
++  const size = s.fontSize
++  const fontSize = Number.parseFloat(size) || 16
++  const fontStyle = s.fontStyle
++  const weight = s.fontWeight
++  const family = s.fontFamily
++  const out: RunStyle = {
++    visible: s.visibility === 'visible',
++    color: parseColor(s.color),
++    fontSize,
++    fontFamily: (family.split(',')[0] ?? '').trim().replace(/^['"]|['"]$/g, ''),
++    fontStack: family,
++    fontWeight: Number.parseInt(weight, 10) || 400,
++    italic: fontStyle === 'italic' || fontStyle.startsWith('oblique'),
++    opsz: opticalSize(s, fontSize),
++    tt: textTransformOf(s),
++    ligatures: ligaturesEnabled(s),
++    letterSpacing: Number.parseFloat(s.letterSpacing) || 0,
++    textShadows: readTextShadows(s.textShadow, s.color),
++    font: `${fontStyle} ${weight} ${size} ${family}`
++  }
++  runStyles.set(s, out)
++  return out
++}
++
++/** Whitespace cells get no glyph and delimit chunks. */
++function isBlank(cell: string): boolean {
++  return cell.trim().length === 0
++}
++
++/** Canvas 2D state that reproduces an element's text advances. */
++interface SplitSetup {
++  ctx: CanvasRenderingContext2D
++  font: string
++  kerning: CanvasFontKerning
++  /** Suffix widths and width-check record for this font. */
++  cache: SplitFont
++  /** Measure with ZWNJ between graphemes (ligatures off in the DOM). */
++  noLiga: boolean
++  letterSpacing: number
++  /** A chunk rect taller than this spans lines (1.5x the content height). */
++  maxHeight: number
++  /** Text is shown untransformed, so a chunk is a substring of the node. */
++  plain: boolean
++  /** Whitespace collapses and lines aren't justified (`readLines`). */
++  lines: boolean
++  /** Advance of a collapsed space: canvas width plus letter- and
++   * word-spacing. */
++  space: number
++}
++
++/** `readSplitSetup`, once per style object per read pass. */
++function splitSetup(s: CSSStyleDeclaration): SplitSetup | null {
++  const rs = runStyle(s)
++  if (rs.split === undefined) {
++    rs.split = readSplitSetup(s, rs)
++  }
++  return rs.split
++}
++
++/**
++ * The Canvas 2D setup for splitting `s`'s text, or null when the canvas
++ * can't be expected to reproduce the browser's advances: non-LTR or
++ * vertical text, and font properties the canvas `font` shorthand can't
++ * carry (feature/variation settings, variant caps/numeric/east-asian,
++ * non-normal stretch, oblique angles, font-size-adjust, text-rendering).
++ * The width checks back this up.
++ */
++function readSplitSetup(
++  s: CSSStyleDeclaration,
++  rs: RunStyle
++): SplitSetup | null {
++  // The computed `font` shorthand is empty unless every font longhand it
++  // resets (kerning, variants, feature/variation settings, size-adjust,
++  // optical sizing) is initial, which saves reading them one by one.
++  const initial = s.font !== ''
++  if (
++    s.direction !== 'ltr' ||
++    s.writingMode !== 'horizontal-tb' ||
++    s.fontVariantCaps !== 'normal' ||
++    (s.fontStretch !== '100%' && s.fontStretch !== 'normal') ||
++    (rs.italic && s.fontStyle !== 'italic') ||
++    s.textRendering !== 'auto'
++  ) {
++    return null
++  }
++  if (
++    !initial &&
++    (s.fontFeatureSettings !== 'normal' ||
++      s.fontVariationSettings !== 'normal' ||
++      s.fontVariantNumeric !== 'normal' ||
++      s.fontVariantEastAsian !== 'normal' ||
++      (s.fontSizeAdjust ?? 'none') !== 'none')
++  ) {
++    return null
++  }
++  const ctx = ensureMeasureCtx()
++  if (!ctx) {
++    return null
++  }
++  const { letterSpacing, font } = rs
++  const kerning = (initial ? 'auto' : s.fontKerning) as CanvasFontKerning
++  const noLiga = !rs.ligatures
++  const key = `${font}|${kerning}|${noLiga ? 0 : 1}`
++  let cache = splitCache.get(key)
++  if (!cache) {
++    if (splitCache.size >= SPLIT_FONTS_MAX) {
++      splitCache.clear()
++    }
++    cache = { widths: new Map(), hits: 0, misses: 0 }
++    splitCache.set(key, cache)
++  }
++  // A font whose chunks never match the canvas (e.g. an opsz axis under
++  // `font-optical-sizing: none`, which the canvas shorthand resets to
++  // auto) would cost an extra Range read per chunk.
++  if (cache.hits === 0 && cache.misses >= SPLIT_GIVE_UP) {
++    return null
++  }
++  if (cache.space === undefined) {
++    ctx.font = font
++    ctx.fontKerning = kerning
++    cache.space = ctx.measureText(' ').width
++  }
++  const collapse =
++    (s as unknown as { whiteSpaceCollapse?: string }).whiteSpaceCollapse ??
++    (s.whiteSpace === 'normal' || s.whiteSpace === 'nowrap' ? 'collapse' : '')
++  const lastAlign =
++    (s as unknown as { textAlignLast?: string }).textAlignLast ?? ''
++  return {
++    ctx,
++    font,
++    kerning,
++    cache,
++    noLiga,
++    letterSpacing,
++    maxHeight: metricsFor(font, rs.fontSize).height * 1.5,
++    plain: rs.tt === null,
++    lines:
++      collapse === 'collapse' &&
++      s.textAlign !== 'justify' &&
++      lastAlign !== 'justify',
++    space: cache.space + letterSpacing + (Number.parseFloat(s.wordSpacing) || 0)
++  }
++}
++
++// Code points whose advances Canvas 2D reproduces with the same shaping:
++// Latin, Greek, Cyrillic (with combining marks), Latin/Greek extended,
++// dashes/quotes/punctuation, currency, letterlike, arrows, math. Excludes
++// soft hyphen, zero-width and bidi controls, RTL and complex scripts, emoji.
++const SPLIT_SAFE =
++  /^[!-~\u00a1-\u00ac\u00ae-\u058f\u1e00-\u1fff\u2010-\u2027\u2030-\u205e\u20a0-\u20c0\u2100-\u22ff]+$/
++// Common Latin ligature starts (liga/clig in most text faces). A ligature
++// splits its advance evenly across its graphemes' rects, which canvas
++// prefix/suffix widths don't reproduce, so these chunks read per grapheme
++// when ligatures are on.
++const LIGA_CANDIDATE = /f[fijlt]/
++const ZWNJ = String.fromCharCode(0x200c)
++/** Max |DOM chunk width - canvas width| (px) for the canvas split. */
++const SPLIT_TOLERANCE = 0.05
++const SPLIT_CACHE_MAX = 16384
++const SPLIT_FONTS_MAX = 256
++/** Width-check failures, with no success, after which a font stops being
++ * split. */
++const SPLIT_GIVE_UP = 8
++
++interface SplitFont {
++  /** Per chunk string: the canvas width of each suffix, from grapheme k to
++   * the end (index m is 0), without letter-spacing. A chunk's graphemes
++   * are those of its string (the unsafe code points that segment by
++   * context are never split). */
++  widths: Map<string, Float64Array>
++  /** Chunks that passed / failed the width check. */
++  hits: number
++  misses: number
++  /** Canvas width of U+0020. */
++  space?: number
++}
++
++/** Per setup (font, kerning, ligature mode). */
++const splitCache = new Map<string, SplitFont>()
++
++function suffixWidths(split: SplitSetup, joined: string): Float64Array {
++  const cache = split.cache.widths
++  const hit = cache.get(joined)
++  if (hit) {
++    return hit
++  }
++  const cells = graphemes(joined)
++  const sep = split.noLiga ? ZWNJ : ''
++  const { ctx } = split
++  ctx.font = split.font
++  ctx.fontKerning = split.kerning
++  const m = cells.length
++  const out = new Float64Array(m + 1)
++  for (let k = m - 1; k >= 0; k--) {
++    out[k] = ctx.measureText(cells.slice(k).join(sep)).width
++  }
++  if (cache.size >= SPLIT_CACHE_MAX) {
++    cache.clear()
++  }
++  cache.set(joined, out)
++  return out
++}
++
++/** Collapsible whitespace (a run renders as at most one space). */
++const COLLAPSIBLE = /^[ \t\n\r\f]+$/
++
++/**
++ * Read the whole node with one `getClientRects()` (a rect per line
++ * fragment) and place every chunk from canvas widths: each whitespace run
++ * between chunks is one collapsed space (`split.space`), with no width at
++ * a soft wrap, and a line ends where the running width matches its rect.
++ * The node's leading and trailing whitespace may or may not render; when
++ * both readings fit a line, one more Range measures the leading run.
++ * Chunks are split into graphemes as in
++ * `readChunk`; chunks with a ligature candidate get a Range per grapheme.
++ * Returns false, having pushed nothing, when any chunk has unsafe code
++ * points or non-collapsible whitespace, or the widths don't account for
++ * every rect (a line broken inside a chunk, bidi fragments, a style the
++ * canvas doesn't reproduce); the caller then reads chunk by chunk.
++ */
++function readLines(
++  node: Text,
++  range: Range,
++  split: SplitSetup,
++  cells: string[],
++  offs: number[],
++  shown: string[],
++  push: (i: number, rect: Rect) => void
++): boolean {
++  const n = cells.length
++  const text = node.nodeValue ?? ''
++  const starts: number[] = []
++  const ends: number[] = []
++  for (let i = 0; i < n; ) {
++    if (isBlank(cells[i] ?? '')) {
++      if (!COLLAPSIBLE.test(cells[i] ?? '')) {
++        return false
++      }
++      i++
++      continue
++    }
++    let j = i + 1
++    while (j < n && !isBlank(cells[j] ?? '')) {
++      j++
++    }
++    starts.push(i)
++    ends.push(j)
++    i = j
++  }
++  const count = starts.length
++  const widths: Float64Array[] = []
++  const liga: boolean[] = []
++  const ls = split.letterSpacing
++  for (let c = 0; c < count; c++) {
++    const i = starts[c] ?? 0
++    const j = ends[c] ?? 0
++    const joined = split.plain
++      ? text.slice(offs[i] ?? 0, j < n ? (offs[j] ?? 0) : text.length)
++      : shown.slice(i, j).join('')
++    if (!SPLIT_SAFE.test(joined)) {
++      return false
++    }
++    const suf = suffixWidths(split, joined)
++    if (suf.length !== j - i + 1) {
++      return false
++    }
++    widths.push(suf)
++    liga.push(!split.noLiga && LIGA_CANDIDATE.test(joined))
++  }
++  range.selectNodeContents(node)
++  const rects = range.getClientRects()
++  textReadStats.ranges++
++  const sp = split.space
++  const width = (c: number): number =>
++    (widths[c]?.[0] ?? 0) + ls * ((ends[c] ?? 0) - (starts[c] ?? 0))
++  // Per chunk: its line's rect and its x offset in it.
++  const lineOf: DOMRect[] = []
++  const xOf: number[] = []
++  // The last chunk on a line of width `w` that starts with chunk `c` at
++  // `lead`, or -1. A space before a soft wrap has no width; the node's
++  // trailing whitespace renders as a space when the line goes on.
++  const fit = (c: number, lead: number, w: number): number => {
++    let x = lead
++    for (let cc = c; cc < count; cc++) {
++      xOf[cc] = x
++      x += width(cc)
++      if (Math.abs(x - w) <= SPLIT_TOLERANCE) {
++        return cc
++      }
++      const trail = cc === count - 1 && (ends[cc] ?? 0) < n
++      if (trail && Math.abs(x + sp - w) <= SPLIT_TOLERANCE) {
++        return cc
++      }
++      if (x > w) {
++        return -1
++      }
++      x += sp
++    }
++    return -1
++  }
++  let c = 0
++  // The node's leading whitespace is still unplaced.
++  let leading = (starts[0] ?? 0) > 0
++  for (let k = 0; k < rects.length; k++) {
++    const r = rects[k]
++    if (!r || r.width <= 0) {
++      continue
++    }
++    if (c >= count || r.height > split.maxHeight) {
++      return false
++    }
++    let matched = fit(c, 0, r.width)
++    // Only the node's first fragment can open with a rendered space.
++    if (leading) {
++      leading = false
++      const spaced = fit(0, sp, r.width)
++      if (matched >= 0 && spaced >= 0) {
++        // A leading space or a trailing one: measure the leading run.
++        range.setStart(node, 0)
++        range.setEnd(node, offs[starts[0] ?? 0] ?? 0)
++        const lead = range.getBoundingClientRect().width
++        textReadStats.ranges++
++        matched = fit(0, lead > sp / 2 ? sp : 0, r.width)
++      } else if (spaced >= 0) {
++        matched = spaced
++      } else if (matched >= 0) {
++        matched = fit(0, 0, r.width)
++      } else if (Math.abs(r.width - sp) <= SPLIT_TOLERANCE) {
++        // A lone leading space that ended the line before.
++        continue
++      }
++    }
++    if (matched < 0) {
++      split.cache.misses++
++      return false
++    }
++    for (let cc = c; cc <= matched; cc++) {
++      lineOf[cc] = r
++    }
++    c = matched + 1
++  }
++  if (c !== count) {
++    split.cache.misses++
++    return false
++  }
++  split.cache.hits++
++  let baseOf: DOMRect | null = null
++  let base: Rect = { x: 0, y: 0, width: 0, height: 0 }
++  for (let c = 0; c < count; c++) {
++    const i = starts[c] ?? 0
++    const m = (ends[c] ?? 0) - i
++    const r = lineOf[c]
++    if (!r) {
++      continue
++    }
++    if (liga[c]) {
++      for (let k = i; k < i + m; k++) {
++        const start = offs[k] ?? 0
++        range.setStart(node, start)
++        range.setEnd(node, start + (cells[k] ?? '').length)
++        const g = range.getBoundingClientRect()
++        textReadStats.ranges++
++        if (g.width > 0 && g.height > 0) {
++          push(k, toDocRect(g))
++          textReadStats.perGrapheme++
++        }
++      }
++      continue
++    }
++    if (r !== baseOf) {
++      baseOf = r
++      base = toDocRect(r)
++    }
++    const x = base.x + (xOf[c] ?? 0)
++    pushSplit(widths[c] ?? new Float64Array(1), m, ls, i, x, base, push)
++  }
++  return true
++}
++
++/** Push the `m` grapheme rects of a chunk starting at doc x `x`, from its
++ * suffix widths (see `readChunk`). */
++function pushSplit(
++  suf: Float64Array,
++  m: number,
++  ls: number,
++  i: number,
++  x: number,
++  line: Rect,
++  push: (i: number, rect: Rect) => void
++): void {
++  const total = (suf[0] ?? 0) + ls * m
++  let x0 = 0
++  for (let k = 0; k < m; k++) {
++    const x1 = total - (suf[k + 1] ?? 0) - ls * (m - k - 1)
++    if (x1 - x0 > 0) {
++      push(i + k, {
++        x: x + x0,
++        y: line.y,
++        width: x1 - x0,
++        height: line.height
++      })
++    }
++    x0 = x1
++  }
++}
++
++/**
++ * Read cells `i`..`j-1` (a whitespace-free chunk) with one Range and split
++ * the chunk rect into grapheme rects from Canvas 2D advances. Grapheme k
++ * starts at `W - suffix(k)`: a kerning pair adjusts its first glyph's
++ * advance, which a suffix width (starting at k) excludes and a prefix
++ * width (ending at k) would miss. Letter-spacing is added once per
++ * grapheme, on its right. Returns false, having pushed nothing, when the
++ * chunk needs per-grapheme reads: unsafe code points, a ligature
++ * candidate, a rect per line or bidi fragment, or a DOM width the canvas
++ * width misses by more than SPLIT_TOLERANCE (kerning or shaping the canvas
++ * doesn't reproduce, collapsed or transformed text that differs, a
++ * missing web font on one side).
++ */
++function readChunk(
++  node: Text,
++  range: Range,
++  split: SplitSetup,
++  offs: number[],
++  shown: string[],
++  i: number,
++  j: number,
++  push: (i: number, rect: Rect) => void
++): boolean {
++  const end = j < offs.length ? (offs[j] ?? 0) : (node.nodeValue ?? '').length
++  const joined = split.plain
++    ? (node.nodeValue ?? '').slice(offs[i] ?? 0, end)
++    : shown.slice(i, j).join('')
++  if (
++    !SPLIT_SAFE.test(joined) ||
++    (!split.noLiga && LIGA_CANDIDATE.test(joined))
++  ) {
++    return false
++  }
++  range.setStart(node, offs[i] ?? 0)
++  range.setEnd(node, end)
++  const r = range.getBoundingClientRect()
++  textReadStats.ranges++
++  if (r.height <= 0 || r.height > split.maxHeight) {
++    return false
++  }
++  const suf = suffixWidths(split, joined)
++  const m = j - i
++  if (suf.length !== m + 1) {
++    return false
++  }
++  const ls = split.letterSpacing
++  const total = (suf[0] ?? 0) + ls * m
++  if (Math.abs(r.width - total) > SPLIT_TOLERANCE) {
++    split.cache.misses++
++    return false
++  }
++  split.cache.hits++
++  const base = toDocRect(r)
++  pushSplit(suf, m, ls, i, base.x, base, push)
++  return true
++}
++
+ export type TextTransform = 'uppercase' | 'lowercase' | 'capitalize'
+ 
+ /** The case part of computed `text-transform`, or null. `full-width` and
+@@ -388,6 +939,7 @@ function ensureMeasureCtx(): CanvasRenderingContext2D | null {
+     document.fonts?.addEventListener('loadingdone', () => {
+       fontMetricsCache.clear()
+       glyphInkCache.clear()
++      splitCache.clear()
+     })
+   }
+   return measureCtx
+@@ -401,6 +953,11 @@ function ensureMeasureCtx(): CanvasRenderingContext2D | null {
+ export function fontMetrics(s: FontStyleLike): FontMetrics {
+   const fontSize = Number.parseFloat(s.fontSize) || 16
+   const font = `${s.fontStyle} ${s.fontWeight} ${fontSize}px ${s.fontFamily}`
++  return metricsFor(font, fontSize)
++}
++
++/** `fontMetrics` for a canvas font string at `fontSize` px. */
++function metricsFor(font: string, fontSize: number): FontMetrics {
+   const hit = fontMetricsCache.get(font)
+   if (hit !== undefined) {
+     return hit
+diff --git a/src/dom/tree.ts b/src/dom/tree.ts
+index b7c2a13..147aecd 100644
+--- a/src/dom/tree.ts
++++ b/src/dom/tree.ts
+@@ -1,5 +1,6 @@
+ import type {
+   BoxRecord,
++  CutoutRecord,
+   Glyph,
+   GlyphRun,
+   ImageRecord,
+@@ -34,8 +35,10 @@ import {
+ } from './pseudo'
+ import {
+   beginRead,
++  boxInset,
+   clipRectFor,
+   readBox,
++  readCorners,
+   readImageRecord,
+   readOpacity,
+   readShadows,
+@@ -43,7 +46,12 @@ import {
+   toDocRect
+ } from './styles'
+ import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
+-import { contentHeight, readTextNode } from './textRuns'
++import {
++  beginTextRead,
++  contentHeight,
++  FAST_TEXT_READ,
++  readTextNode
++} from './textRuns'
+ import {
+   affine,
+   composeIndividual,
+@@ -88,7 +96,40 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
+ export const MAX_BOUNDARIES = 8
+ const RECT_EPSILON = 0.01
+ 
+-type OwnRecord = BoxRecord | ImageRecord
++type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
++
++/**
++ * The records to append after the box for a background image. An image
++ * whose painting area reaches into the border (background-clip:
++ * border-box) paints under the border, so the box's border moves to a
++ * second, border-only box drawn after the image; the first box (mutated
++ * here) keeps the fill.
++ */
++function underBorder(
++  own: readonly OwnRecord[],
++  bg: ImageRecord,
++  s: CSSStyleDeclaration,
++  place: Placement,
++  alloc: () => number
++): OwnRecord[] {
++  const box = own.find((r): r is BoxRecord => r.kind === 'box' && !r.shadow)
++  const pad = boxInset(s, 'padding-box')
++  const reaches =
++    bg.local.w > place.local.w - pad[1] - pad[3] + 0.01 ||
++    bg.local.h > place.local.h - pad[0] - pad[2] + 0.01
++  if (!box?.border || !reaches) {
++    return [bg]
++  }
++  const border: BoxRecord = {
++    ...box,
++    id: alloc(),
++    fill: { r: 0, g: 0, b: 0, a: 0 },
++    gradient: null
++  }
++  delete border.bgInset
++  box.border = null
++  return [bg, border]
++}
+ const NO_RECORDS: readonly OwnRecord[] = []
+ 
+ export interface ElNode {
+@@ -336,6 +377,9 @@ export class SceneReader {
+   /** Elements visited (DOM-read) by the most recent read, incl. any work
+    * discarded by an escalation. */
+   readElements = 0
++  /** Inside an ignored `display: contents` subtree: children become
++   * cutouts too. */
++  private inIgnored = false
+   /** Partial reads that completed without escalating. */
+   partialReads = 0
+   /** Elements with computed `position: sticky` in the current tree. Their
+@@ -357,6 +401,7 @@ export class SceneReader {
+   /** Re-read the whole root subtree and rebuild the scene. */
+   fullRead(): void {
+     beginRead()
++    beginTextRead()
+     this.readElements = 0
+     this.ordinals.clear()
+     this.readAll()
+@@ -388,6 +433,7 @@ export class SceneReader {
+     paintOnly?: ReadonlySet<Element>
+   ): void {
+     beginRead()
++    beginTextRead()
+     this.readElements = 0
+     this.ordinals.clear()
+     const tree = this.tree
+@@ -514,9 +560,10 @@ export class SceneReader {
+     parentDecor: Decoration[] | null,
+     parentCb: Placement | null
+   ): ElNode | null {
+-    if (SKIP_TAGS.has(el.tagName) || el.hasAttribute(IGNORE_ATTR)) {
++    if (SKIP_TAGS.has(el.tagName)) {
+       return null
+     }
++    const ignored = this.inIgnored || el.hasAttribute(IGNORE_ATTR)
+     this.readElements++
+     const { scene, layers } = this
+     const s = getComputedStyle(el)
+@@ -548,8 +595,10 @@ export class SceneReader {
+     const place = lin
+       ? transformedPlacement(el, lin, rect)
+       : rectPlacement(rect)
+-    const isContext = !isRoot && createsStackingContext(s, transformable)
+-    const alpha = isContext ? Math.max(0, readOpacity(s)) : 1
++    const ownAlpha = readOpacity(s, el)
++    const isContext =
++      !isRoot && createsStackingContext(s, transformable, ownAlpha)
++    const alpha = isContext ? Math.max(0, ownAlpha) : 1
+     const decor = layers.has('text')
+       ? propagateDecorations(el, s, parentDecor)
+       : null
+@@ -557,6 +606,51 @@ export class SceneReader {
+     // subtree gets its own record (see svg.ts).
+     const svgRoot = isInlineSvgRoot(el)
+ 
++    if (ignored) {
++      const node = this.cutoutNode(
++        el,
++        s,
++        parent,
++        rect,
++        space,
++        clip,
++        place,
++        lin,
++        {
++          isContext,
++          ctxZ: isContext ? contextZIndex(s) : 0,
++          trapsFixed: parentTraps || trapsFixed(s, transformable),
++          fragmented: display === 'inline' || display === 'contents',
++          float: s.float !== 'none',
++          cb: parentCb ?? paddingPlacement(s, place)
++        }
++      )
++      // A `display: contents` element has no box of its own to cut out:
++      // its children are the ones painting, so each gets the hole instead
++      // (recursively, for nested `contents`).
++      if (display === 'contents') {
++        const wasIgnored = this.inIgnored
++        this.inIgnored = true
++        for (const child of el.children) {
++          const kid = this.readNode(
++            child,
++            node,
++            clip,
++            false,
++            lin,
++            null,
++            parentCb
++          )
++          if (kid) {
++            node.kids.push(kid)
++          }
++          setReadSpace(space)
++        }
++        this.inIgnored = wasIgnored
++      }
++      return node
++    }
++
+     let own = NO_RECORDS
+     if (layers.has('boxes')) {
+       // Outer shadows paint under the element's own background.
+@@ -609,7 +703,7 @@ export class SceneReader {
+         place
+       )
+       if (bg) {
+-        own = own.length ? [...own, bg] : [bg]
++        own = [...own, ...underBorder(own, bg, s, place, () => scene.allocId())]
+       }
+     }
+     if (layers.has('boxes') && s.boxShadow.includes('inset')) {
+@@ -684,7 +778,9 @@ export class SceneReader {
+             s,
+             scene.allocId(),
+             0, // fontId resolved by the text backend in a later stage
+-            0
++            0,
++            // Chunk rects are AABBs under a transform; split only upright.
++            FAST_TEXT_READ && !lin
+           )
+           if (run) {
+             if (lin) {
+@@ -716,6 +812,73 @@ export class SceneReader {
+     return node
+   }
+ 
++  /**
++   * The node for a `data-gpu-ignore` element: one CutoutRecord over its
++   * border box (none when it is invisible or empty) and no kids — its
++   * subtree is the page's own paint, shown through the hole. It keeps its
++   * stacking context (so the hole gets the z the element would paint at)
++   * but never an opacity group: a hole inside a group target would only
++   * clear the group, not the canvas.
++   */
++  private cutoutNode(
++    el: Element,
++    s: CSSStyleDeclaration,
++    parent: ElNode | null,
++    rect: Rect,
++    space: Space,
++    clip: Rect | null,
++    place: Placement,
++    lin: Mat2 | null,
++    ctx: Pick<
++      ElNode,
++      'isContext' | 'ctxZ' | 'trapsFixed' | 'fragmented' | 'float' | 'cb'
++    >
++  ): ElNode {
++    let own = NO_RECORDS
++    if (
++      this.layers.has('cutouts') &&
++      s.visibility === 'visible' &&
++      rect.width > 0 &&
++      rect.height > 0
++    ) {
++      const cut: CutoutRecord = {
++        kind: 'cutout',
++        id: this.scene.allocId(),
++        z: 0,
++        rect,
++        local: place.local,
++        xform: place.xform,
++        radius: readCorners(s, {
++          x: 0,
++          y: 0,
++          width: place.local.w,
++          height: place.local.h
++        }),
++        clip
++      }
++      if (space === 'viewport') {
++        cut.space = 'viewport'
++      }
++      own = [cut]
++    }
++    const node: ElNode = {
++      kind: 'element',
++      el,
++      parent,
++      kids: [],
++      rect,
++      space,
++      own,
++      childClip: clip,
++      alpha: 1,
++      lin,
++      decor: null,
++      ...ctx
++    }
++    this.nodes.set(el, node)
++    return node
++  }
++
+   /**
+    * Splice `node`'s pseudo-elements into its kids (after they are read:
+    * placement needs their glyphs): `::marker` then `::before` first,
+diff --git a/src/gpu/frame.ts b/src/gpu/frame.ts
+index 177f115..8bcf245 100644
+--- a/src/gpu/frame.ts
++++ b/src/gpu/frame.ts
+@@ -1,4 +1,5 @@
+ import type { Scene } from '../scene/scene'
++import type { Layer } from '../types'
+ 
+ /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
+ export const FRAME_WGSL = /* wgsl */ `
+@@ -34,7 +35,7 @@ export const FRAME_BYTES = 8 * 4
+ 
+ /** A render pass owns one pipeline + its instance buffers for one layer. */
+ export interface RenderPass {
+-  readonly layer: 'boxes' | 'images' | 'text'
++  readonly layer: Layer
+   /** Re-pack instance buffers from the (dirty) scene. */
+   upload(scene: Scene): void
+   /**
+diff --git a/src/images/imageRenderer.ts b/src/images/imageRenderer.ts
+index 974cb95..234886b 100644
+--- a/src/images/imageRenderer.ts
++++ b/src/images/imageRenderer.ts
+@@ -497,16 +497,9 @@ export class ImagePass implements RenderPass {
+         isSvgSource(srcKey(rec.source))
+       ) {
+         const dpr = this.shared.dpr || 1
+-        const w = clamp(
+-          Math.ceil(rec.local.w * dpr),
+-          SVG_RASTER_MIN,
+-          SVG_RASTER_MAX
+-        )
+-        const h = clamp(
+-          Math.ceil(rec.local.h * dpr),
+-          SVG_RASTER_MIN,
+-          SVG_RASTER_MAX
+-        )
++        const area = areaOf(rec)
++        const w = clamp(Math.ceil(area.w * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
++        const h = clamp(Math.ceil(area.h * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
+         const raster = this.rasterizeSvg(rec.source, w, h)
+         if (!raster) {
+           d.fill(0, o, o + FLOATS_PER_IMAGE)
+@@ -585,7 +578,8 @@ export class ImagePass implements RenderPass {
+         this.draws.push(null)
+         continue
+       }
+-      const f = fit(rec, nw, nh)
++      const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
++      const f = fit(dst, nw, nh)
+       d[o + 0] = f.rect.x
+       d[o + 1] = f.rect.y
+       d[o + 2] = f.rect.w
+@@ -609,15 +603,15 @@ export class ImagePass implements RenderPass {
+       d[o + 21] = f.tile.y
+       d[o + 22] = f.tile.w
+       d[o + 23] = f.tile.h
+-      const xf = rec.xform
++      const xf = dst.xform
+       d[o + 24] = xf[0]
+       d[o + 25] = xf[1]
+       d[o + 26] = xf[2]
+       d[o + 27] = xf[3]
+       d[o + 28] = xf[4]
+       d[o + 29] = xf[5]
+-      d[o + 30] = rec.local.w
+-      d[o + 31] = rec.local.h
++      d[o + 30] = dst.local.w
++      d[o + 31] = dst.local.h
+ 
+       if (spot) {
+         const s = this.atlas.size
+@@ -749,6 +743,55 @@ interface Fit {
+ const FULL_UV = { u0: 0, v0: 0, u1: 1, v1: 1 }
+ const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
+ 
++/** The positioning area (background-origin) in the record's local space. */
++function areaOf(rec: ImageRecord): {
++  x: number
++  y: number
++  w: number
++  h: number
++} {
++  const [t, r, b, l] = rec.originInset ?? [0, 0, 0, 0]
++  return { x: l, y: t, w: rec.local.w - l - r, h: rec.local.h - t - b }
++}
++
++/**
++ * Snap an untransformed record's destination rect to device pixels, as the
++ * box pass does (edges rounded, size kept at 1 device px at least, origin
++ * insets floored like border widths). Sampling follows the snapped rect
++ * because `fit()` runs on the result. Transformed records pass through.
++ */
++function snapRecord(rec: ImageRecord, dpr: number): ImageRecord {
++  const xf = rec.xform
++  if (xf[0] !== 1 || xf[1] !== 0 || xf[2] !== 0 || xf[3] !== 1) {
++    return rec
++  }
++  const snap = (v: number) => Math.round(v * dpr) / dpr
++  const min = (v: number) => (v > 0 ? 1 / dpr : 0)
++  const x0 = snap(xf[4])
++  const y0 = snap(xf[5])
++  const w = Math.max(snap(xf[4] + rec.local.w) - x0, min(rec.local.w))
++  const h = Math.max(snap(xf[5] + rec.local.h) - y0, min(rec.local.h))
++  const inset = (v: number) =>
++    v === 0
++      ? 0
++      : (Math.sign(v) * Math.max(1, Math.floor(Math.abs(v) * dpr + 1e-3))) / dpr
++  return {
++    ...rec,
++    xform: [1, 0, 0, 1, x0, y0],
++    local: { w, h },
++    ...(rec.originInset
++      ? {
++          originInset: [
++            inset(rec.originInset[0]),
++            inset(rec.originInset[1]),
++            inset(rec.originInset[2]),
++            inset(rec.originInset[3])
++          ] as [number, number, number, number]
++        }
++      : {})
++  }
++}
++
+ /**
+  * Map object-fit/object-position (or the equivalent background-size /
+  * background-position) to a quad rect and either a UV sub-rect (fill,
+@@ -759,10 +802,7 @@ const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
+  * top-left, see ImageRecord.xform).
+  */
+ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
+-  const x = 0
+-  const y = 0
+-  const w = rec.local.w
+-  const h = rec.local.h
++  const { x, y, w, h } = areaOf(rec)
+   const box = { x, y, w, h }
+   const [px, py] = rec.position
+ 
+@@ -770,7 +810,28 @@ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
+     return { rect: box, uv: FULL_UV, tile: NO_TILE, flags: 0 }
+   }
+ 
++  if (rec.originInset && rec.objectFit !== 'none') {
++    // The painted area differs from the positioning area (background-clip
++    // vs -origin): size the tile to the positioning area and sample by
++    // local position, so a repeating image continues past its edge.
++    const k =
++      rec.objectFit === 'fill'
++        ? null
++        : (rec.objectFit === 'cover' ? Math.max : Math.min)(w / natW, h / natH)
++    const tw = k === null ? w : natW * k
++    const th = k === null ? h : natH * k
++    return {
++      rect: { x: 0, y: 0, w: rec.local.w, h: rec.local.h },
++      uv: FULL_UV,
++      tile: { x: x + (w - tw) * px, y: y + (h - th) * py, w: tw, h: th },
++      flags: FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
++    }
++  }
++
+   if (rec.objectFit === 'none') {
++    const rect = rec.originInset
++      ? { x: 0, y: 0, w: rec.local.w, h: rec.local.h }
++      : box
+     const tile = {
+       x: x + (w - natW) * px,
+       y: y + (h - natH) * py,
+@@ -778,7 +839,7 @@ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
+       h: natH
+     }
+     const flags = FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
+-    return { rect: box, uv: FULL_UV, tile, flags }
++    return { rect, uv: FULL_UV, tile, flags }
+   }
+ 
+   if (rec.objectFit === 'fill') {
+diff --git a/src/scene/batches.ts b/src/scene/batches.ts
+index 2196d84..2fef2b3 100644
+--- a/src/scene/batches.ts
++++ b/src/scene/batches.ts
+@@ -1,5 +1,11 @@
+ import type { Layer } from '../types'
+-import type { BoxRecord, GlyphRun, ImageRecord, Rect } from './records'
++import type {
++  BoxRecord,
++  CutoutRecord,
++  GlyphRun,
++  ImageRecord,
++  Rect
++} from './records'
+ import { type OpacityGroup, padGlyphRect, textShadowPad } from './stacking'
+ 
+ /**
+@@ -190,9 +196,13 @@ export function unionRect(rects: Rect[]): Rect {
+ }
+ 
+ /**
+- * Merge the three z-sorted layers into cross-layer draw batches, minimising
++ * Merge the four z-sorted layers into cross-layer draw batches, minimising
+  * draw calls while keeping paint order correct.
+  *
++ * Cutouts are their own layer: a cutout batch erases what earlier
++ * batches drew in its rects, so the overlap rule below keeps any record
++ * that overlaps a cutout on its side of it.
++ *
+  * `runRects[i]` is the union of `runs[i]`'s glyph rects (compute once via
+  * `unionRect` in `Scene.sort()`). Text instance indices are cumulative glyph
+  * counts over `runs`, since the text pass has one instance per glyph.
+@@ -214,6 +224,7 @@ export function buildBatches(
+   images: ImageRecord[],
+   runs: GlyphRun[],
+   runRects: Rect[],
++  cutouts: CutoutRecord[] = [],
+   groups: readonly OpacityGroup[] = []
+ ): DrawBatch[] {
+   const entries: Entry[] = []
+@@ -247,6 +258,21 @@ export function buildBatches(
+       space: spaceBit(im)
+     })
+   }
++  for (let i = 0; i < cutouts.length; i++) {
++    const c = cutouts[i]
++    if (!c) {
++      continue
++    }
++    entries.push({
++      layer: 'cutouts',
++      z: c.z,
++      first: i,
++      count: 1,
++      rect: c.rect,
++      rects: [c.rect],
++      space: spaceBit(c)
++    })
++  }
+   let glyphBase = 0
+   for (let i = 0; i < runs.length; i++) {
+     const run = runs[i]
+diff --git a/src/scene/records.ts b/src/scene/records.ts
+index d31571b..3674a9a 100644
+--- a/src/scene/records.ts
++++ b/src/scene/records.ts
+@@ -152,6 +152,13 @@ export interface ImageRecord {
+   repeat: boolean
+   /** Border radii of the owning element, used to clip the quad. */
+   radius: Corners
++  /**
++   * Background positioning area (background-origin) as per-side insets
++   * [top, right, bottom, left] from the record's local box (the painted
++   * area, background-clip). Negative when the origin box is the larger.
++   * Absent: the positioning area is the local box.
++   */
++  originInset?: [number, number, number, number]
+   /** Multiplier applied by the pass. The reader writes 1: an element's
+    * opacity is applied once by its opacity group (see stacking.ts). */
+   opacity: number
+@@ -251,4 +258,29 @@ export interface GlyphRun {
+   space?: Space
+ }
+ 
+-export type SceneRecord = BoxRecord | ImageRecord | GlyphRun
++/**
++ * The border box of a `data-gpu-ignore` element: the cutout pass erases
++ * what the mirror drew before it (lower z) inside this rounded rect, so
++ * the element's own DOM paint shows through the canvas. Records painted
++ * after it draw over the hole normally.
++ */
++export interface CutoutRecord {
++  kind: 'cutout'
++  id: number
++  /** Global paint order (integer; back-to-front across all layers). */
++  z: number
++  /** Doc-space AABB (the transformed box's bounds when transformed). */
++  rect: Rect
++  /** Untransformed size; equals the rect size when untransformed. */
++  local: LocalSize
++  /** Maps local box coords (origin top-left, size `local`) to doc space. */
++  xform: Affine
++  /** 'viewport' inside a `position: fixed` subtree; absent = 'doc'. */
++  space?: Space
++  /** The element's border radii. */
++  radius: Corners
++  /** Clip rect from a clipping ancestor (overflow != visible). */
++  clip?: Rect | null
++}
++
++export type SceneRecord = BoxRecord | ImageRecord | GlyphRun | CutoutRecord
+diff --git a/src/scene/scene.ts b/src/scene/scene.ts
+index e5e6d5e..f82542f 100644
+--- a/src/scene/scene.ts
++++ b/src/scene/scene.ts
+@@ -1,6 +1,12 @@
+ import type { Layer } from '../types'
+ import { buildBatches, type DrawBatch, unionRect } from './batches'
+-import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
++import type {
++  BoxRecord,
++  CutoutRecord,
++  GlyphRun,
++  ImageRecord,
++  SceneRecord
++} from './records'
+ import type { OpacityGroup } from './stacking'
+ 
+ /**
+@@ -14,6 +20,8 @@ export class Scene {
+   boxes: BoxRecord[] = []
+   images: ImageRecord[] = []
+   runs: GlyphRun[] = []
++  /** `data-gpu-ignore` holes (see CutoutRecord). */
++  cutouts: CutoutRecord[] = []
+   /** Opacity groups, sorted by `first` (see stacking.ts). Set by the
+    * reader before sort(). */
+   groups: OpacityGroup[] = []
+@@ -25,7 +33,7 @@ export class Scene {
+   }
+ 
+   /** Layers whose instance buffers need re-upload since they were last drawn. */
+-  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text'])
++  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text', 'cutouts'])
+   /** True when any image source is dynamic (drives a continuous render). */
+   hasDynamic = false
+ 
+@@ -39,6 +47,7 @@ export class Scene {
+     this.boxes = []
+     this.images = []
+     this.runs = []
++    this.cutouts = []
+     this.groups = []
+     this.markAllDirty()
+     this.hasDynamic = false
+@@ -51,6 +60,7 @@ export class Scene {
+     this.dirtyLayers.add('boxes')
+     this.dirtyLayers.add('images')
+     this.dirtyLayers.add('text')
++    this.dirtyLayers.add('cutouts')
+   }
+   isDirty(layer: Layer): boolean {
+     return this.dirtyLayers.has(layer)
+@@ -76,6 +86,10 @@ export class Scene {
+         this.runs.push(record)
+         this.markDirty('text')
+         break
++      case 'cutout':
++        this.cutouts.push(record)
++        this.markDirty('cutouts')
++        break
+     }
+   }
+ 
+@@ -85,6 +99,7 @@ export class Scene {
+     this.boxes.sort(byZ)
+     this.images.sort(byZ)
+     this.runs.sort(byZ)
++    this.cutouts.sort(byZ)
+     const runRects = this.runs.map((r) =>
+       unionRect(r.glyphs.map((g) => g.rect))
+     )
+@@ -93,6 +108,7 @@ export class Scene {
+       this.images,
+       this.runs,
+       runRects,
++      this.cutouts,
+       this.groups
+     )
+   }
+diff --git a/src/scene/stacking.ts b/src/scene/stacking.ts
+index a6645b8..3ae8b8f 100644
+--- a/src/scene/stacking.ts
++++ b/src/scene/stacking.ts
+@@ -69,14 +69,15 @@ function isContext(item: Item): item is StackingContext {
+  */
+ export function createsStackingContext(
+   s: CSSStyleDeclaration,
+-  transformable = true
++  transformable = true,
++  opacity = Number.parseFloat(s.opacity)
+ ): boolean {
+   // Any positioned element: a real context when z-index is set, and the
+   // documented z=0 pseudo-context (Appendix E step 6) when it's auto.
+   if (s.position !== 'static') {
+     return true
+   }
+-  if (Number.parseFloat(s.opacity) < 1) {
++  if (opacity < 1) {
+     return true
+   }
+   if (transformable && hasTransform(s)) {
+diff --git a/src/types.ts b/src/types.ts
+index 3224a4a..9960f55 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -1,4 +1,5 @@
+ import type { SyncDiagnostics } from './dom/observer'
++import type { TextReadStats } from './dom/textRuns'
+ import type { Glyph } from './scene/records'
+ 
+ /** Identifies a registered font face for per-run resolution. */
+@@ -8,7 +9,7 @@ export interface FontDescriptor {
+   italic?: boolean
+ }
+ 
+-export type Layer = 'boxes' | 'images' | 'text'
++export type Layer = 'boxes' | 'images' | 'text' | 'cutouts'
+ export type Mode = 'overlay' | 'replace'
+ export type Fallback = 'passthrough' | 'throw'
+ 
+@@ -37,7 +38,8 @@ export interface CompositorOptions {
+   root?: HTMLElement
+   /** 'overlay' paints over the page; 'replace' hides DOM paint, keeps a11y. */
+   mode?: Mode
+-  /** Which layers to render. Defaults to all three. */
++  /** Which layers to render. Defaults to all. 'cutouts' (the holes left
++   * by `data-gpu-ignore` elements) is added whenever any other layer is. */
+   layers?: Layer[]
+   /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
+   hideSource?: boolean
+@@ -67,6 +69,8 @@ export interface CompositorStats {
+   boxes: number
+   images: number
+   glyphs: number
++  /** Cutout records (`data-gpu-ignore` holes) in the scene. */
++  cutouts: number
+   /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
+   fallback: number
+   /** Up to 12 distinct fallback graphemes: `"text" family weight reason`
+@@ -78,7 +82,7 @@ export interface CompositorStats {
+   ligatures: number
+   /** Slug faces registered (static + variable sources). */
+   faces: number
+-  /** Layers re-uploaded in the most recent frame (0..3). */
++  /** Layers re-uploaded in the most recent frame (0..4). */
+   uploads: number
+   /** Draw batches issued in the most recent frame. */
+   batches: number
+@@ -98,6 +102,10 @@ export interface CompositorStats {
+    * means something on the page invalidates the mirror every frame; put
+    * `data-gpu-ignore` on it if it isn't meant to be mirrored. */
+   sync: SyncDiagnostics
++  /** The last DOM read's text geometry: glyphs, how many of them took a
++   * Range of their own instead of a canvas-split chunk (`FAST_TEXT_READ`),
++   * and Range layout queries issued. */
++  textRead: TextReadStats
+   /** Wall time of the last DOM read (full or partial), ms. */
+   readMs: number
+   /** Wall time spent in pass uploads in the most recent render, ms. */
+diff --git a/test/perf/run.ts b/test/perf/run.ts
+index cef0dce..8d56377 100644
+--- a/test/perf/run.ts
++++ b/test/perf/run.ts
+@@ -42,6 +42,7 @@ interface Stats {
+   uploadMs: number
+   encodeMs: number
+   fps: number
++  textRead: { graphemes: number; perGrapheme: number; ranges: number }
+ }
+ 
+ function median(xs: number[]): number {
+@@ -190,6 +191,9 @@ async function main(): Promise<void> {
+ 
+     // (a) full read.
+     const fullReadMs = await sampleReadMs(page, 'full', 10)
++    const textRead = (
++      (await page.evaluate(() => window.__perf?.stats())) as Stats
++    ).textRead
+     // (b) partial read (text edit).
+     const textReadMs = await sampleReadMs(page, 'text', 20)
+     // Also: partial read (class toggle).
+@@ -218,6 +222,7 @@ async function main(): Promise<void> {
+         groups: finalStats.groups,
+         readElements: finalStats.readElements
+       },
++      textRead,
+       fullRead: { medianMs: median(fullReadMs), p90Ms: p90(fullReadMs) },
+       partialReadText: {
+         medianMs: median(textReadMs),
+@@ -257,6 +262,7 @@ function printTable(r: {
+     groups: number
+     readElements: number
+   }
++  textRead: Stats['textRead']
+   fullRead: { medianMs: number; p90Ms: number }
+   partialReadText: { medianMs: number; p90Ms: number }
+   partialReadClass: { medianMs: number; p90Ms: number }
+@@ -278,6 +284,13 @@ function printTable(r: {
+       `batches=${r.counts.batches} draws=${r.counts.draws} ` +
+       `groups=${r.counts.groups} readElements=${r.counts.readElements}`
+   )
++  const t = r.textRead
++  console.log(
++    `  full-read text: graphemes=${t.graphemes} ` +
++      `perGrapheme=${t.perGrapheme} ` +
++      `(${((100 * t.perGrapheme) / Math.max(1, t.graphemes)).toFixed(1)}%) ` +
++      `ranges=${t.ranges}`
++  )
+   console.log('\n  metric                median (ms)   p90 (ms)')
+   console.log('  --------------------------------------------')
+   console.log(

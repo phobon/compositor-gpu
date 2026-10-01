@@ -169,14 +169,38 @@ export const isIgnored = (n: Node): boolean => {
   return el !== null && el.closest(`[${IGNORE_ATTR}]`) !== null
 }
 
-/** An attribute change on an ignored element itself (not inside another
- * ignored one): it can move or resize the element's hole. */
+/** Does `t` own a hole? The ignored root itself, or — when the root (and
+ * every element between) is `display: contents` — one of its children, which
+ * then carry the cutouts. Nested ignored subtrees don't count. */
+const isHoleElement = (t: Element): boolean => {
+  let a: Element | null = t
+  while (a) {
+    if (a.hasAttribute(IGNORE_ATTR)) {
+      return a.parentElement === null || !isIgnored(a.parentElement)
+    }
+    a = a.parentElement
+    if (a && getComputedStyle(a).display !== 'contents') {
+      return false
+    }
+  }
+  return false
+}
+
+/** A mutation that can move, resize, add or remove a hole: an attribute
+ * change on a hole element, or a childList change on an ignored
+ * `display: contents` root (its children are the holes). */
 const isIgnoreRoot = (r: MutationRecord): boolean => {
   const t = r.target
+  if (!(t instanceof Element)) {
+    return false
+  }
+  if (r.type === 'attributes') {
+    return isHoleElement(t)
+  }
   return (
-    r.type === 'attributes' &&
-    t instanceof Element &&
+    r.type === 'childList' &&
     t.hasAttribute(IGNORE_ATTR) &&
+    getComputedStyle(t).display === 'contents' &&
     (t.parentElement === null || !isIgnored(t.parentElement))
   )
 }
@@ -343,7 +367,8 @@ export class DomSync {
 
   private onAnimStart = (e: Event): void => {
     const t = e.target
-    if (!(t instanceof Element) || isIgnored(t)) {
+    // Hole elements animate their own hole; anything deeper is unwatched.
+    if (!(t instanceof Element) || (isIgnored(t) && !isHoleElement(t))) {
       return
     }
     const had = this.animating.size

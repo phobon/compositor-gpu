@@ -63,10 +63,11 @@ once every element is Inter, nothing invalidating the mirror at idle.
    backgrounds over ignored chrome, hiding it in both modes; ignored
    elements now leave a hole (`CutoutRecord`, `boxes/cutoutPass.ts`,
    destination-out at the element's paint-order position), exercised by
-   the playground `duo` section (fixed nav, rounded overlap, static
-   footer). Still to check on `/duo`: the nav popup and scroll-to-top
-   (their transitions don't move the hole until the parent is re-read).
-   Still to check interactively: hover/focus/selection,
+   the playground `duo` section (fixed nav, rounded overlap, a footer in
+   an ignored `display: contents` wrapper as mds-home does it — the holes
+   then land on the wrapper's children; attribute changes and CSS
+   animations on a hole element re-read its parent). Still to check
+   interactively: hover/focus/selection,
    links, the nav popup; `::selection` is not mirrored.
 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
    `letter-spacing`, dash phase and `url()` background clip/snapping are
@@ -143,8 +144,9 @@ perspective transforms · culling · WebGL2 backend.
       excludes its subtree from the mirror and from invalidation — for debug
       overlays, site chrome and anything else that mutates every frame —
       and leaves a hole in the mirror (a `cutouts` layer, destination-out,
-      at the element's z) so the page's own paint of it shows; attribute
-      changes on the element itself still re-read its parent.
+      at the element's z) so the page's own paint of it shows; an ignored
+      `display: contents` element puts the holes on its children; attribute
+      changes and CSS animations on a hole element re-read its parent.
 - [x] opentype.js 2.0 gvar bug worked around (`text/slug/gvarFix.ts`): a
       packed point count of 0 means "all points", not "no points"; without it
       Inter's D/R (shared point list + all-points tuple) render mangled at

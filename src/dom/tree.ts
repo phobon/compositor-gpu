@@ -377,6 +377,9 @@ export class SceneReader {
   /** Elements visited (DOM-read) by the most recent read, incl. any work
    * discarded by an escalation. */
   readElements = 0
+  /** Inside an ignored `display: contents` subtree: children become
+   * cutouts too. */
+  private inIgnored = false
   /** Partial reads that completed without escalating. */
   partialReads = 0
   /** Elements with computed `position: sticky` in the current tree. Their
@@ -560,7 +563,7 @@ export class SceneReader {
     if (SKIP_TAGS.has(el.tagName)) {
       return null
     }
-    const ignored = el.hasAttribute(IGNORE_ATTR)
+    const ignored = this.inIgnored || el.hasAttribute(IGNORE_ATTR)
     this.readElements++
     const { scene, layers } = this
     const s = getComputedStyle(el)
@@ -604,14 +607,48 @@ export class SceneReader {
     const svgRoot = isInlineSvgRoot(el)
 
     if (ignored) {
-      return this.cutoutNode(el, s, parent, rect, space, clip, place, lin, {
-        isContext,
-        ctxZ: isContext ? contextZIndex(s) : 0,
-        trapsFixed: parentTraps || trapsFixed(s, transformable),
-        fragmented: display === 'inline' || display === 'contents',
-        float: s.float !== 'none',
-        cb: parentCb ?? paddingPlacement(s, place)
-      })
+      const node = this.cutoutNode(
+        el,
+        s,
+        parent,
+        rect,
+        space,
+        clip,
+        place,
+        lin,
+        {
+          isContext,
+          ctxZ: isContext ? contextZIndex(s) : 0,
+          trapsFixed: parentTraps || trapsFixed(s, transformable),
+          fragmented: display === 'inline' || display === 'contents',
+          float: s.float !== 'none',
+          cb: parentCb ?? paddingPlacement(s, place)
+        }
+      )
+      // A `display: contents` element has no box of its own to cut out:
+      // its children are the ones painting, so each gets the hole instead
+      // (recursively, for nested `contents`).
+      if (display === 'contents') {
+        const wasIgnored = this.inIgnored
+        this.inIgnored = true
+        for (const child of el.children) {
+          const kid = this.readNode(
+            child,
+            node,
+            clip,
+            false,
+            lin,
+            null,
+            parentCb
+          )
+          if (kid) {
+            node.kids.push(kid)
+          }
+          setReadSpace(space)
+        }
+        this.inIgnored = wasIgnored
+      }
+      return node
     }
 
     let own = NO_RECORDS

@@ -41,9 +41,11 @@ destination-out at the element's paint-order z) so the site's nav, footer,
 scroll-to-top and nav popup show through in overlay and replace mode —
 before, body's opaque mirrored background covered them; and replace mode
 no longer blanks a page that has ignored chrome (`HIDDEN_ATTR` carries the
-pre-hide opacity so the reader ignores the hiding). Known gap: a CSS
-animation/transition on an ignored element does not move its hole until
-the parent is next re-read (attribute changes on the element itself do); (1) dashed/dotted borders fitted per side
+pre-hide opacity so the reader ignores the hiding). An ignored
+`display: contents` wrapper (how `SharedLayout`'s `GpuIgnore` works) puts
+the holes on its children; attribute changes and CSS animations on a hole
+element re-read its parent so the hole follows (deeper mutations stay
+unwatched); (1) dashed/dotted borders fitted per side
 (square corners) or along the inset centre path (rounded), matching
 Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
 the `/duo` placeholder border is now pixel-identical, `duo` parity

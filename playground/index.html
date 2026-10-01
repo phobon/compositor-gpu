@@ -916,10 +916,15 @@
       </section>
 
       <div class="duo-footwrap">
-        <footer class="duo-footer" data-gpu-ignore>
-          <b>Footer (data-gpu-ignore)</b>
-          Static, in flow: the page paints it; the mirror leaves a hole.
-        </footer>
+        <!-- Wrapped the way mds-home does it: the ignored element is a
+             paint-free display:contents wrapper, so the hole must land on
+             its children. -->
+        <div data-gpu-ignore style="display: contents">
+          <footer class="duo-footer">
+            <b>Footer (data-gpu-ignore via a display:contents wrapper)</b>
+            Static, in flow: the page paints it; the mirror leaves a hole.
+          </footer>
+        </div>
       </div>
     </div>
 
