@@ -190,16 +190,24 @@ async function main(): Promise<void> {
     }
 
     // (a) full read.
+    console.log('[perf] full reads')
     const fullReadMs = await sampleReadMs(page, 'full', 10)
     const textRead = (
       (await page.evaluate(() => window.__perf?.stats())) as Stats
     ).textRead
     // (b) partial read (text edit).
+    console.log('[perf] partial reads')
     const textReadMs = await sampleReadMs(page, 'text', 20)
     // Also: partial read (class toggle).
     const classReadMs = await sampleReadMs(page, 'class', 20)
     // (c) steady frame: nothing dirty, 30 forced frames.
+    console.log('[perf] steady frames')
     const steady = await sampleSteadyFrames(page, 30)
+    // (c') the same with a fullscreen blur pass (viewport scissor).
+    console.log('[perf] steady frames (blur)')
+    await page.evaluate(() => window.__perf?.setBlur(true))
+    const steadyBlur = await sampleSteadyFrames(page, 30)
+    await page.evaluate(() => window.__perf?.setBlur(false))
     // (d) final counts.
     const finalStats = (await page.evaluate(() =>
       window.__perf?.stats()
@@ -238,6 +246,11 @@ async function main(): Promise<void> {
         uploadMsMedian: median(uploadMs),
         uploadMsP90: p90(uploadMs),
         fpsMedian: median(fpsSamples)
+      },
+      steadyBlur: {
+        encodeMsMedian: median(steadyBlur.map((s) => s.encodeMs)),
+        encodeMsP90: p90(steadyBlur.map((s) => s.encodeMs)),
+        fpsMedian: median(steadyBlur.map((s) => s.fps))
       }
     }
 
@@ -273,6 +286,7 @@ function printTable(r: {
     uploadMsP90: number
     fpsMedian: number
   }
+  steadyBlur: { encodeMsMedian: number; encodeMsP90: number; fpsMedian: number }
 }): void {
   const ms = (v: number): string => v.toFixed(3)
   console.log(
@@ -306,9 +320,13 @@ function printTable(r: {
     `  steady encode           ${ms(r.steadyFrame.encodeMsMedian).padStart(9)}   ${ms(r.steadyFrame.encodeMsP90).padStart(8)}`
   )
   console.log(
+    `  steady encode (blur)    ${ms(r.steadyBlur.encodeMsMedian).padStart(9)}   ${ms(r.steadyBlur.encodeMsP90).padStart(8)}`
+  )
+  console.log(
     `  steady upload           ${ms(r.steadyFrame.uploadMsMedian).padStart(9)}   ${ms(r.steadyFrame.uploadMsP90).padStart(8)}`
   )
   console.log(`  steady fps (median)     ${r.steadyFrame.fpsMedian.toFixed(1)}`)
+  console.log(`  steady fps (blur)       ${r.steadyBlur.fpsMedian.toFixed(1)}`)
 }
 
 main().catch((e) => {

@@ -4,7 +4,9 @@ import dts from 'vite-plugin-dts'
 
 // Two modes:
 //   `vite`        → dev server for the playground (root = ./playground)
-//   `vite build`  → library build of ./src into ./dist
+//   `vite build`  → library build of ./src into ./dist: two entries,
+//                   `compositor-gpu` (dist/compositor-gpu.js) and
+//                   `compositor-gpu/fx` (dist/fx.js), sharing chunks
 export default defineConfig(({ command }) => {
   if (command === 'serve') {
     return {
@@ -19,10 +21,13 @@ export default defineConfig(({ command }) => {
     plugins: [dts({ rollupTypes: true, include: ['src'] })],
     build: {
       lib: {
-        entry: resolve(import.meta.dirname, 'src/index.ts'),
-        name: 'CompositorGPU',
+        entry: {
+          index: resolve(import.meta.dirname, 'src/index.ts'),
+          fx: resolve(import.meta.dirname, 'src/fx/index.ts')
+        },
         formats: ['es'],
-        fileName: () => 'compositor-gpu.js'
+        fileName: (_format, name) =>
+          name === 'index' ? 'compositor-gpu.js' : `${name}.js`
       },
       rollupOptions: {
         // keep heavy deps external so host apps dedupe them

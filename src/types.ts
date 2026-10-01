@@ -1,5 +1,6 @@
 import type { SyncDiagnostics } from './dom/observer'
 import type { TextReadStats } from './dom/textRuns'
+import type { RenderGraph } from './gpu/graph'
 import type { Glyph } from './scene/records'
 
 /** Identifies a registered font face for per-run resolution. */
@@ -31,6 +32,38 @@ export interface FrameContext {
   /** CSS px size of the canvas. */
   canvasWidth: number
   canvasHeight: number
+  /** Pointer state, filled in by the effects layer (`compositor-gpu/fx`)
+   * when it is installed; null otherwise. */
+  pointer: PointerState | null
+}
+
+/** One recorded click: page (document) CSS px and the page clock, s. */
+export interface PointerClick {
+  x: number
+  y: number
+  t: number
+}
+
+/** Pointer state as tracked by `compositor-gpu/fx` (src/fx/pointer.ts). */
+export interface PointerState {
+  /** Raw position, viewport CSS px. */
+  x: number
+  y: number
+  /** Raw position, page (document) CSS px. */
+  pageX: number
+  pageY: number
+  /** Raw velocity, CSS px/s, smoothed over the last few frames. */
+  vx: number
+  vy: number
+  down: boolean
+  /** False until the first pointer event. */
+  seen: boolean
+  /** Eased follower: viewport CSS px and CSS px/s. */
+  follow: { x: number; y: number; vx: number; vy: number }
+  /** Follower ease per 60 Hz frame (0..1, default 0.12). Writable. */
+  ease: number
+  /** The last 8 clicks, most recent first. */
+  clicks: PointerClick[]
 }
 
 export interface CompositorOptions {
@@ -150,4 +183,7 @@ export interface Compositor {
   readonly canvas: HTMLCanvasElement | null
   /** Live counts + fps, for debug overlays. */
   stats(): CompositorStats
+  /** Extension surface for `compositor-gpu/fx` (gpu/graph.ts); null when
+   * inert. */
+  readonly graph: RenderGraph | null
 }

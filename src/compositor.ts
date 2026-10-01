@@ -4,6 +4,7 @@ import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
 import { SceneReader } from './dom/tree'
 import { initGpu } from './gpu/device'
+import type { FrameHook, RenderGraph } from './gpu/graph'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
 import { Scene } from './scene/scene'
@@ -272,7 +273,11 @@ export async function createCompositor(
       canvasX: anchorX,
       canvasY: anchorY,
       canvasWidth: canvasW,
-      canvasHeight: canvasH
+      canvasHeight: canvasH,
+      pointer: null
+    }
+    for (const h of hooks) {
+      h.beforeFrame?.(ctx)
     }
 
     if (options.onGlyph) {
@@ -295,7 +300,13 @@ export async function createCompositor(
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
     // re-requests one once the viewport has a size.
     if (canvas.width === 0 || canvas.height === 0) {
-      if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
+      if (
+        animating ||
+        scene.hasDynamic ||
+        cssAnimating ||
+        isScrolling() ||
+        hooksAlive()
+      ) {
         scheduler.request()
       }
       return
@@ -306,12 +317,42 @@ export async function createCompositor(
     }
     renderer.render(scene, ctx, dpr)
     frameMs = performance.now() - t0
-    if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
+    if (
+      animating ||
+      scene.hasDynamic ||
+      cssAnimating ||
+      isScrolling() ||
+      hooksAlive()
+    ) {
       scheduler.request()
     }
   }
 
   const scheduler = new FrameScheduler(frame)
+  // The effects layer's hooks (gpu/graph.ts).
+  const hooks = new Set<FrameHook>()
+  const hooksAlive = (): boolean => {
+    for (const h of hooks) {
+      if (h.keepAlive?.()) {
+        return true
+      }
+    }
+    return false
+  }
+  const graph: RenderGraph = {
+    shared: renderer.shared,
+    setPostChain(chain) {
+      renderer.postChain = chain
+      scheduler.request()
+    },
+    addHook(hook) {
+      hooks.add(hook)
+      return () => {
+        hooks.delete(hook)
+      }
+    },
+    requestFrame: () => scheduler.request()
+  }
   const sync = new DomSync(root, () => scheduler.request())
 
   if (text) {
@@ -426,6 +467,7 @@ export async function createCompositor(
     canvas,
     text,
     scene,
+    graph,
     stats: () => ({
       active: true,
       boxes: scene.boxes.length,
@@ -496,6 +538,7 @@ function inert(): Compositor & { text: null; scene: null } {
     canvas: null,
     text: null,
     scene: null,
+    graph: null,
     stats: () => ({
       active: false,
       boxes: 0,

@@ -1,3 +1,4 @@
+import { blur, createEffects, displace } from '@/fx'
 import { createCompositor } from '@/index'
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement
@@ -83,6 +84,14 @@ async function boot(): Promise<void> {
       $('s-text').className = ready ? 'ok' : ''
     }
   })
+
+  // `?fx` installs the effects layer with every pass disabled: the visual
+  // harness's `--with-fx` run checks that this changes no pixel.
+  if (new URLSearchParams(location.search).has('fx')) {
+    const fx = createEffects(compositor)
+    blur(fx, { enabled: false })
+    displace(fx, { enabled: false })
+  }
 
   $('s-gpu').textContent = compositor.active ? 'yes' : 'no'
   $('s-gpu').className = compositor.active ? 'ok' : 'bad'

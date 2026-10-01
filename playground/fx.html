@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu fx playground</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
+      }
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter Play', system-ui, sans-serif;
+        font-optical-sizing: none;
+        background: #0b0b0c;
+        color: #f2f2f2;
+        -webkit-font-smoothing: antialiased;
+      }
+      #stage { padding: 80px 64px 600px; }
+      section {
+        position: relative;
+        height: 620px;
+        margin: 0 0 160px;
+        padding: 32px;
+        border-radius: 24px;
+        background: #17171a;
+        border: 1px solid #33333a;
+        overflow: hidden;
+      }
+      h1 { font-size: 64px; letter-spacing: -0.03em; margin: 0 0 12px; }
+      h2 { font-size: 34px; margin: 0 0 10px; letter-spacing: -0.02em; }
+      p { max-width: 46ch; font-size: 20px; line-height: 1.5; margin: 0 0 18px; }
+      .row { display: flex; gap: 24px; align-items: flex-start; margin-top: 24px; }
+      .row img {
+        width: 220px; height: 220px; border-radius: 16px; object-fit: cover;
+        display: block;
+      }
+      .box { width: 140px; height: 140px; border-radius: 18px; }
+      .b1 { background: #3b82f6; }
+      .b2 { background: linear-gradient(135deg, #f59e0b, #ec4899); }
+      .b3 { background: #22c55e; border: 6px solid #fef3c7; }
+      .bars {
+        position: absolute; right: 32px; top: 32px; width: 240px; height: 240px;
+        display: flex; justify-content: space-between;
+      }
+      .bars i { display: block; width: 3px; background: #e5e7eb; }
+      .bars i:nth-child(odd) { background: #f472b6; }
+      #panel {
+        position: fixed; right: 16px; bottom: 16px; z-index: 10;
+        width: 280px; padding: 12px 14px; border-radius: 12px;
+        background: rgba(20, 20, 26, 0.92); border: 1px solid #3a3a48;
+        font: 13px/1.4 system-ui, sans-serif;
+      }
+      #panel fieldset { border: 0; padding: 0; margin: 0 0 10px; }
+      #panel legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
+      #panel label { display: grid; grid-template-columns: 1fr 120px 40px; gap: 6px; align-items: center; }
+      #panel output { text-align: right; color: #a0a0ac; }
+      body.vr #panel { display: none; }
+      #log { position: fixed; left: 8px; bottom: 8px; color: #f87171; font: 12px monospace; white-space: pre; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <section data-vr="fx-off">
+        <h1>Effects layer</h1>
+        <p>A fullscreen pass reads the mirrored scene and writes the canvas.
+          With no pass enabled the mirror draws straight to the swapchain.</p>
+        <div class="row">
+          <img src="./test.png" alt="" />
+          <div class="box b1"></div>
+          <div class="box b2"></div>
+          <div class="box b3"></div>
+        </div>
+        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <section data-vr="fx-blur">
+        <h2>Blur</h2>
+        <p>Separable Gaussian in two stages, scissored to the visible viewport
+          plus the kernel's reach.</p>
+        <div class="row">
+          <div class="box b2"></div>
+          <img src="./test.png" alt="" />
+          <div class="box b3"></div>
+        </div>
+        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <section data-vr="fx-displace">
+        <h2>Displace</h2>
+        <p>Value-noise UV displacement, plus a lens around the eased
+          pointer follower.</p>
+        <div class="row">
+          <div class="box b1"></div>
+          <div class="box b3"></div>
+          <img src="./test.png" alt="" />
+        </div>
+        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <section data-vr="fx-blur-then-off">
+        <h2>Blur, then off</h2>
+        <p>Enabling and disabling a pass must leave no trace: the second
+          capture equals the plain mirror.</p>
+        <div class="row">
+          <img src="./test.png" alt="" />
+          <div class="box b1"></div>
+          <div class="box b2"></div>
+        </div>
+        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <div id="panel" data-gpu-ignore>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
+          <label>radius <input type="range" id="s-blur-radius" min="0" max="64" step="0.5" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-displace" /> displace</label></legend>
+          <label>strength <input type="range" id="s-displace-strength" min="0" max="40" step="0.5" /><output></output></label>
+          <label>scale <input type="range" id="s-displace-scale" min="4" max="400" step="1" /><output></output></label>
+          <label>speed <input type="range" id="s-displace-speed" min="0" max="4" step="0.05" /><output></output></label>
+          <label>pointer <input type="range" id="s-displace-pointerStrength" min="0" max="80" step="1" /><output></output></label>
+          <label>p. radius <input type="range" id="s-displace-pointerRadius" min="8" max="600" step="1" /><output></output></label>
+        </fieldset>
+      </div>
+    </div>
+    <div id="log"></div>
+    <script type="module" src="./fx.ts"></script>
+  </body>
+</html>

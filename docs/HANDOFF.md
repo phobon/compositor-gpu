@@ -63,7 +63,13 @@ verified against the browser rect within 0.05 px — Range queries on
 perf.html 84k → 15k, full read ~26% faster, geometry within 0.031 px,
 `stats().textRead` counts the fallbacks. Typecheck, biome, test:visual
 (all parity ≤ previous; goldens rewritten), test:perf (full read 425 ms,
-123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Full diff
+123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Also in this batch: the effects layer spec (`docs/EFFECTS.md`, settled
+with Ben 2026-10-01) and its **M1** (`src/fx/`, `compositor-gpu/fx` entry:
+`createEffects`, Params, pointer, fullscreen `fx.pass`, presets
+`blur`/`displace`, `playground/fx.html`, `npm run test:fx`, the
+`--with-fx` invariant on the main harness; core touched only via
+`compositor.graph` in `gpu/graph.ts`). Author contract: `src/fx/README.md`.
+Next: M2 (Target, Layer, region Pass) per EFFECTS.md. Full diff
 of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
 untracked; delete after reading).
 

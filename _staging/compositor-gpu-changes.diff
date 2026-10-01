@@ -1,8 +1,22 @@
+diff --git a/.gitignore b/.gitignore
+index 304800b..340a899 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,6 +6,9 @@ dist
+ # visual-regression captures + local, GPU-specific goldens
+ test/visual/out/
+ test/visual/golden/
++# effects harness captures + local goldens
++test/fx/out/
++test/fx/golden/
+ # perf harness output
+ test/perf/out/
+ # site-parity harness output (captures + the injected bundle)
 diff --git a/CLAUDE.md b/CLAUDE.md
-index a96f502..2c37be0 100644
+index a96f502..e465feb 100644
 --- a/CLAUDE.md
 +++ b/CLAUDE.md
-@@ -33,10 +33,15 @@ naga-cli`) before a run.
+@@ -33,16 +33,36 @@ naga-cli`) before a run.
  (400 cards, ~4.8k elements, ~84k glyphs) headless and reports full-read,
  partial-read and frame-encode medians (`test/perf/out/last.json`);
  `npx tsx test/perf/profile.ts` writes a CPU profile of five full reads to
@@ -22,7 +36,67 @@ index a96f502..2c37be0 100644
  members in a 128px grid and tests text runs per glyph (a run's union rect
  spans whole paragraphs and blocked every merge), and shadow records use a
  1.5σ `batchRect` footprint.
-@@ -205,6 +210,23 @@ Conventions each pass must follow:
+ `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
+ in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
+ 
++**Effects harness**: `npm run test:fx` (`test/fx/run.ts`, `-- --update`
++to rewrite goldens, `-- --only <shot>`) loads `playground/fx.html?vr`,
++pins time/elapsed/pointer through `fx.__override`, and captures each
++section GPU-only against local goldens (`test/fx/golden/`, gate 0.5%, no
++parity column): `fx-off`, `fx-tgpu` (a `tgpu.fn` fragment), `fx-blur`,
++`fx-blur-scissor` (loop stopped, scrolled half a viewport: the canvas that
++was off-viewport must be unblurred), `fx-displace`, `fx-blur-then-off`
++(off → on → off; the last must equal the first exactly). Console errors
++from the library fail it. `npm run test:visual -- --with-fx` loads the
++main playground with `/fx` installed and no pass enabled; it must match
++the plain goldens at 0.00. The perf harness also reports `steady encode
++(blur)`. Never run two harnesses at once (they time each other out), and
++don't edit files under `src/`/`playground/` during a run: the dev server
++reloads the page and the run dies.
++
+ **Site harness**: `npm run test:site -- --url <url>` (`test/site/run.ts`)
+ checks DOM-vs-GPU parity on an arbitrary real page instead of the playground.
+ It builds a self-contained ES bundle of `src/index.ts` (typegpu/opentype.js
+@@ -58,8 +78,9 @@ and any `SlugText` faces that failed to resolve (CORS/404 on an `@font-face`
+ unless `--parity-max` is passed.
+ 
+ Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
+-bundles `src/index.ts` as an ES library with `typegpu` and `opentype.js`
+-external. `@/*` aliases `src/*` in both tsconfig and vite.
++bundles two ES entries, `src/index.ts` → `dist/compositor-gpu.js` and
++`src/fx/index.ts` → `dist/fx.js` (`compositor-gpu/fx`), with `typegpu` and
++`opentype.js` external. `@/*` aliases `src/*` in both tsconfig and vite.
+ 
+ ## Status
+ 
+@@ -68,13 +89,25 @@ integration: checkouts, uncommitted state, how to run the site and the
+ readout, and the first move on each open problem. Read it before touching
+ the site side.
+ 
+-`ROADMAP.md` is the live checklist and `docs/ARCHITECTURE.md` is the spec — the
++`ROADMAP.md` is the live checklist, `docs/ARCHITECTURE.md` is the mirror's
++spec and `docs/EFFECTS.md` the effects layer's (`compositor-gpu/fx`) — the
+ spec describes the target, not all of which is built. Currently real: the box
+ pass (a complete DOM→GPU vertical slice) and the Slug text pass (font pipeline +
+ WGSL, rendering but still being tuned). `ImagePass` renders `<img>`, `<canvas>`,
+ `<video>` and `background-image url()` with mipmaps and rounded clipping;
+ gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is missing by accident.
+ 
++**Effects layer** (`src/fx/`, `compositor-gpu/fx`): spec in
++`docs/EFFECTS.md` (with a Deviations section for what M1 changed), author
++contract in `src/fx/README.md`. M1 is built: `createEffects(compositor)`,
++Params, the pointer, fullscreen `fx.pass`, presets `blur`/`displace`. It
++reaches the core only through `compositor.graph` (`gpu/graph.ts`): a
++`PostChain` the renderer runs when `active()` (scene → offscreen texture
++→ chain → canvas pass that copies the scene through and lets the last
++stage overwrite the visible viewport + radius), and `FrameHook`s
++(`beforeFrame` fills `FrameContext.pointer`; `keepAlive` holds the rAF
++loop). With no enabled pass `render()` takes the direct path unchanged.
++
+ ## Architecture
+ 
+ Data flows one way: **DOM → reader → Scene → RenderPass → canvas.** Observers
+@@ -205,6 +238,23 @@ Conventions each pass must follow:
    into a pooled offscreen texture (own Frame uniform: viewport = texture size,
    scroll = group origin) and `gpu/composite.ts` draws it back once with the
    group alpha. Records therefore carry `opacity = 1`; passes stay unaware.
@@ -46,7 +120,7 @@ index a96f502..2c37be0 100644
  - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
    bind group; `writeBuffer` only the used prefix.
  - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is
-@@ -221,7 +243,17 @@ provenance. Pipeline:
+@@ -221,7 +271,17 @@ provenance. Pipeline:
  
  1. `dom/textRuns.ts` ranges over each **grapheme** (`Intl.Segmenter`) in a text
     node and takes its client rect — this is how the browser's shaping, kerning,
@@ -66,7 +140,7 @@ index a96f502..2c37be0 100644
     Ligatures: `font.ts` builds a `liga`/`clig` lookup from GSUB and the
     rasterizer draws the ligature glyph over adjacent, abutting, same-line
 diff --git a/ROADMAP.md b/ROADMAP.md
-index 74fa725..4abc765 100644
+index 74fa725..883e4d7 100644
 --- a/ROADMAP.md
 +++ b/ROADMAP.md
 @@ -14,8 +14,9 @@ footer, scroll-top, the portalled nav popup) is excluded with
@@ -142,7 +216,40 @@ index 74fa725..4abc765 100644
     `full-width` / `full-size-kana`, Greek final sigma under `lowercase`.
  5. **Housekeeping.** Commit + push compositor-gpu, bump the submodule
     pointer in mds-home (`git -C compositor-gpu pull`), `git submodule`
-@@ -119,7 +144,11 @@ perspective transforms · culling · WebGL2 backend.
+@@ -57,6 +82,32 @@ once every element is Inter, nothing invalidating the mirror at idle.
+    `_to_delete/` in mds-home; upstream the opentype.js gvar fix
+    (`text/slug/gvarFix.ts`) as an issue/PR so the workaround can go.
+ 
++**Effects layer** (`docs/EFFECTS.md`, spec settled 2026-10-01; `/fx`
++entry point, three primitives — Pass, Material, Layer — over a shared
++Params model, element-keyed Targets, a runtime pointer uniform):
++- [x] M1 — runtime spine + post: render-graph hook (`gpu/graph.ts`:
++      `RenderGraph`, `PostChain`, `FrameHook`), offscreen path only
++      while a Pass is enabled, chain scissored to the visible viewport +
++      max radius; `createEffects` (inert without a GPU); Params (schema,
++      Proxy incl. element writes, std140-style packing, wake rules,
++      time/elapsed); pointer (raw, smoothed velocity, eased follower,
++      down, 8-click ring); fullscreen Pass taking WGSL or `tgpu.fn`;
++      presets `blur`, `displace`; `playground/fx.html` + `npm run
++      test:fx` goldens, no-effect invariants, `steady encode (blur)`
++- [ ] M1 leftovers: JS-bodied (`'use gpu'`) `tgpu.fn` fragments need
++      `unplugin-typegpu` in the author's build and can't reach
++      `sample`/`params`/`pointer` yet (WGSL-bodied ones work; see
++      `src/fx/README.md`); `rollupTypes` emits per-file `.d.ts` (it did
++      before `/fx` too: `@microsoft/api-extractor` isn't installed), so
++      `exports['./fx'].types` points at `dist/fx/index.d.ts`
++- [ ] M2 — geometry: Target (live rect/xform/texture, per-glyph arrays
++      with stable indices); Layer (instanced quads, above/below/after,
++      doc or viewport space); presets `clickRipple`, `cursorGlow`; region
++      Pass on isolated groups
++- [ ] M3 — materials: snippet contract for glyph/image/box; per-material
++      batch cut and pipelines; per-Target DOM hiding while displacing;
++      `ripple`; image `subdivisions`; Layer compute hook
++
+ **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
+ TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are
+ migrated. `pnpm install` on macOS leaves no linux binaries, so checks can't run
+@@ -119,7 +170,11 @@ perspective transforms · culling · WebGL2 backend.
        `stats().sync` (why the mirror was invalidated, elements tracked as
        animating, last mutation target). `data-gpu-ignore` on an element
        excludes its subtree from the mirror and from invalidation — for debug
@@ -155,7 +262,7 @@ index 74fa725..4abc765 100644
  - [x] opentype.js 2.0 gvar bug worked around (`text/slug/gvarFix.ts`): a
        packed point count of 0 means "all points", not "no points"; without it
        Inter's D/R (shared point list + all-points tuple) render mangled at
-@@ -164,15 +193,30 @@ perspective transforms · culling · WebGL2 backend.
+@@ -164,15 +219,30 @@ perspective transforms · culling · WebGL2 backend.
        `createImageBitmap` (naturalWidth is density-corrected), SVG `<img>`
        rasterised at display size (gatsby-plugin-image sizers stalled lazy loads),
        `process.env` shim for typegpu
@@ -189,7 +296,7 @@ index 74fa725..4abc765 100644
  - [ ] External `<use href>` in inline SVG
  - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
        leaks, `visibility`, inline transforms + `rotate/scale/translate`,
-@@ -184,6 +228,12 @@ perspective transforms · culling · WebGL2 backend.
+@@ -184,6 +254,12 @@ perspective transforms · culling · WebGL2 backend.
  - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
  - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
        and grapheme-segmentation cache (full read −30%)
@@ -202,6 +309,18 @@ index 74fa725..4abc765 100644
  - [x] Batch builder: grid-indexed members + per-glyph text footprints
        (400-card page: 841 → 114 draws)
  - [x] `text-decoration` underline / overline / line-through (per line fragment,
+diff --git a/biome.json b/biome.json
+index d7a8ed3..76860ab 100644
+--- a/biome.json
++++ b/biome.json
+@@ -42,6 +42,7 @@
+       "!**/node_modules",
+       "!**/test/visual/out",
+       "!**/test/perf/out",
++      "!**/test/fx/out",
+       "!**/test/site/out",
+       "!**/*.html"
+     ]
 diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
 index 638cb2c..0f87263 100644
 --- a/docs/ARCHITECTURE.md
@@ -236,11 +355,283 @@ index 638cb2c..0f87263 100644
  | `images/imageRenderer.ts` | Uploads `<img>` / `<canvas>` / `<video>` / background images to textures, draws textured quads; collapses consecutive atlas-backed instances into one draw. |
  | `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
  | `gpu/frame.ts` | Shared `Frame` uniform (target size, target origin, time, dpr, vscroll) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
+diff --git a/docs/EFFECTS.md b/docs/EFFECTS.md
+new file mode 100644
+index 0000000..f15fdc2
+--- /dev/null
++++ b/docs/EFFECTS.md
+@@ -0,0 +1,266 @@
++# Effects layer (`compositor-gpu/fx`)
++
++Design spec, settled 2026-10-01. `ARCHITECTURE.md` describes the mirror;
++this file describes the layer that applies GPU effects to it. The spec is
++the target; `ROADMAP.md` tracks what is built.
++
++## Premise
++
++The mirror is the scene: every box, image plane and glyph on the page, in
++document space, kept in step with the DOM. The effects layer consumes that
++scene — post-processes it, re-shades parts of it, adds geometry around it —
++and is otherwise independent of the DOM:
++
++- An effect is never expressed in CSS and never reads computed style. DOM
++  elements are *handles* for finding geometry, nothing more.
++- Effects are plain JS objects driven by plain numeric parameters, so any
++  animation library (gsap, motion, a rAF loop) drives them without an
++  adapter. Hover and other interaction come from element events in JS, not
++  from `:hover` state.
++- An effect must be able to run with no DOM reference at all (cursor and
++  click effects, fullscreen post). The mirror is the default geometry and
++  texture provider, not a requirement.
++- With no WebGPU the compositor is inert and so is `fx`: every call
++  succeeds, nothing GPU-side renders, authoring code has no branches.
++
++## Entry point
++
++```ts
++import { createCompositor } from 'compositor-gpu'
++import { createEffects } from 'compositor-gpu/fx'
++
++const compositor = await createCompositor({ mode: 'overlay' })
++const fx = createEffects(compositor)
++// fx.pass(...)  fx.material(...)  fx.layer(...)  fx.target(el)  fx.pointer
++```
++
++`/fx` is a second entry point of the same package. The core stays
++dependency-light and exposes the few extension points the runtime needs
++(below); everything author-facing lives in `/fx`. Same repo, harness and
++version.
++
++## Primitives
++
++Three primitives, mechanically different on the GPU, sharing one parameter
++model and the frame context.
++
++### Pass — post-processing
++
++Reads a rendered texture, writes a texture. One fragment function of
++`uv`, the source texture and `Params`.
++
++- **Fullscreen**: runs on the rendered scene, as a ping-pong chain in
++  declaration order. "Fullscreen" means the *visible viewport*: the canvas
++  scrolls with the document and is up to three viewports tall, so the
++  chain is scissored to the visible rect plus the pass's declared
++  sampling `radius` (a blur needs neighbours).
++- **Region** (`region: Target`): affects only that element's pixels and
++  respects stacking. Built on the isolated-group machinery: while the pass
++  is active the element's subtree renders to its own texture and the
++  composite step runs the pass's shader. Consequence, accepted: the subtree
++  blends with its background as one unit while the pass is active.
++- Post sees mirrored content only. Chrome lifted above the canvas with
++  `zIndex` (see `data-gpu-ignore`) is untouched by construction; to include
++  it, mirror it.
++- The offscreen path (scene → texture → chain → canvas) engages only while
++  at least one Pass is enabled. Otherwise the direct-to-swapchain path
++  stays and installing `/fx` costs nothing.
++
++### Material — re-shading mirrored records
++
++Replaces how selected records draw, attached to a `Target`. The author
++writes WGSL *functions* against a small contract per record kind; the pass
++assembles the program around them so anti-aliasing, clipping, premultiplied
++blending, stacking and the storage-buffer plumbing stay correct:
++
++- a vertex hook returning a displaced position in the record's local
++  space (optionally extra varyings);
++- a fragment hook returning premultiplied colour given coverage (Slug
++  coverage for glyphs, SDF distance for boxes), base colour, `uv`, a
++  `sample(uv)` function for images, time and `Params`.
++
++`raw: true` supplies a complete vertex+fragment program against the same
++bind groups for the cases the contract can't express. Images accept
++`subdivisions` so a plane can bend without a mesh API.
++
++Mechanics: one pipeline per Material; draw batches are additionally cut by
++material id so `draw(first, count)` runs the right pipeline per range. The
++record's instance data is untouched, so disabling a Material is free.
++
++A Material that displaces geometry uncovers the real DOM in overlay mode.
++While such a Material is active, the runtime hides that Target's DOM paint
++(`HIDDEN_ATTR`, as replace mode does per element), so the page can stay in
++overlay mode and only effected elements hand their pixels to the GPU.
++Hit-testing stays on the DOM at its layout position.
++
++Per-letter staggers through the glyph contract are deferred; the first
++contract exposes coverage, uv, local position and base colour only.
++
++### Layer — free geometry
++
++Geometry with no DOM counterpart: cursor trails, click ripples, particles
++seeded from glyph positions, decoration. A Layer is instanced quads:
++
++```ts
++fx.layer({
++  count, stride,              // author-owned Float32Array, N × stride
++  data: new Float32Array(...),
++  space: 'doc' | 'viewport',
++  place: 'above' | 'below' | { after: target },
++  vertex, fragment, params
++})
++```
++
++The vertex hook positions a quad from the instance's floats; the fragment
++hook shades it (SDF, sprite, or a glyph via Slug when it references a glyph
++id). The author updates the array (directly or by tween) and marks it
++dirty; the runtime uploads the used prefix. Reserved: a `simulate` compute
++hook so particle state can live on the GPU.
++
++### Params
++
++Every primitive declares a schema and exposes a plain object:
++
++```ts
++params: {
++  strength: { type: 'f32', default: 0, min: 0, max: 1 },
++  tint:     { type: 'color', default: '#ffffff' },   // exposed as [r,g,b,a]
++  center:   { type: 'vec2',  default: [0.5, 0.5] }
++}
++gsap.to(effect.params, { strength: 1, duration: 0.6 })
++```
++
++Colours and vectors are arrays of floats so component-wise tweens work.
++The object is a `Proxy`: a write marks the effect dirty and requests a
++frame. The schema generates the WGSL `struct Params` so names line up, and
++is enough for a debug panel later.
++
++Frame loop rule: a frame is requested on any param write, on any Layer
++data dirty-mark, and continuously while any effect declares
++`continuous: true` (followers, simulations, time-based motion). Otherwise
++the loop idles as it does today.
++
++Time: `time` is the global page clock; `elapsed` is per effect, reset when
++the effect is enabled. Both come from the frame, so a tween's `timeScale`
++affects params, not time.
++
++## Targets — reaching the mirror's geometry
++
++```ts
++const t = fx.target(img)       // one element
++const ts = fx.targets('section img')
++t.rect / t.local / t.xform / t.space / t.radius   // live, re-resolved after each read
++t.image                        // texture or atlas region, for image elements
++t.glyphs                       // { count, rects: Float32Array, ids, text }
++```
++
++Identity is the DOM element, which is what authoring code and animation
++libraries already select. The scene is rebuilt on reads and record ids
++change; a Target re-resolves its records after every read. Glyphs carry a
++stable index within their element so a tween can address "glyph 7 of this
++heading" across re-reads. A Target is one element and its own records;
++grouping is a Layer or Pass concern. Querying scene records directly stays
++internal.
++
++## Pointer
++
++Provided by the runtime, not each author, as a uniform available to every
++shader and as JS state:
++
++- raw position (page and viewport), velocity, down state;
++- an eased follower (position + velocity) with the ease factor as a param;
++- a ring buffer of recent clicks `(x, y, t)` so a ripple needs no event
++  code.
++
++## Modes
++
++Post and Layers work in overlay and replace mode. Displacing Materials
++hide their Target's DOM paint (above). Hit-testing is always the DOM's.
++
++## Authoring surface
++
++Shader hooks are WGSL template strings against the documented contract, or
++TypeGPU functions (`tgpu.fn`) with the same signatures — TypeGPU is a
++first-class path, not a requirement. `reportShaderErrors` surfaces compile
++errors under the effect's name at creation.
++
++`/fx/presets` ships worked examples, not a catalogue: `blur`, `displace`
++(noise- or texture-driven), `clickRipple` (Layer fed by the click buffer),
++`cursorGlow` (Layer on the eased pointer), `ripple` (image Material). An
++agent-facing instructions file accompanies them.
++
++## Core extension points
++
++The architectural change to the core is small and explicit; `/fx` uses
++only these:
++
++1. a render-graph hook to insert the offscreen scene target and run the
++   Pass chain before the canvas composite;
++2. a per-record `material` id the batch builder cuts on and the passes
++   dispatch on;
++3. registration of extra passes (Layers) with a paint-order position;
++4. the frame context (time, pointer block, viewport/canvas region) and
++   `Shared` (device, format, frame layout) exported for pipelines.
++
++## Testing
++
++- Invariants on the existing harness sections: with `/fx` installed and no
++  effect enabled, output is pixel-identical to the plain mirror; enabling
++  then disabling an effect returns to identical (no leaked state, offscreen
++  path torn down).
++- `playground/fx.html`, one section per preset, time/elapsed/pointer driven
++  from fixed values by the harness, gated against local goldens.
++- Perf: frame encode with a fullscreen blur Pass active at the viewport
++  scissor, next to the idle number.
++
++## Milestones
++
++- **M1 — runtime spine + post.** Extension points 1 and 4; `/fx` entry and
++  inert path; Params; pointer; fullscreen Pass (strings and `tgpu.fn`);
++  presets `blur`, `displace`; `fx.html`, invariants, perf number.
++- **M2 — geometry.** Target (with glyph arrays); Layer; presets
++  `clickRipple`, `cursorGlow`; region Pass on isolated groups; extension
++  point 3.
++- **M3 — materials.** Material contract for glyph/image/box; extension
++  point 2; per-Target DOM hiding; `ripple`; `subdivisions`; Layer compute
++  hook.
++
++## Deviations (M1 implementation)
++
++Where the built M1 differs from the text above. `src/fx/README.md` is the
++contract as built.
++
++- **Core surface.** The extension points are one public field,
++  `Compositor.graph: RenderGraph | null` (`src/gpu/graph.ts`):
++  `setPostChain(chain)`, `addHook({ beforeFrame, keepAlive })`,
++  `requestFrame()`, `shared`. The chain has two calls: `encode(frame)`
++  records every stage but the last into its own ping-pong targets, and
++  `composite(rp, frame)` draws the last stage into the canvas pass, after
++  the core has copied the scene texture through and set the scissor. The
++  core, not `/fx`, owns the copy-through.
++- **Scissor.** The chain writes the visible viewport grown by the max
++  radius, not just the viewport, so that margin holds effect output too
++  (it shows for a frame when the page scrolls before the next render).
++- **Multi-stage passes.** `fragment` may be an array; each entry is a stage
++  run on the previous one's output, sharing the pass's Params. The `blur`
++  preset's two axes are one Pass this way. `radius` may be a function of
++  the params.
++- **Pointer is `/fx`'s.** The core doesn't track the pointer:
++  `FrameContext.pointer` is null unless `/fx` is installed, which fills it
++  from a frame hook. The follower advances on compositor frames only;
++  pointer events request frames, and the follower keeps the loop alive,
++  only while some pass is enabled, so an installed `/fx` with nothing
++  enabled never wakes the loop.
++- **Wake on param writes** happens only for enabled passes (a disabled
++  pass has nothing to show; its dirty block uploads when it next runs).
++- **Units.** `Effect.time`/`elapsed` are seconds (`Frame.time` stays ms).
++  Click `t` is `performance.now() / 1000`, the same clock. `min`/`max`
++  in a Params schema are metadata; writes are not clamped.
++- **TypeGPU.** WGSL-bodied `tgpu.fn` fragments work (resolved with
++  `tgpu.resolve`, body pasted as written, so it can call `sample` and read
++  `params`). JS-bodied (`'use gpu'`) ones need `unplugin-typegpu` in the
++  author's build and still can't reach `sample`/`params`/`pointer`, which
++  are WGSL declarations rather than TypeGPU values. Open for M2.
++- **Types.** `vite-plugin-dts`'s `rollupTypes` emits per-file `.d.ts`
++  (it already did before `/fx`: `@microsoft/api-extractor` isn't
++  installed), so `exports['./fx'].types` is `dist/fx/index.d.ts`.
 diff --git a/docs/HANDOFF.md b/docs/HANDOFF.md
-index aeb83fd..a4b697a 100644
+index aeb83fd..8e56fad 100644
 --- a/docs/HANDOFF.md
 +++ b/docs/HANDOFF.md
-@@ -23,26 +23,59 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
+@@ -23,26 +23,65 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
  MDS-home `git -C compositor-gpu checkout -- . && git -C compositor-gpu pull`,
  then commit the pointer.
  
@@ -304,7 +695,13 @@ index aeb83fd..a4b697a 100644
 +perf.html 84k → 15k, full read ~26% faster, geometry within 0.031 px,
 +`stats().textRead` counts the fallbacks. Typecheck, biome, test:visual
 +(all parity ≤ previous; goldens rewritten), test:perf (full read 425 ms,
-+123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Full diff
++123 draws) and test:site (1.10/1.24/1.05%) pass in the sandbox. Also in this batch: the effects layer spec (`docs/EFFECTS.md`, settled
++with Ben 2026-10-01) and its **M1** (`src/fx/`, `compositor-gpu/fx` entry:
++`createEffects`, Params, pointer, fullscreen `fx.pass`, presets
++`blur`/`displace`, `playground/fx.html`, `npm run test:fx`, the
++`--with-fx` invariant on the main harness; core touched only via
++`compositor.graph` in `gpu/graph.ts`). Author contract: `src/fx/README.md`.
++Next: M2 (Target, Layer, region Pass) per EFFECTS.md. Full diff
 +of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
 +untracked; delete after reading).
 +
@@ -445,6 +842,362 @@ index 0000000..91e724a
 +I can send a PR with this fix and a test using a small variable font that has a
 +shared point list and an all-points tuple on one glyph. Tell me whether you
 +prefer the `null` sentinel or a materialised array. Possibly related: #754.
+diff --git a/package.json b/package.json
+index 7b819f2..4c47528 100644
+--- a/package.json
++++ b/package.json
+@@ -19,6 +19,10 @@
+     ".": {
+       "types": "./dist/index.d.ts",
+       "import": "./dist/compositor-gpu.js"
++    },
++    "./fx": {
++      "types": "./dist/fx/index.d.ts",
++      "import": "./dist/fx.js"
+     }
+   },
+   "files": [
+@@ -35,6 +39,7 @@
+     "format": "biome format --write .",
+     "test:visual": "tsx test/visual/run.ts",
+     "test:perf": "tsx test/perf/run.ts",
++    "test:fx": "tsx test/fx/run.ts",
+     "test:site": "tsx test/site/run.ts"
+   },
+   "dependencies": {
+diff --git a/playground/fx.d.ts b/playground/fx.d.ts
+new file mode 100644
+index 0000000..754d08a
+--- /dev/null
++++ b/playground/fx.d.ts
+@@ -0,0 +1,22 @@
++import type { Effects, Pass } from '@/fx'
++import type { CompositorStats } from '@/types'
++
++declare global {
++  interface Window {
++    __fx?: {
++      ready: Promise<void>
++      fx: Effects
++      blur: Pass
++      displace: Pass
++      /** A tgpu.fn fragment (premultiplied invert). */
++      tgpu: Pass
++      setMode(mode: 'dom' | 'gpu' | 'both'): Promise<void>
++      stats(): CompositorStats
++      /** Stop / restart the compositor's frame loop (the scissor check
++       * scrolls a stale frame into view). */
++      stop(): void
++      start(): void
++      raf2(): Promise<void>
++    }
++  }
++}
+diff --git a/playground/fx.html b/playground/fx.html
+new file mode 100644
+index 0000000..34efdcd
+--- /dev/null
++++ b/playground/fx.html
+@@ -0,0 +1,135 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="utf-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <title>compositor-gpu fx playground</title>
++    <style>
++      @font-face {
++        font-family: 'Inter Play';
++        src: url('/InterVariable.ttf');
++        font-weight: 100 900;
++      }
++      :root { color-scheme: dark; }
++      * { box-sizing: border-box; }
++      body {
++        margin: 0;
++        font-family: 'Inter Play', system-ui, sans-serif;
++        font-optical-sizing: none;
++        background: #0b0b0c;
++        color: #f2f2f2;
++        -webkit-font-smoothing: antialiased;
++      }
++      #stage { padding: 80px 64px 600px; }
++      section {
++        position: relative;
++        height: 620px;
++        margin: 0 0 160px;
++        padding: 32px;
++        border-radius: 24px;
++        background: #17171a;
++        border: 1px solid #33333a;
++        overflow: hidden;
++      }
++      h1 { font-size: 64px; letter-spacing: -0.03em; margin: 0 0 12px; }
++      h2 { font-size: 34px; margin: 0 0 10px; letter-spacing: -0.02em; }
++      p { max-width: 46ch; font-size: 20px; line-height: 1.5; margin: 0 0 18px; }
++      .row { display: flex; gap: 24px; align-items: flex-start; margin-top: 24px; }
++      .row img {
++        width: 220px; height: 220px; border-radius: 16px; object-fit: cover;
++        display: block;
++      }
++      .box { width: 140px; height: 140px; border-radius: 18px; }
++      .b1 { background: #3b82f6; }
++      .b2 { background: linear-gradient(135deg, #f59e0b, #ec4899); }
++      .b3 { background: #22c55e; border: 6px solid #fef3c7; }
++      .bars {
++        position: absolute; right: 32px; top: 32px; width: 240px; height: 240px;
++        display: flex; justify-content: space-between;
++      }
++      .bars i { display: block; width: 3px; background: #e5e7eb; }
++      .bars i:nth-child(odd) { background: #f472b6; }
++      #panel {
++        position: fixed; right: 16px; bottom: 16px; z-index: 10;
++        width: 280px; padding: 12px 14px; border-radius: 12px;
++        background: rgba(20, 20, 26, 0.92); border: 1px solid #3a3a48;
++        font: 13px/1.4 system-ui, sans-serif;
++      }
++      #panel fieldset { border: 0; padding: 0; margin: 0 0 10px; }
++      #panel legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
++      #panel label { display: grid; grid-template-columns: 1fr 120px 40px; gap: 6px; align-items: center; }
++      #panel output { text-align: right; color: #a0a0ac; }
++      body.vr #panel { display: none; }
++      #log { position: fixed; left: 8px; bottom: 8px; color: #f87171; font: 12px monospace; white-space: pre; }
++    </style>
++  </head>
++  <body>
++    <div id="stage">
++      <section data-vr="fx-off">
++        <h1>Effects layer</h1>
++        <p>A fullscreen pass reads the mirrored scene and writes the canvas.
++          With no pass enabled the mirror draws straight to the swapchain.</p>
++        <div class="row">
++          <img src="./test.png" alt="" />
++          <div class="box b1"></div>
++          <div class="box b2"></div>
++          <div class="box b3"></div>
++        </div>
++        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
++      </section>
++
++      <section data-vr="fx-blur">
++        <h2>Blur</h2>
++        <p>Separable Gaussian in two stages, scissored to the visible viewport
++          plus the kernel's reach.</p>
++        <div class="row">
++          <div class="box b2"></div>
++          <img src="./test.png" alt="" />
++          <div class="box b3"></div>
++        </div>
++        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
++      </section>
++
++      <section data-vr="fx-displace">
++        <h2>Displace</h2>
++        <p>Value-noise UV displacement, plus a lens around the eased
++          pointer follower.</p>
++        <div class="row">
++          <div class="box b1"></div>
++          <div class="box b3"></div>
++          <img src="./test.png" alt="" />
++        </div>
++        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
++      </section>
++
++      <section data-vr="fx-blur-then-off">
++        <h2>Blur, then off</h2>
++        <p>Enabling and disabling a pass must leave no trace: the second
++          capture equals the plain mirror.</p>
++        <div class="row">
++          <img src="./test.png" alt="" />
++          <div class="box b1"></div>
++          <div class="box b2"></div>
++        </div>
++        <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
++      </section>
++
++      <div id="panel" data-gpu-ignore>
++        <fieldset>
++          <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
++          <label>radius <input type="range" id="s-blur-radius" min="0" max="64" step="0.5" /><output></output></label>
++        </fieldset>
++        <fieldset>
++          <legend><label style="display:inline"><input type="checkbox" id="c-displace" /> displace</label></legend>
++          <label>strength <input type="range" id="s-displace-strength" min="0" max="40" step="0.5" /><output></output></label>
++          <label>scale <input type="range" id="s-displace-scale" min="4" max="400" step="1" /><output></output></label>
++          <label>speed <input type="range" id="s-displace-speed" min="0" max="4" step="0.05" /><output></output></label>
++          <label>pointer <input type="range" id="s-displace-pointerStrength" min="0" max="80" step="1" /><output></output></label>
++          <label>p. radius <input type="range" id="s-displace-pointerRadius" min="8" max="600" step="1" /><output></output></label>
++        </fieldset>
++      </div>
++    </div>
++    <div id="log"></div>
++    <script type="module" src="./fx.ts"></script>
++  </body>
++</html>
+diff --git a/playground/fx.ts b/playground/fx.ts
+new file mode 100644
+index 0000000..7e7db3c
+--- /dev/null
++++ b/playground/fx.ts
+@@ -0,0 +1,158 @@
++/// <reference path="./fx.d.ts" />
++// typegpu reads process.env at evaluation: the shim must run first.
++import '@/util/env'
++import tgpu from 'typegpu'
++import * as d from 'typegpu/data'
++import { blur, createEffects, displace, type Pass } from '@/fx'
++import { createCompositor } from '@/index'
++
++// Effects playground: the mirror plus `compositor-gpu/fx` with the blur
++// and displace presets. `?vr` hides the control panel and pins time and
++// pointer for test/fx/run.ts.
++
++const $ = (id: string) => document.getElementById(id) as HTMLElement
++const logEl = $('log')
++const origErr = console.error.bind(console)
++console.error = (...args: unknown[]) => {
++  origErr(...args)
++  logEl.textContent += `${args.join(' ')}\n`
++}
++
++const vrMode = new URLSearchParams(location.search).has('vr')
++if (vrMode) {
++  document.body.classList.add('vr')
++}
++
++function raf2(): Promise<void> {
++  return new Promise((r) =>
++    requestAnimationFrame(() => requestAnimationFrame(() => r()))
++  )
++}
++
++function imagesReady(): Promise<void> {
++  return Promise.all(
++    Array.from(document.images).map((img) =>
++      img.complete
++        ? Promise.resolve()
++        : new Promise<void>((r) => {
++            img.addEventListener('load', () => r(), { once: true })
++            img.addEventListener('error', () => r(), { once: true })
++          })
++    )
++  ).then(() => undefined)
++}
++
++/** Bind a checkbox to `pass.enabled` and each slider to a param. */
++function bindPanel(key: string, pass: Pass): void {
++  const box = $(`c-${key}`) as HTMLInputElement
++  box.checked = pass.enabled
++  box.addEventListener('change', () => {
++    pass.enabled = box.checked
++  })
++  const params = pass.params as Record<string, number>
++  for (const input of document.querySelectorAll<HTMLInputElement>(
++    `[id^="s-${key}-"]`
++  )) {
++    const name = input.id.slice(`s-${key}-`.length)
++    const out = input.nextElementSibling as HTMLOutputElement | null
++    input.value = String(params[name])
++    if (out) {
++      out.value = String(params[name])
++    }
++    input.addEventListener('input', () => {
++      params[name] = Number(input.value)
++      if (out) {
++        out.value = input.value
++      }
++    })
++  }
++}
++
++async function boot(): Promise<void> {
++  const compositor = await createCompositor({
++    root: $('stage'),
++    fonts: 'auto'
++  })
++  const fx = createEffects(compositor)
++  const b = blur(fx, { enabled: false, radius: 10 })
++  const dsp = displace(fx, {
++    enabled: false,
++    strength: 8,
++    scale: 60,
++    pointerStrength: 60,
++    pointerRadius: 220
++  })
++  if (vrMode) {
++    // Centre of a 1280×900 viewport; follower settled on it.
++    fx.__override({
++      time: 1.25,
++      elapsed: 1.25,
++      pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
++    })
++  }
++  bindPanel('blur', b)
++  bindPanel('displace', dsp)
++  // A TypeGPU fragment (WGSL-bodied tgpu.fn): premultiplied invert.
++  const invert = tgpu.fn(
++    [d.vec2f, d.texture2d(d.f32), d.sampler()],
++    d.vec4f
++  )(`(uv, src, smp) {
++    let c = sample(uv);
++    return vec4f(mix(c.rgb, vec3f(c.a) - c.rgb, params.amount), c.a);
++  }`)
++  const inv = fx.pass({
++    name: 'tgpu-invert',
++    fragment: invert,
++    params: { amount: { type: 'f32', default: 1, min: 0, max: 1 } },
++    enabled: false
++  })
++
++  const textReady = (): Promise<void> =>
++    new Promise((resolve) => {
++      const check = (): void => {
++        if (!compositor.text || compositor.text.ready) {
++          resolve()
++        } else {
++          requestAnimationFrame(check)
++        }
++      }
++      check()
++    })
++
++  window.__fx = {
++    ready: (async () => {
++      if (!compositor.active) {
++        return
++      }
++      await textReady()
++      await document.fonts.ready
++      await imagesReady()
++      await raf2()
++    })(),
++    fx,
++    blur: b,
++    displace: dsp,
++    tgpu: inv,
++    async setMode(mode) {
++      const cv = compositor.canvas
++      if (cv) {
++        compositor.setSourceHidden(mode === 'gpu')
++        cv.style.visibility = mode === 'dom' ? 'hidden' : 'visible'
++      }
++      await raf2()
++    },
++    stats: () => compositor.stats(),
++    stop: () => compositor.stop(),
++    start: () => compositor.start(),
++    raf2
++  }
++
++  if (!compositor.active) {
++    logEl.textContent = 'WebGPU unavailable — showing the plain DOM.'
++    return
++  }
++  compositor.start()
++  window.addEventListener('load', () => compositor.invalidate())
++}
++
++void boot()
 diff --git a/playground/index.html b/playground/index.html
 index 611f860..5f56d25 100644
 --- a/playground/index.html
@@ -600,6 +1353,72 @@ index 611f860..5f56d25 100644
      </div>
  
      <div id="panel">
+diff --git a/playground/main.ts b/playground/main.ts
+index 9e87656..ee564c5 100644
+--- a/playground/main.ts
++++ b/playground/main.ts
+@@ -1,3 +1,4 @@
++import { blur, createEffects, displace } from '@/fx'
+ import { createCompositor } from '@/index'
+ 
+ const $ = (id: string) => document.getElementById(id) as HTMLElement
+@@ -84,6 +85,14 @@ async function boot(): Promise<void> {
+     }
+   })
+ 
++  // `?fx` installs the effects layer with every pass disabled: the visual
++  // harness's `--with-fx` run checks that this changes no pixel.
++  if (new URLSearchParams(location.search).has('fx')) {
++    const fx = createEffects(compositor)
++    blur(fx, { enabled: false })
++    displace(fx, { enabled: false })
++  }
++
+   $('s-gpu').textContent = compositor.active ? 'yes' : 'no'
+   $('s-gpu').className = compositor.active ? 'ok' : 'bad'
+   $('s-state').textContent = compositor.active ? 'active' : 'passthrough'
+diff --git a/playground/perf.d.ts b/playground/perf.d.ts
+index 6f58514..ae93140 100644
+--- a/playground/perf.d.ts
++++ b/playground/perf.d.ts
+@@ -10,6 +10,8 @@ declare global {
+       mutate(kind: MutateKind): void
+       /** Force a full re-read, for the perf runner's full-read measurement. */
+       invalidate(): void
++      /** Enable/disable the fullscreen blur pass (compositor-gpu/fx). */
++      setBlur(on: boolean): void
+     }
+   }
+ }
+diff --git a/playground/perf.ts b/playground/perf.ts
+index d7b0eb8..791e677 100644
+--- a/playground/perf.ts
++++ b/playground/perf.ts
+@@ -1,4 +1,5 @@
+ /// <reference path="./perf.d.ts" />
++import { blur, createEffects } from '@/fx'
+ import { createCompositor } from '@/index'
+ 
+ // Perf harness fixture: builds an N-card grid, boots the compositor with
+@@ -165,6 +166,8 @@ async function boot(): Promise<void> {
+     })
+ 
+   let mutateCounter = 0
++  // A fullscreen blur for the `steady encode (blur)` row, off until asked.
++  const blurPass = blur(createEffects(compositor), { enabled: false })
+ 
+   window.__perf = {
+     ready: (async () => {
+@@ -178,6 +181,9 @@ async function boot(): Promise<void> {
+     })(),
+     stats: () => compositor.stats(),
+     invalidate: () => compositor.invalidate(),
++    setBlur(on: boolean) {
++      blurPass.enabled = on
++    },
+     mutate(kind: 'text' | 'class' | 'append') {
+       const stage2 = document.getElementById('stage') as HTMLElement
+       if (kind === 'text') {
 diff --git a/src/boxes/boxRenderer.ts b/src/boxes/boxRenderer.ts
 index 64bc807..6f75efc 100644
 --- a/src/boxes/boxRenderer.ts
@@ -1173,10 +1992,10 @@ index 0000000..071bb6f
 +  }
 +}
 diff --git a/src/compositor.ts b/src/compositor.ts
-index a3438da..1230c6a 100644
+index a3438da..517442c 100644
 --- a/src/compositor.ts
 +++ b/src/compositor.ts
-@@ -1,5 +1,7 @@
+@@ -1,7 +1,10 @@
  import { BoxPass } from './boxes/boxRenderer'
 -import { Dirty, DomSync, IGNORE_ATTR } from './dom/observer'
 +import { CutoutPass } from './boxes/cutoutPass'
@@ -1184,8 +2003,11 @@ index a3438da..1230c6a 100644
 +import { textReadStats } from './dom/textRuns'
  import { SceneReader } from './dom/tree'
  import { initGpu } from './gpu/device'
++import type { FrameHook, RenderGraph } from './gpu/graph'
  import { Renderer } from './gpu/renderer'
-@@ -28,6 +30,10 @@ export async function createCompositor(
+ import { ImagePass } from './images/imageRenderer'
+ import { Scene } from './scene/scene'
+@@ -28,6 +31,10 @@ export async function createCompositor(
  ): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
    const root = options.root ?? document.body
    const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
@@ -1196,7 +2018,7 @@ index a3438da..1230c6a 100644
    const fallback = options.fallback ?? 'passthrough'
    const mode = options.mode ?? 'overlay'
    const hideSource = options.hideSource ?? true
-@@ -44,7 +50,7 @@ export async function createCompositor(
+@@ -44,7 +51,7 @@ export async function createCompositor(
      left: '0',
      top: '0',
      pointerEvents: 'none',
@@ -1205,7 +2027,7 @@ index a3438da..1230c6a 100644
    } satisfies Partial<CSSStyleDeclaration>)
    canvas.setAttribute('aria-hidden', 'true')
    // Mount on <html>, not <body>: replace mode hides the mirrored root's
-@@ -83,6 +89,9 @@ export async function createCompositor(
+@@ -83,6 +90,9 @@ export async function createCompositor(
      text = new SlugText(renderer.shared)
      renderer.addPass(text)
    }
@@ -1215,7 +2037,79 @@ index a3438da..1230c6a 100644
    gpu.device.popErrorScope().then((e) => {
      if (e) {
        log.error('GPU validation error during setup:', e.message)
-@@ -351,6 +360,14 @@ export async function createCompositor(
+@@ -263,7 +273,11 @@ export async function createCompositor(
+       canvasX: anchorX,
+       canvasY: anchorY,
+       canvasWidth: canvasW,
+-      canvasHeight: canvasH
++      canvasHeight: canvasH,
++      pointer: null
++    }
++    for (const h of hooks) {
++      h.beforeFrame?.(ctx)
+     }
+ 
+     if (options.onGlyph) {
+@@ -286,7 +300,13 @@ export async function createCompositor(
+     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
+     // re-requests one once the viewport has a size.
+     if (canvas.width === 0 || canvas.height === 0) {
+-      if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
++      if (
++        animating ||
++        scene.hasDynamic ||
++        cssAnimating ||
++        isScrolling() ||
++        hooksAlive()
++      ) {
+         scheduler.request()
+       }
+       return
+@@ -297,12 +317,42 @@ export async function createCompositor(
+     }
+     renderer.render(scene, ctx, dpr)
+     frameMs = performance.now() - t0
+-    if (animating || scene.hasDynamic || cssAnimating || isScrolling()) {
++    if (
++      animating ||
++      scene.hasDynamic ||
++      cssAnimating ||
++      isScrolling() ||
++      hooksAlive()
++    ) {
+       scheduler.request()
+     }
+   }
+ 
+   const scheduler = new FrameScheduler(frame)
++  // The effects layer's hooks (gpu/graph.ts).
++  const hooks = new Set<FrameHook>()
++  const hooksAlive = (): boolean => {
++    for (const h of hooks) {
++      if (h.keepAlive?.()) {
++        return true
++      }
++    }
++    return false
++  }
++  const graph: RenderGraph = {
++    shared: renderer.shared,
++    setPostChain(chain) {
++      renderer.postChain = chain
++      scheduler.request()
++    },
++    addHook(hook) {
++      hooks.add(hook)
++      return () => {
++        hooks.delete(hook)
++      }
++    },
++    requestFrame: () => scheduler.request()
++  }
+   const sync = new DomSync(root, () => scheduler.request())
+ 
+   if (text) {
+@@ -351,6 +401,14 @@ export async function createCompositor(
    // paint-free wrappers.
    let sourceHidden = false
    const hiddenEls = new Map<HTMLElement, string>()
@@ -1230,7 +2124,7 @@ index a3438da..1230c6a 100644
    const hideUnder = (el: Element): void => {
      for (const child of Array.from(el.children)) {
        if (!(child instanceof HTMLElement) || child.hasAttribute(IGNORE_ATTR)) {
-@@ -359,8 +376,7 @@ export async function createCompositor(
+@@ -359,8 +417,7 @@ export async function createCompositor(
        if (child.querySelector(`[${IGNORE_ATTR}]`)) {
          hideUnder(child)
        } else {
@@ -1240,7 +2134,7 @@ index a3438da..1230c6a 100644
        }
      }
    }
-@@ -373,12 +389,12 @@ export async function createCompositor(
+@@ -373,12 +430,12 @@ export async function createCompositor(
        if (root.querySelector(`[${IGNORE_ATTR}]`)) {
          hideUnder(root)
        } else {
@@ -1255,7 +2149,13 @@ index a3438da..1230c6a 100644
        }
        hiddenEls.clear()
      }
-@@ -415,6 +431,7 @@ export async function createCompositor(
+@@ -410,11 +467,13 @@ export async function createCompositor(
+     canvas,
+     text,
+     scene,
++    graph,
+     stats: () => ({
+       active: true,
        boxes: scene.boxes.length,
        images: scene.images.length,
        glyphs: scene.glyphCount(),
@@ -1263,7 +2163,7 @@ index a3438da..1230c6a 100644
        fallback: text?.fallbackCount ?? 0,
        fallbackSamples: text ? Array.from(text.fallbackSamples) : [],
        ligatures: text?.ligatureCount ?? 0,
-@@ -426,6 +443,7 @@ export async function createCompositor(
+@@ -426,6 +485,7 @@ export async function createCompositor(
        readElements: reader.readElements,
        partialReads: reader.partialReads,
        sync: { ...sync.diag },
@@ -1271,7 +2171,13 @@ index a3438da..1230c6a 100644
        readMs,
        uploadMs: renderer.lastUploadMs,
        encodeMs: renderer.lastEncodeMs,
-@@ -483,6 +501,7 @@ function inert(): Compositor & { text: null; scene: null } {
+@@ -478,11 +538,13 @@ function inert(): Compositor & { text: null; scene: null } {
+     canvas: null,
+     text: null,
+     scene: null,
++    graph: null,
+     stats: () => ({
+       active: false,
        boxes: 0,
        images: 0,
        glyphs: 0,
@@ -1279,7 +2185,7 @@ index a3438da..1230c6a 100644
        fallback: 0,
        fallbackSamples: [],
        ligatures: 0,
-@@ -501,6 +520,7 @@ function inert(): Compositor & { text: null; scene: null } {
+@@ -501,6 +563,7 @@ function inert(): Compositor & { text: null; scene: null } {
          animating: 0,
          last: ''
        },
@@ -2612,6 +3518,1766 @@ index b7c2a13..147aecd 100644
    /**
     * Splice `node`'s pseudo-elements into its kids (after they are read:
     * placement needs their glyphs): `::marker` then `::before` first,
+diff --git a/src/fx/README.md b/src/fx/README.md
+new file mode 100644
+index 0000000..245f5c7
+--- /dev/null
++++ b/src/fx/README.md
+@@ -0,0 +1,236 @@
++# `compositor-gpu/fx` — authoring contract
++
++The effects layer of `docs/EFFECTS.md`. M1 ships the runtime spine and
++fullscreen post: `createEffects`, Params, the pointer, `fx.pass`, and the
++`blur` / `displace` presets. Targets, Layers and Materials are M2/M3.
++
++```ts
++import { createCompositor } from 'compositor-gpu'
++import { blur, createEffects, displace } from 'compositor-gpu/fx'
++
++const compositor = await createCompositor()
++compositor.start()
++const fx = createEffects(compositor)
++const soft = blur(fx, { radius: 6 })
++gsap.to(soft.params, { radius: 0, duration: 0.6 })
++```
++
++Importing `/fx` does nothing (safe on a server). On an inert compositor
++(no WebGPU) `createEffects` returns an inert runtime: `fx.pass()` returns a
++working Pass (params proxy, `enabled`, `radius`), nothing renders, no
++listeners are attached, `fx.active` is false.
++
++## Pass
++
++```ts
++fx.pass({
++  name: 'tint',                    // labels pipelines and shader errors
++  fragment: wgsl | tgpuFn | [ ... ],
++  params?: { ...schema },          // see Params
++  radius?: number | (params) => number,  // CSS px sampled past the viewport
++  enabled?: true,
++  continuous?: false
++}) -> Pass { name, params, enabled, continuous, radius, destroy() }
++```
++
++- Passes run in creation order, each on the previous one's output. An
++  array `fragment` is one Pass with several stages (sharing `params`), run
++  in order; `blur` uses it for its two axes.
++- "Fullscreen" is the **visible viewport**. The chain writes the viewport
++  grown by the largest `radius` of the enabled passes (× dpr, clamped to
++  the canvas); the rest of the canvas (it is up to three viewports tall)
++  shows the scene unchanged. A pass that samples further than its declared
++  radius reads clamped edge texels there.
++- Everything is premultiplied: `sample()` returns premultiplied colour and
++  `effect` must return premultiplied colour. It is written without blending
++  (it replaces the pixel).
++- While no pass is enabled the renderer draws straight to the swapchain;
++  the offscreen scene texture and the ping-pong pair are released on the
++  next frame. `destroy()` removes a pass and frees its buffers.
++
++### Fragment signature
++
++```wgsl
++fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f
++```
++
++`uv` is [0,1]² over the visible viewport (y down); it goes outside that
++range in the radius margin. `src`/`smp` are the raw source texture and its
++linear clamp sampler; their coordinates are **not** `uv` (the source is the
++whole-canvas scene or a ping-pong texture). Use `sample(uv)`, or
++`textureSampleLevel(src, smp, src_uv(uv), 0.0)`.
++
++### What the runtime puts in scope
++
++The module is `FRAME_WGSL` + the declarations below + the Params struct +
++your code + the entry points (`fx_vs`, `fx_fs`; avoid those names and the
++`fx_` prefix).
++
++```wgsl
++struct Frame { viewport: vec2f, scroll: vec2f, time: f32, dpr: f32,
++               vscroll: vec2f };           // core; canvas-sized
++@group(0) @binding(0) var<uniform> frame : Frame;
++
++struct Effect {          // offset
++  time       : f32,      //  0  page clock, s (performance.now() / 1000)
++  elapsed    : f32,      //  4  s since this pass was last enabled
++  viewport   : vec2f,    //  8  visible viewport, device px
++  texel      : vec2f,    // 16  one device px in uv (1 / viewport)
++  scroll     : vec2f,    // 24  viewport's document-space origin, CSS px
++  dpr        : f32,      // 32
++  _pad       : f32,      // 36
++  origin     : vec2f,    // 40  runtime-internal from here on
++  src_origin : vec2f,    // 48
++  src_size   : vec2f,    // 56
++  dst_origin : vec2f,    // 64
++  src_texel  : vec2f,    // 72
++};                       // 80 bytes
++
++@group(1) @binding(0) var fx_src : texture_2d<f32>;
++@group(1) @binding(1) var fx_smp : sampler;
++@group(2) @binding(0) var<uniform> fx      : Effect;
++@group(2) @binding(1) var<uniform> params  : Params;
++@group(2) @binding(2) var<uniform> pointer : Pointer;
++
++fn sample(uv : vec2f) -> vec4f          // source at uv, premultiplied
++fn src_uv(uv : vec2f) -> vec2f          // uv -> source texture coords
++fn viewport_to_uv(p : vec2f) -> vec2f   // viewport CSS px -> uv
++fn page_to_uv(p : vec2f) -> vec2f       // page CSS px -> uv
++```
++
++`sample` uses `textureSampleLevel(..., 0.0)`, so it is valid in
++non-uniform control flow. A device-pixel step in uv is `fx.texel`; a CSS
++pixel is `fx.texel * fx.dpr`.
++
++Compile errors are reported by `reportShaderErrors` under `fx:<name>`
++(`fx:<name>#<i>` for stage i > 0).
++
++## Params
++
++```ts
++params: {
++  strength: { type: 'f32',   default: 0, min: 0, max: 1 },
++  center:   { type: 'vec2',  default: [0.5, 0.5] },
++  axis:     { type: 'vec3',  default: [0, 0, 1] },
++  rect:     { type: 'vec4',  default: [0, 0, 1, 1] },
++  tint:     { type: 'color', default: '#ffffff' }
++}
++```
++
++`pass.params` is a `Proxy`: `f32` reads as a number, the rest as arrays of
++floats. A colour is `[r, g, b, a]`, sRGB-encoded and unpremultiplied
++(like the rest of the library); it accepts `'#rgb[a]'`, `'#rrggbb[aa]'`,
++`[r,g,b]` or `[r,g,b,a]` on assignment. Assigning an array copies into the
++existing one, and element writes (`params.tint[3] = 0.5`) count as writes,
++so component-wise tweens work. `min`/`max` are metadata for UIs; writes are
++not clamped. Other keys (a tween library's cache) are stored and ignored.
++
++A write that changes a value marks the pass dirty (re-uploaded on the next
++frame it runs) and requests a frame if the pass is enabled.
++
++The schema becomes, in declaration order,
++
++```wgsl
++struct Params { strength : f32, center : vec2f, axis : vec3f,
++                rect : vec4f, tint : vec4f };
++```
++
++packed with WGSL uniform alignment (f32 4, vec2f 8, vec3f 16 with size 12,
++vec4f 16; an f32 can follow a vec3f in its last 4 bytes), the block padded
++to a multiple of 16 bytes. An empty schema declares `_unused : f32`. Names
++must be WGSL identifiers starting with a letter.
++
++## Pointer
++
++Tracked from passive `window` listeners (`pointermove`, `pointerdown`,
++`pointerup`, `pointercancel`, `blur`). JS: `fx.pointer` (also
++`FrameContext.pointer` in `onFrame` while `/fx` is installed):
++
++```ts
++{ x, y,            // viewport CSS px
++  pageX, pageY,    // page CSS px
++  vx, vy,          // CSS px/s, exponentially smoothed (τ = 50 ms)
++  down, seen,
++  follow: { x, y, vx, vy },   // eased follower, viewport CSS px
++  ease,            // per 60 Hz frame, default 0.12, writable
++  clicks }         // last 8 { x, y (page CSS px), t (s, page clock) }, newest first
++```
++
++The follower moves `1 - (1 - ease)^(dt·60)` of the way per frame, so its
++speed doesn't depend on the frame rate. It advances on compositor frames.
++
++```wgsl
++struct Pointer {           // offset
++  pos        : vec2f,      //   0  raw, viewport CSS px
++  page       : vec2f,      //   8  raw, page CSS px
++  vel        : vec2f,      //  16  CSS px/s
++  follow     : vec2f,      //  24  follower, viewport CSS px
++  follow_vel : vec2f,      //  32
++  down       : f32,        //  40  1 while down
++  seen       : f32,        //  44  1 after the first event
++  clicks_n   : f32,        //  48  valid entries in clicks
++  _pad       : f32,
++  _pad2      : vec2f,
++  clicks     : array<vec4f, 8>,   // 64  (x, y page CSS px, t s, 0), newest first
++};                         // 192 bytes
++```
++
++Click age is `fx.time - pointer.clicks[i].z`.
++
++## Wake rules
++
++The compositor idles unless something asks for frames. `/fx` requests one
++on: a param write to an enabled pass; `enabled` toggling; `continuous`
++changing; pass creation (enabled) and destruction; a pointer event while
++any pass is enabled. It keeps the loop alive while any enabled pass is
++`continuous`, or while any pass is enabled and the pointer follower is
++more than 0.1 px from the pointer (or velocity hasn't decayed below
++1 px/s). `displace` defaults to `continuous: true` (its noise drifts);
++`blur` is static.
++
++`time` is the page clock and `elapsed` restarts at 0 on the first frame
++after a pass is enabled; both come from the frame's rAF timestamp, so
++tween time scales affect params, not time.
++
++## TypeGPU fragments
++
++A `tgpu.fn([d.vec2f, d.texture2d(d.f32), d.sampler()], d.vec4f)` is
++accepted wherever a WGSL string is. The runtime resolves it with
++`tgpu.resolve({ template, externals: { fx_user: fn } })` behind a wrapper
++`fn effect(...) { return fx_user(uv, src, smp); }`, so the function and
++its own TypeGPU dependencies are emitted with TypeGPU's naming. What works
++in 0.12:
++
++- **WGSL-bodied** `tgpu.fn(...)(\`(uv, src, smp) { ... }\`)`: works. The
++  body is pasted as written, so it can call `sample`, read `fx`, `params`
++  and `pointer`, and use any `$uses` externals.
++- **JS-bodied** (`'use gpu'`) functions need `unplugin-typegpu` in the
++  author's bundler; without it `tgpu.resolve` throws "Missing metadata",
++  which is logged as `fx:<name>: tgpu.resolve failed` and the stage passes
++  the source through. With the plugin, they can't yet reach `sample`,
++  `params`, `fx` or `pointer`: those are WGSL declarations, not TypeGPU
++  values. TODO: expose them as TypeGPU externals (a `d.struct` generated
++  from the Params schema, `tgpu.fn` wrappers for the helpers) so JS bodies
++  can call them.
++
++A signature mismatch is logged and the stage passes through.
++
++## Presets
++
++- `blur(fx, { radius = 8 })`: separable Gaussian, two stages, param
++  `radius` (CSS px reach, σ = radius / 3, ≤ 32 taps per side, spread past
++  that); declares `radius` as its sampling radius.
++- `displace(fx, { strength = 6, scale = 80, speed = 0.3, pointerStrength
++  = 0, pointerRadius = 160 })`: samples `strength` CSS px away along a
++  value-noise vector of feature size `scale`, drifting at `speed`; with
++  `pointerStrength > 0` it also magnifies the scene around
++  `pointer.follow` within `pointerRadius` (shift = distance × falloff ×
++  pointerStrength / pointerRadius, peaking near 0.26 × pointerStrength).
++  Declares `strength + pointerStrength` as its radius. `continuous` by default.
++
++## Testing hook
++
++`fx.__override({ time?, elapsed?, pointer?: { x, y, down, follow,
++clicks } })` pins those inputs (velocities read as zero; the follower
++doesn't keep the loop alive); `null` clears it. Used by `test/fx/run.ts`;
++not for production code.
+diff --git a/src/fx/effects.ts b/src/fx/effects.ts
+new file mode 100644
+index 0000000..d7fbc67
+--- /dev/null
++++ b/src/fx/effects.ts
+@@ -0,0 +1,600 @@
++import type { PostChain, PostFrame, RenderGraph } from '../gpu/graph'
++import type { Compositor, FrameContext, PointerState } from '../types'
++import { reportShaderErrors } from '../util/log'
++import {
++  createParams,
++  type ParamBlock,
++  type ParamSchema,
++  type ParamValues
++} from './params'
++import {
++  applyOverride,
++  emptyPointer,
++  POINTER_BYTES,
++  type PointerOverride,
++  PointerTracker
++} from './pointer'
++import {
++  EFFECT_BYTES,
++  effectSource,
++  type Fragment,
++  stageSource
++} from './shader'
++
++export interface PassOptions<S extends ParamSchema = ParamSchema> {
++  /** Labels pipelines and shader errors. */
++  name: string
++  /** WGSL defining `fn effect(uv, src, smp) -> vec4f`, a `tgpu.fn` of
++   * that signature, or an array of them: each runs as its own stage, in
++   * order, on the previous stage's output, sharing `params`. */
++  fragment: Fragment | readonly Fragment[]
++  params?: S
++  /** CSS px the fragment samples beyond the viewport (a blur's reach), or
++   * a function of the params. Default 0. */
++  radius?: number | ((params: ParamValues<S>) => number)
++  /** Default true. */
++  enabled?: boolean
++  /** Keep the frame loop running while enabled (time-based motion).
++   * Default false. */
++  continuous?: boolean
++}
++
++export interface Pass<S extends ParamSchema = ParamSchema> {
++  readonly name: string
++  readonly params: ParamValues<S>
++  /** Toggling requests a frame; enabling resets `elapsed`. */
++  enabled: boolean
++  continuous: boolean
++  /** The declared sampling radius right now, CSS px. */
++  readonly radius: number
++  /** Remove the pass from the chain and free its GPU resources. */
++  destroy(): void
++}
++
++/** Fixed inputs for deterministic captures (test harnesses only). */
++export interface FxOverride {
++  /** Page clock, s. */
++  time?: number
++  /** Every effect's elapsed, s. */
++  elapsed?: number
++  pointer?: PointerOverride
++}
++
++export interface Effects {
++  /** False when the compositor is inert: calls work, nothing renders. */
++  readonly active: boolean
++  /** Live pointer state (`ease` is writable). */
++  readonly pointer: PointerState
++  pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S>
++  /** Remove every pass and the pointer listeners. */
++  destroy(): void
++  /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
++  __override(o: FxOverride | null): void
++}
++
++interface Stage {
++  pipeline: GPURenderPipeline
++  effect: GPUBuffer
++  bindGroup: GPUBindGroup
++}
++
++/** A stage's input: its view, where its texel (0,0) sits in canvas device
++ * px, the valid region's size and the texture's size. */
++interface Source {
++  view: GPUTextureView
++  x: number
++  y: number
++  w: number
++  h: number
++  texW: number
++  texH: number
++}
++
++interface PassState {
++  name: string
++  block: ParamBlock<ParamSchema>
++  radius: () => number
++  enabled: boolean
++  continuous: boolean
++  /** ctx.time (ms) of the first frame after enabling; null until then. */
++  enabledAt: number | null
++  paramsBuf: GPUBuffer | null
++  stages: Stage[]
++}
++
++/** A Pass object over `s` (shared by the inert and GPU paths). */
++function passHandle<S extends ParamSchema>(
++  s: PassState,
++  wake: () => void,
++  remove: () => void
++): Pass<S> {
++  return {
++    name: s.name,
++    params: s.block.values as ParamValues<S>,
++    get enabled() {
++      return s.enabled
++    },
++    set enabled(on: boolean) {
++      if (on === s.enabled) {
++        return
++      }
++      s.enabled = on
++      if (on) {
++        s.enabledAt = null
++      }
++      wake()
++    },
++    get continuous() {
++      return s.continuous
++    },
++    set continuous(on: boolean) {
++      s.continuous = on
++      wake()
++    },
++    get radius() {
++      return s.radius()
++    },
++    destroy: remove
++  }
++}
++
++function radiusFn<S extends ParamSchema>(
++  opts: PassOptions<S>,
++  values: ParamValues<S>
++): () => number {
++  const r = opts.radius
++  if (typeof r === 'function') {
++    return () => Math.max(0, r(values) || 0)
++  }
++  const n = Math.max(0, r ?? 0)
++  return () => n
++}
++
++function inertEffects(): Effects {
++  const pointer = emptyPointer()
++  return {
++    active: false,
++    pointer,
++    pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
++      const block = createParams(opts.params ?? ({} as S), () => {})
++      const s: PassState = {
++        name: opts.name,
++        block,
++        radius: radiusFn(opts, block.values),
++        enabled: opts.enabled ?? true,
++        continuous: opts.continuous ?? false,
++        enabledAt: null,
++        paramsBuf: null,
++        stages: []
++      }
++      return passHandle<S>(
++        s,
++        () => {},
++        () => {}
++      )
++    },
++    destroy() {},
++    __override() {}
++  }
++}
++
++/** Ping-pong targets are sized up to this many device px, for reuse. */
++const SIZE_STEP = 64
++
++/**
++ * Create the effects runtime for `compositor`. On an inert compositor
++ * (no WebGPU, or server-side) it returns an inert runtime: every call
++ * works and nothing renders.
++ */
++export function createEffects(compositor: Compositor): Effects {
++  const graph: RenderGraph | null = compositor.active ? compositor.graph : null
++  if (!graph) {
++    return inertEffects()
++  }
++  const { device, format, frameLayout } = graph.shared
++  const passes: PassState[] = []
++  let override: FxOverride | null = null
++  let destroyed = false
++
++  const anyEnabled = (): boolean => passes.some((p) => p.enabled)
++  const tracker = new PointerTracker(() => {
++    if (anyEnabled()) {
++      graph.requestFrame()
++    }
++  })
++  tracker.listen()
++
++  const srcLayout = device.createBindGroupLayout({
++    entries: [
++      {
++        binding: 0,
++        visibility: GPUShaderStage.FRAGMENT,
++        texture: { sampleType: 'float' }
++      },
++      {
++        binding: 1,
++        visibility: GPUShaderStage.FRAGMENT,
++        sampler: { type: 'filtering' }
++      }
++    ]
++  })
++  const uniform = (binding: number): GPUBindGroupLayoutEntry => ({
++    binding,
++    visibility: GPUShaderStage.FRAGMENT,
++    buffer: { type: 'uniform' }
++  })
++  const effectLayout = device.createBindGroupLayout({
++    entries: [uniform(0), uniform(1), uniform(2)]
++  })
++  const pipelineLayout = device.createPipelineLayout({
++    bindGroupLayouts: [frameLayout, srcLayout, effectLayout]
++  })
++  const sampler = device.createSampler({
++    magFilter: 'linear',
++    minFilter: 'linear',
++    addressModeU: 'clamp-to-edge',
++    addressModeV: 'clamp-to-edge'
++  })
++  const pointerBuf = device.createBuffer({
++    label: 'fx-pointer',
++    size: POINTER_BYTES,
++    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
++  })
++
++  // Ping-pong targets (the rect the chain writes) and bind group 1 per
++  // source view.
++  let ping: GPUTexture[] = []
++  const srcGroups = new Map<GPUTextureView, GPUBindGroup>()
++  const pingViews: GPUTextureView[] = []
++  let lastScene: GPUTextureView | null = null
++  const releaseTargets = (): void => {
++    for (const t of ping) {
++      t.destroy()
++    }
++    ping = []
++    pingViews.length = 0
++    srcGroups.clear()
++    lastScene = null
++  }
++  const ensureTargets = (w: number, h: number): void => {
++    const t = ping[0]
++    if (t && t.width >= w && t.height >= h) {
++      return
++    }
++    releaseTargets()
++    const width = Math.ceil(w / SIZE_STEP) * SIZE_STEP
++    const height = Math.ceil(h / SIZE_STEP) * SIZE_STEP
++    for (let i = 0; i < 2; i++) {
++      const tex = device.createTexture({
++        label: `fx-ping-${i}`,
++        size: { width, height },
++        format,
++        usage:
++          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
++      })
++      ping.push(tex)
++      pingViews.push(tex.createView())
++    }
++  }
++  const srcGroup = (view: GPUTextureView): GPUBindGroup => {
++    let g = srcGroups.get(view)
++    if (!g) {
++      g = device.createBindGroup({
++        layout: srcLayout,
++        entries: [
++          { binding: 0, resource: view },
++          { binding: 1, resource: sampler }
++        ]
++      })
++      srcGroups.set(view, g)
++    }
++    return g
++  }
++
++  // Per-frame state, set in beforeFrame.
++  let pointerNow: PointerState = tracker.state
++  let timeMs = 0
++  const effectData = new Float32Array(EFFECT_BYTES / 4)
++  /** This frame's running stages, in order (filled by encode). */
++  const running: { pass: PassState; stage: Stage }[] = []
++
++  const live = (p: PassState): boolean => p.enabled && p.stages.length > 0
++
++  const writeEffect = (
++    p: PassState,
++    stage: Stage,
++    frame: PostFrame,
++    src: Source,
++    dst: { x: number; y: number }
++  ): void => {
++    const d = effectData
++    const v = frame.viewport
++    d[0] = override?.time ?? timeMs / 1000
++    d[1] = override?.elapsed ?? (timeMs - (p.enabledAt ?? timeMs)) / 1000
++    d[2] = v.width
++    d[3] = v.height
++    d[4] = 1 / Math.max(1, v.width)
++    d[5] = 1 / Math.max(1, v.height)
++    d[6] = frame.ctx.scrollX
++    d[7] = frame.ctx.scrollY
++    d[8] = frame.dpr
++    d[9] = 0
++    d[10] = v.x
++    d[11] = v.y
++    d[12] = src.x
++    d[13] = src.y
++    d[14] = src.w
++    d[15] = src.h
++    d[16] = dst.x
++    d[17] = dst.y
++    d[18] = 1 / src.texW
++    d[19] = 1 / src.texH
++    device.queue.writeBuffer(stage.effect, 0, d)
++  }
++
++  const chain: PostChain = {
++    active: () => passes.some(live),
++    radius() {
++      let r = 0
++      for (const p of passes) {
++        if (live(p)) {
++          r = Math.max(r, p.radius())
++        }
++      }
++      return r
++    },
++    encode(frame) {
++      running.length = 0
++      for (const p of passes) {
++        if (!live(p)) {
++          continue
++        }
++        if (p.block.dirty && p.paramsBuf) {
++          device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
++        }
++        for (const stage of p.stages) {
++          running.push({ pass: p, stage })
++        }
++      }
++      device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
++      if (frame.scene !== lastScene) {
++        if (lastScene) {
++          srcGroups.delete(lastScene)
++        }
++        lastScene = frame.scene
++      }
++      const r = frame.rect
++      if (running.length > 1) {
++        ensureTargets(r.width, r.height)
++      }
++      // Stage i reads the scene (i = 0) or ping[(i - 1) % 2] and writes
++      // ping[i % 2]; the last stage writes the canvas in composite().
++      for (let i = 0; i < running.length - 1; i++) {
++        const run = running[i]
++        const view = pingViews[i % 2]
++        if (!run || !view) {
++          continue
++        }
++        const src = sourceOf(i, frame)
++        writeEffect(run.pass, run.stage, frame, src, { x: r.x, y: r.y })
++        const rp = frame.encoder.beginRenderPass({
++          label: `fx:${run.pass.name}`,
++          colorAttachments: [
++            {
++              view,
++              clearValue: { r: 0, g: 0, b: 0, a: 0 },
++              loadOp: 'clear',
++              storeOp: 'store'
++            }
++          ]
++        })
++        rp.setBindGroup(0, graph.shared.frameBindGroup)
++        rp.setScissorRect(0, 0, r.width, r.height)
++        draw(rp, run.stage, src.view)
++        rp.end()
++      }
++    },
++    composite(rp, frame) {
++      const i = running.length - 1
++      const run = running[i]
++      if (!run) {
++        return
++      }
++      const src = sourceOf(i, frame)
++      writeEffect(run.pass, run.stage, frame, src, { x: 0, y: 0 })
++      draw(rp, run.stage, src.view)
++    }
++  }
++
++  const sourceOf = (i: number, frame: PostFrame): Source => {
++    const view = i > 0 ? pingViews[(i - 1) % 2] : undefined
++    const t = ping[0]
++    if (!view || !t) {
++      const w = frame.sceneWidth
++      const h = frame.sceneHeight
++      return { view: frame.scene, x: 0, y: 0, w, h, texW: w, texH: h }
++    }
++    const r = frame.rect
++    return {
++      view,
++      x: r.x,
++      y: r.y,
++      w: r.width,
++      h: r.height,
++      texW: t.width,
++      texH: t.height
++    }
++  }
++
++  const draw = (
++    rp: GPURenderPassEncoder,
++    stage: Stage,
++    src: GPUTextureView
++  ): void => {
++    rp.setPipeline(stage.pipeline)
++    rp.setBindGroup(1, srcGroup(src))
++    rp.setBindGroup(2, stage.bindGroup)
++    rp.draw(3)
++  }
++
++  const removeHook = graph.addHook({
++    beforeFrame(ctx: FrameContext) {
++      timeMs = ctx.time
++      tracker.step(ctx.dt, ctx.scrollX, ctx.scrollY)
++      const o = override?.pointer
++      pointerNow = o
++        ? applyOverride(tracker.state, o, ctx.scrollX, ctx.scrollY)
++        : tracker.state
++      ctx.pointer = pointerNow
++      let any = false
++      for (const p of passes) {
++        if (p.enabled) {
++          any = true
++          p.enabledAt ??= ctx.time
++        }
++      }
++      // Leaving the offscreen path: free the ping-pong targets.
++      if (!any && ping.length > 0) {
++        releaseTargets()
++      }
++    },
++    keepAlive() {
++      let any = false
++      for (const p of passes) {
++        if (p.enabled) {
++          if (p.continuous) {
++            return true
++          }
++          any = true
++        }
++      }
++      return any && !override?.pointer && tracker.moving()
++    }
++  })
++  graph.setPostChain(chain)
++
++  const buildStage = (
++    name: string,
++    fragment: Fragment,
++    block: ParamBlock<ParamSchema>,
++    paramsBuf: GPUBuffer,
++    index: number
++  ): Stage => {
++    const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
++    const code = stageSource(effectSource(fragment, name), block.wgsl)
++    const module = device.createShaderModule({ label, code })
++    reportShaderErrors(module, label)
++    const pipeline = device.createRenderPipeline({
++      label,
++      layout: pipelineLayout,
++      vertex: { module, entryPoint: 'fx_vs' },
++      fragment: { module, entryPoint: 'fx_fs', targets: [{ format }] },
++      primitive: { topology: 'triangle-list' }
++    })
++    const effect = device.createBuffer({
++      label: `${label}:effect`,
++      size: EFFECT_BYTES,
++      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
++    })
++    const bindGroup = device.createBindGroup({
++      layout: effectLayout,
++      entries: [
++        { binding: 0, resource: { buffer: effect } },
++        { binding: 1, resource: { buffer: paramsBuf } },
++        { binding: 2, resource: { buffer: pointerBuf } }
++      ]
++    })
++    return { pipeline, effect, bindGroup }
++  }
++
++  const freePass = (s: PassState): void => {
++    for (const st of s.stages) {
++      st.effect.destroy()
++    }
++    s.stages = []
++    s.paramsBuf?.destroy()
++    s.paramsBuf = null
++  }
++
++  return {
++    active: true,
++    get pointer() {
++      return tracker.state
++    },
++    pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
++      // The write hook only runs after `state` exists.
++      const block = createParams(opts.params ?? ({} as S), () => {
++        if (state.enabled) {
++          graph.requestFrame()
++        }
++      })
++      const generic = block as unknown as ParamBlock<ParamSchema>
++      const state: PassState = {
++        name: opts.name,
++        block: generic,
++        radius: radiusFn(opts, block.values),
++        enabled: opts.enabled ?? true,
++        continuous: opts.continuous ?? false,
++        enabledAt: null,
++        paramsBuf: null,
++        stages: []
++      }
++      if (!destroyed) {
++        const paramsBuf = device.createBuffer({
++          label: `fx:${opts.name}:params`,
++          size: block.byteSize,
++          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
++        })
++        device.queue.writeBuffer(paramsBuf, 0, block.pack())
++        state.paramsBuf = paramsBuf
++        const frags = Array.isArray(opts.fragment)
++          ? (opts.fragment as readonly Fragment[])
++          : [opts.fragment as Fragment]
++        state.stages = frags.map((f, i) =>
++          buildStage(opts.name, f, generic, paramsBuf, i)
++        )
++        passes.push(state)
++        if (state.enabled) {
++          graph.requestFrame()
++        }
++      }
++      return passHandle<S>(
++        state,
++        () => graph.requestFrame(),
++        () => {
++          const i = passes.indexOf(state)
++          if (i === -1) {
++            return
++          }
++          passes.splice(i, 1)
++          freePass(state)
++          state.enabled = false
++          if (passes.length === 0) {
++            releaseTargets()
++          }
++          graph.requestFrame()
++        }
++      )
++    },
++    destroy() {
++      if (destroyed) {
++        return
++      }
++      destroyed = true
++      tracker.unlisten()
++      removeHook()
++      graph.setPostChain(null)
++      for (const p of passes) {
++        freePass(p)
++        p.enabled = false
++      }
++      passes.length = 0
++      releaseTargets()
++      pointerBuf.destroy()
++    },
++    __override(o) {
++      override = o
++      graph.requestFrame()
++    }
++  }
++}
+diff --git a/src/fx/index.ts b/src/fx/index.ts
+new file mode 100644
+index 0000000..50e7093
+--- /dev/null
++++ b/src/fx/index.ts
+@@ -0,0 +1,40 @@
++// `compositor-gpu/fx`: the effects layer (docs/EFFECTS.md, src/fx/README.md).
++// Importing it does nothing; createEffects() is the only entry to DOM/GPU
++// work.
++import '../util/env'
++
++export {
++  createEffects,
++  type Effects,
++  type FxOverride,
++  type Pass,
++  type PassOptions
++} from './effects'
++export {
++  createParams,
++  type ParamBlock,
++  type ParamDef,
++  type ParamSchema,
++  type ParamType,
++  type ParamValues,
++  parseHex
++} from './params'
++export {
++  CLICKS,
++  POINTER_BYTES,
++  POINTER_WGSL,
++  type PointerOverride
++} from './pointer'
++export { type BlurOptions, type BlurSchema, blur } from './presets/blur'
++export {
++  type DisplaceOptions,
++  type DisplaceSchema,
++  displace
++} from './presets/displace'
++export {
++  EFFECT_BYTES,
++  EFFECT_WGSL,
++  type Fragment,
++  isTgpuFn,
++  type TgpuFnLike
++} from './shader'
+diff --git a/src/fx/params.ts b/src/fx/params.ts
+new file mode 100644
+index 0000000..5a2db68
+--- /dev/null
++++ b/src/fx/params.ts
+@@ -0,0 +1,291 @@
++// Params: a schema → a Proxy of plain numbers / float arrays, the WGSL
++// `struct Params` it implies, and a Float32Array packed in that struct's
++// uniform layout. See src/fx/README.md.
++
++export type ParamType = 'f32' | 'vec2' | 'vec3' | 'vec4' | 'color'
++
++export interface ParamDef {
++  type: ParamType
++  /** A number for f32; an array for vectors; '#rrggbb[aa]' or [r,g,b,a]
++   * for colour. */
++  default: number | readonly number[] | string
++  /** Metadata for UIs; writes are not clamped. */
++  min?: number
++  max?: number
++}
++
++export type ParamSchema = Record<string, ParamDef>
++
++/** The live object a schema exposes. Vectors and colours are arrays of
++ * floats (colours [r,g,b,a], sRGB-encoded, unpremultiplied); a colour also
++ * accepts a hex string on assignment (`Object.assign(p, { tint: '#f00' })`). */
++export type ParamValues<S extends ParamSchema> = {
++  -readonly [K in keyof S]: ParamValue<S[K]['type']>
++}
++
++/** number for f32, number[] otherwise (both for the ParamType union). */
++export type ParamValue<T extends ParamType> = T extends 'f32'
++  ? number
++  : number[]
++
++interface Field {
++  name: string
++  type: ParamType
++  /** Float offset into the packed block. */
++  offset: number
++  /** Components. */
++  n: number
++}
++
++const WGSL_TYPE: Record<ParamType, string> = {
++  f32: 'f32',
++  vec2: 'vec2f',
++  vec3: 'vec3f',
++  vec4: 'vec4f',
++  color: 'vec4f'
++}
++const COMPONENTS: Record<ParamType, number> = {
++  f32: 1,
++  vec2: 2,
++  vec3: 3,
++  vec4: 4,
++  color: 4
++}
++/** WGSL uniform alignment in bytes (vec3 aligns like vec4). */
++const ALIGN: Record<ParamType, number> = {
++  f32: 4,
++  vec2: 8,
++  vec3: 16,
++  vec4: 16,
++  color: 16
++}
++
++const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/
++
++/** '#rgb', '#rgba', '#rrggbb', '#rrggbbaa' → [r,g,b,a] in 0..1. */
++export function parseHex(hex: string): number[] | null {
++  const m = /^#([0-9a-f]{3,8})$/i.exec(hex.trim())
++  const h = m?.[1]
++  if (!h || ![3, 4, 6, 8].includes(h.length)) {
++    return null
++  }
++  const short = h.length <= 4
++  const out: number[] = []
++  for (let i = 0; i < (short ? h.length : h.length / 2); i++) {
++    const s = short ? (h[i] ?? '0').repeat(2) : h.slice(i * 2, i * 2 + 2)
++    out.push(Number.parseInt(s, 16) / 255)
++  }
++  if (out.length === 3) {
++    out.push(1)
++  }
++  return out
++}
++
++function toComponents(type: ParamType, v: unknown): number[] | null {
++  const n = COMPONENTS[type]
++  if (type === 'color' && typeof v === 'string') {
++    return parseHex(v)
++  }
++  if (typeof v === 'number') {
++    return n === 1 ? [v] : null
++  }
++  if (Array.isArray(v) || ArrayBuffer.isView(v)) {
++    const a = Array.from(v as ArrayLike<number>, Number)
++    if (type === 'color' && a.length === 3) {
++      a.push(1)
++    }
++    return a.length === n ? a : null
++  }
++  return null
++}
++
++export interface ParamBlock<S extends ParamSchema> {
++  readonly values: ParamValues<S>
++  /** `struct Params { ... }` in WGSL. */
++  readonly wgsl: string
++  /** Size of the uniform block, bytes (a multiple of 16). */
++  readonly byteSize: number
++  /** True after a write until pack(). */
++  dirty: boolean
++  /** The packed block (re-packed when dirty). */
++  pack(): Float32Array
++}
++
++/**
++ * Build the parameter block for `schema`. `onWrite` runs on every write
++ * that changes a value (including element writes on vector arrays).
++ * Throws on a name that isn't a WGSL identifier or a default that doesn't
++ * fit its type.
++ */
++export function createParams<S extends ParamSchema>(
++  schema: S,
++  onWrite: () => void
++): ParamBlock<S> {
++  const fields: Field[] = []
++  let bytes = 0
++  for (const [name, def] of Object.entries(schema)) {
++    if (!IDENT.test(name)) {
++      throw new Error(
++        `[compositor-gpu/fx] param name '${name}' is not a WGSL identifier`
++      )
++    }
++    const align = ALIGN[def.type]
++    bytes = Math.ceil(bytes / align) * align
++    fields.push({
++      name,
++      type: def.type,
++      offset: bytes / 4,
++      n: COMPONENTS[def.type]
++    })
++    bytes += COMPONENTS[def.type] * 4
++  }
++  // A uniform struct's size rounds up to its alignment; the binding is
++  // padded to 16 so an empty schema still has a valid buffer.
++  const byteSize = Math.max(16, Math.ceil(bytes / 16) * 16)
++  const data = new Float32Array(byteSize / 4)
++
++  const lines = fields.map(
++    (f) => `  ${f.name} : ${WGSL_TYPE[f.type]},  // offset ${f.offset * 4}`
++  )
++  if (lines.length === 0) {
++    lines.push('  _unused : f32,')
++  }
++  const wgsl = `struct Params {\n${lines.join('\n')}\n};\n`
++
++  const block = {
++    values: {} as ParamValues<S>,
++    wgsl,
++    byteSize,
++    dirty: true,
++    pack(): Float32Array {
++      if (block.dirty) {
++        for (const f of fields) {
++          const v = store[f.name]
++          if (typeof v === 'number') {
++            data[f.offset] = v
++          } else if (v) {
++            for (let i = 0; i < f.n; i++) {
++              data[f.offset + i] = v.raw[i] ?? 0
++            }
++          }
++        }
++        block.dirty = false
++      }
++      return data
++    }
++  }
++  const touch = (): void => {
++    block.dirty = true
++    onWrite()
++  }
++
++  interface Vec {
++    raw: number[]
++    proxy: number[]
++  }
++  const store: Record<string, number | Vec> = {}
++  const extra: Record<string | symbol, unknown> = {}
++  const byName = new Map(fields.map((f) => [f.name, f]))
++
++  const makeVec = (raw: number[]): Vec => {
++    // Element writes (`params.tint[3] = 0.5`, or a tween addressing
++    // indices) mark dirty too; other keys (a tween library's cache) pass
++    // through untouched.
++    const proxy = new Proxy(raw, {
++      set(target, key, value) {
++        if (typeof key === 'string' && /^\d+$/.test(key)) {
++          const i = Number(key)
++          if (i >= target.length) {
++            return true
++          }
++          const v = Number(value)
++          if (target[i] !== v) {
++            target[i] = v
++            touch()
++          }
++          return true
++        }
++        return Reflect.set(target, key, value)
++      }
++    })
++    return { raw, proxy }
++  }
++
++  for (const f of fields) {
++    const def = schema[f.name] as ParamDef
++    const c = toComponents(f.type, def.default)
++    if (!c) {
++      throw new Error(
++        `[compositor-gpu/fx] param '${f.name}': default doesn't fit ${f.type}`
++      )
++    }
++    store[f.name] = f.n === 1 ? (c[0] ?? 0) : makeVec(c)
++  }
++
++  block.values = new Proxy({} as ParamValues<S>, {
++    get(_t, key) {
++      if (typeof key === 'string' && byName.has(key)) {
++        const v = store[key]
++        return typeof v === 'number' ? v : v?.proxy
++      }
++      return extra[key]
++    },
++    set(_t, key, value) {
++      const f = typeof key === 'string' ? byName.get(key) : undefined
++      if (!f) {
++        extra[key] = value
++        return true
++      }
++      const c = toComponents(f.type, value)
++      if (!c) {
++        return true
++      }
++      const cur = store[f.name]
++      if (typeof cur === 'number') {
++        const v = c[0] ?? 0
++        if (v !== cur) {
++          store[f.name] = v
++          touch()
++        }
++      } else if (cur) {
++        let changed = false
++        for (let i = 0; i < f.n; i++) {
++          const v = c[i] ?? 0
++          if (cur.raw[i] !== v) {
++            cur.raw[i] = v
++            changed = true
++          }
++        }
++        if (changed) {
++          touch()
++        }
++      }
++      return true
++    },
++    has(_t, key) {
++      return (typeof key === 'string' && byName.has(key)) || key in extra
++    },
++    ownKeys() {
++      return [...byName.keys(), ...Reflect.ownKeys(extra)]
++    },
++    getOwnPropertyDescriptor(_t, key) {
++      if (typeof key === 'string' && byName.has(key)) {
++        return {
++          enumerable: true,
++          configurable: true,
++          writable: true,
++          value: block.values[key as keyof S]
++        }
++      }
++      return key in extra
++        ? {
++            enumerable: true,
++            configurable: true,
++            writable: true,
++            value: extra[key]
++          }
++        : undefined
++    }
++  })
++  return block
++}
+diff --git a/src/fx/pointer.ts b/src/fx/pointer.ts
+new file mode 100644
+index 0000000..d6fabbe
+--- /dev/null
++++ b/src/fx/pointer.ts
+@@ -0,0 +1,238 @@
++import type { PointerClick, PointerState } from '../types'
++
++// Pointer tracking for the effects layer: raw position (viewport + page),
++// smoothed velocity, down state, an eased follower and a ring of the last
++// CLICKS clicks. Uploaded as the `Pointer` uniform (group 2, binding 2):
++//
++//   struct Pointer {           // offset
++//     pos        : vec2f,      //   0  raw, viewport CSS px
++//     page       : vec2f,      //   8  raw, page CSS px
++//     vel        : vec2f,      //  16  raw velocity, CSS px/s
++//     follow     : vec2f,      //  24  follower, viewport CSS px
++//     follow_vel : vec2f,      //  32  follower velocity, CSS px/s
++//     down       : f32,        //  40  1 while a button is down
++//     seen       : f32,        //  44  1 after the first pointer event
++//     clicks_n   : f32,        //  48  valid entries in `clicks`
++//     _pad       : f32,        //  52
++//     _pad2      : vec2f,      //  56
++//     clicks     : array<vec4f, 8>, // 64  (x, y page CSS px, t s, _), newest first
++//   };                         // 192 bytes
++
++export const CLICKS = 8
++export const POINTER_BYTES = 192
++
++export const POINTER_WGSL = /* wgsl */ `
++struct Pointer {
++  pos        : vec2f,
++  page       : vec2f,
++  vel        : vec2f,
++  follow     : vec2f,
++  follow_vel : vec2f,
++  down       : f32,
++  seen       : f32,
++  clicks_n   : f32,
++  _pad       : f32,
++  _pad2      : vec2f,
++  clicks     : array<vec4f, ${CLICKS}>,
++};
++`
++
++/** Velocity smoothing time constant, s (about three 60 Hz frames). */
++const VEL_TAU = 0.05
++/** The follower is idle once within this many CSS px of the pointer. */
++const SETTLE_PX = 0.1
++
++/** Override for tests: fields given replace the tracked ones. */
++export interface PointerOverride {
++  x?: number
++  y?: number
++  down?: boolean
++  follow?: { x: number; y: number }
++  clicks?: PointerClick[]
++}
++
++export function emptyPointer(): PointerState {
++  return {
++    x: 0,
++    y: 0,
++    pageX: 0,
++    pageY: 0,
++    vx: 0,
++    vy: 0,
++    down: false,
++    seen: false,
++    follow: { x: 0, y: 0, vx: 0, vy: 0 },
++    ease: 0.12,
++    clicks: []
++  }
++}
++
++export class PointerTracker {
++  readonly state: PointerState = emptyPointer()
++  /** Latest event position, viewport CSS px. */
++  private rawX = 0
++  private rawY = 0
++  private lastX = 0
++  private lastY = 0
++  private readonly data = new Float32Array(POINTER_BYTES / 4)
++  private listening = false
++
++  /** `onInput` runs on every pointer event (the runtime requests a frame
++   * from it while an effect is enabled). */
++  constructor(private readonly onInput: () => void) {}
++
++  private readonly onMove = (e: PointerEvent): void => {
++    this.rawX = e.clientX
++    this.rawY = e.clientY
++    if (!this.state.seen) {
++      this.state.seen = true
++      this.lastX = this.rawX
++      this.lastY = this.rawY
++      this.state.x = this.rawX
++      this.state.y = this.rawY
++      this.state.follow.x = this.rawX
++      this.state.follow.y = this.rawY
++    }
++    this.onInput()
++  }
++
++  private readonly onDown = (e: PointerEvent): void => {
++    this.onMove(e)
++    this.state.down = true
++    const clicks = this.state.clicks
++    clicks.unshift({
++      x: e.clientX + window.scrollX,
++      y: e.clientY + window.scrollY,
++      t: performance.now() / 1000
++    })
++    if (clicks.length > CLICKS) {
++      clicks.length = CLICKS
++    }
++  }
++
++  private readonly onUp = (): void => {
++    this.state.down = false
++    this.onInput()
++  }
++
++  listen(): void {
++    if (this.listening || typeof window === 'undefined') {
++      return
++    }
++    this.listening = true
++    const o = { passive: true }
++    window.addEventListener('pointermove', this.onMove, o)
++    window.addEventListener('pointerdown', this.onDown, o)
++    window.addEventListener('pointerup', this.onUp, o)
++    window.addEventListener('pointercancel', this.onUp, o)
++    window.addEventListener('blur', this.onUp, o)
++  }
++
++  unlisten(): void {
++    if (!this.listening) {
++      return
++    }
++    this.listening = false
++    window.removeEventListener('pointermove', this.onMove)
++    window.removeEventListener('pointerdown', this.onDown)
++    window.removeEventListener('pointerup', this.onUp)
++    window.removeEventListener('pointercancel', this.onUp)
++    window.removeEventListener('blur', this.onUp)
++  }
++
++  /** Advance one frame of `dt` seconds at scroll (sx, sy). */
++  step(dt: number, sx: number, sy: number): void {
++    const s = this.state
++    s.x = this.rawX
++    s.y = this.rawY
++    s.pageX = s.x + sx
++    s.pageY = s.y + sy
++    if (dt > 0) {
++      // Exponential smoothing of the per-frame velocity.
++      const k = 1 - Math.exp(-dt / VEL_TAU)
++      s.vx += ((s.x - this.lastX) / dt - s.vx) * k
++      s.vy += ((s.y - this.lastY) / dt - s.vy) * k
++      // `ease` is per 60 Hz frame: the same fraction per 1/60 s at any
++      // frame rate.
++      const e = Math.min(Math.max(s.ease, 0), 1)
++      const f = 1 - (1 - e) ** (dt * 60)
++      const fx = s.follow.x
++      const fy = s.follow.y
++      s.follow.x += (s.x - fx) * f
++      s.follow.y += (s.y - fy) * f
++      s.follow.vx = (s.follow.x - fx) / dt
++      s.follow.vy = (s.follow.y - fy) / dt
++      if (!this.moving()) {
++        s.follow.x = s.x
++        s.follow.y = s.y
++        s.follow.vx = 0
++        s.follow.vy = 0
++      }
++    }
++    this.lastX = s.x
++    this.lastY = s.y
++  }
++
++  /** The follower is still catching up, or velocity hasn't decayed. */
++  moving(): boolean {
++    const s = this.state
++    return (
++      Math.hypot(s.x - s.follow.x, s.y - s.follow.y) > SETTLE_PX ||
++      Math.hypot(s.vx, s.vy) > 1
++    )
++  }
++
++  /** Pack `p` (the tracked state, or an override applied to it) into the
++   * uniform layout above. */
++  pack(p: PointerState): Float32Array {
++    const d = this.data
++    d[0] = p.x
++    d[1] = p.y
++    d[2] = p.pageX
++    d[3] = p.pageY
++    d[4] = p.vx
++    d[5] = p.vy
++    d[6] = p.follow.x
++    d[7] = p.follow.y
++    d[8] = p.follow.vx
++    d[9] = p.follow.vy
++    d[10] = p.down ? 1 : 0
++    d[11] = p.seen ? 1 : 0
++    d[12] = Math.min(p.clicks.length, CLICKS)
++    d.fill(0, 13, 16)
++    for (let i = 0; i < CLICKS; i++) {
++      const c = p.clicks[i]
++      d[16 + i * 4] = c?.x ?? 0
++      d[17 + i * 4] = c?.y ?? 0
++      d[18 + i * 4] = c?.t ?? 0
++      d[19 + i * 4] = 0
++    }
++    return d
++  }
++}
++
++/** `base` with `o`'s fields applied (velocities zero: an override is a
++ * still pointer). */
++export function applyOverride(
++  base: PointerState,
++  o: PointerOverride,
++  sx: number,
++  sy: number
++): PointerState {
++  const x = o.x ?? base.x
++  const y = o.y ?? base.y
++  const follow = o.follow ?? { x, y }
++  return {
++    ...base,
++    x,
++    y,
++    pageX: x + sx,
++    pageY: y + sy,
++    vx: 0,
++    vy: 0,
++    down: o.down ?? base.down,
++    seen: true,
++    follow: { x: follow.x, y: follow.y, vx: 0, vy: 0 },
++    clicks: o.clicks ?? base.clicks
++  }
++}
+diff --git a/src/fx/presets/blur.ts b/src/fx/presets/blur.ts
+new file mode 100644
+index 0000000..953fb2e
+--- /dev/null
++++ b/src/fx/presets/blur.ts
+@@ -0,0 +1,57 @@
++import type { Effects, Pass } from '../effects'
++
++// Separable Gaussian blur: a horizontal then a vertical stage sharing one
++// `radius` param (CSS px, the kernel's reach; σ = radius / 3). Taps are
++// capped at MAX_TAPS per side and spread evenly past that, with the
++// sampler's bilinear filter covering the gaps.
++
++const MAX_TAPS = 32
++
++const axis = (dir: string): string => /* wgsl */ `
++fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
++  let r = params.radius * fx.dpr;
++  if (r < 0.5) {
++    return sample(uv);
++  }
++  let sigma = r / 3.0;
++  let n = min(i32(ceil(r)), ${MAX_TAPS});
++  let step = r / f32(n);
++  let d = ${dir} * fx.texel * step;
++  var acc = vec4f(0.0);
++  var wsum = 0.0;
++  for (var i = -n; i <= n; i++) {
++    let x = f32(i) * step;
++    let w = exp(-0.5 * x * x / (sigma * sigma));
++    acc += w * sample(uv + d * f32(i));
++    wsum += w;
++  }
++  return acc / wsum;
++}
++`
++
++const schema = {
++  radius: { type: 'f32', default: 8, min: 0, max: 64 }
++} as const
++
++export type BlurSchema = typeof schema
++
++export interface BlurOptions {
++  /** CSS px. Default 8. */
++  radius?: number
++  enabled?: boolean
++  name?: string
++}
++
++export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
++  const pass = fx.pass({
++    name: opts.name ?? 'blur',
++    fragment: [axis('vec2f(1.0, 0.0)'), axis('vec2f(0.0, 1.0)')],
++    params: schema,
++    radius: (p) => p.radius,
++    enabled: opts.enabled
++  })
++  if (opts.radius !== undefined) {
++    pass.params.radius = opts.radius
++  }
++  return pass
++}
+diff --git a/src/fx/presets/displace.ts b/src/fx/presets/displace.ts
+new file mode 100644
+index 0000000..a3a95a8
+--- /dev/null
++++ b/src/fx/presets/displace.ts
+@@ -0,0 +1,94 @@
++import type { Effects, Pass } from '../effects'
++
++// UV displacement by animated value noise: each pixel samples the scene
++// `strength` CSS px away along a noise vector of feature size `scale` CSS
++// px, drifting at `speed` (scale units per second). With
++// `pointerStrength > 0` the eased pointer follower also magnifies the
++// scene within `pointerRadius` CSS px of it.
++
++const FRAGMENT = /* wgsl */ `
++fn dsp_hash(p : vec2f) -> f32 {
++  let q = fract(p * vec2f(127.1, 311.7));
++  return fract(sin(dot(q, vec2f(12.9898, 78.233)) + q.x * q.y) * 43758.5453);
++}
++
++fn dsp_noise(p : vec2f) -> f32 {
++  let i = floor(p);
++  let f = fract(p);
++  let u = f * f * (3.0 - 2.0 * f);
++  let a = dsp_hash(i);
++  let b = dsp_hash(i + vec2f(1.0, 0.0));
++  let c = dsp_hash(i + vec2f(0.0, 1.0));
++  let d = dsp_hash(i + vec2f(1.0, 1.0));
++  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
++}
++
++fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
++  // CSS px within the viewport, so features keep their size at any dpr.
++  let px = uv * fx.viewport / fx.dpr;
++  let p = px / max(params.scale, 1.0) + vec2f(fx.time * params.speed);
++  let n = vec2f(dsp_noise(p), dsp_noise(p + vec2f(17.3, 9.1))) * 2.0 - 1.0;
++  var off = n * params.strength;
++  if (params.pointerStrength > 0.0 && pointer.seen > 0.5) {
++    // A lens: the shift grows with distance from the follower and fades
++    // out by pointerRadius (peak about 0.26 * pointerStrength), so the
++    // centre has no fold.
++    let r = max(params.pointerRadius, 1.0);
++    let d = px - pointer.follow;
++    let k = 1.0 - smoothstep(0.0, r, length(d));
++    off += d * k * params.pointerStrength / r;
++  }
++  return sample(uv - off * fx.dpr * fx.texel);
++}
++`
++
++const schema = {
++  strength: { type: 'f32', default: 6, min: 0, max: 40 },
++  scale: { type: 'f32', default: 80, min: 4, max: 400 },
++  speed: { type: 'f32', default: 0.3, min: 0, max: 4 },
++  pointerStrength: { type: 'f32', default: 0, min: 0, max: 80 },
++  pointerRadius: { type: 'f32', default: 160, min: 8, max: 600 }
++} as const
++
++export type DisplaceSchema = typeof schema
++
++export interface DisplaceOptions {
++  strength?: number
++  scale?: number
++  speed?: number
++  pointerStrength?: number
++  pointerRadius?: number
++  enabled?: boolean
++  /** Default true: the noise drifts with time. */
++  continuous?: boolean
++  name?: string
++}
++
++export function displace(
++  fx: Effects,
++  opts: DisplaceOptions = {}
++): Pass<DisplaceSchema> {
++  const pass = fx.pass({
++    name: opts.name ?? 'displace',
++    fragment: FRAGMENT,
++    params: schema,
++    // Samples reach at most strength + pointerStrength CSS px.
++    radius: (p) => p.strength + p.pointerStrength,
++    enabled: opts.enabled,
++    continuous: opts.continuous ?? true
++  })
++  const p = pass.params
++  for (const k of [
++    'strength',
++    'scale',
++    'speed',
++    'pointerStrength',
++    'pointerRadius'
++  ] as const) {
++    const v = opts[k]
++    if (v !== undefined) {
++      p[k] = v
++    }
++  }
++  return pass
++}
+diff --git a/src/fx/shader.ts b/src/fx/shader.ts
+new file mode 100644
+index 0000000..d2b7c10
+--- /dev/null
++++ b/src/fx/shader.ts
+@@ -0,0 +1,156 @@
++import tgpu from 'typegpu'
++import { FRAME_WGSL } from '../gpu/frame'
++import { log } from '../util/log'
++import { POINTER_WGSL } from './pointer'
++
++// Shader assembly for fullscreen passes. The author supplies
++//   fn effect(uv: vec2f, src: texture_2d<f32>, smp: sampler) -> vec4f
++// (as WGSL, or a tgpu.fn with that signature); this file wraps it with the
++// Frame/Effect/Params/Pointer declarations, the bindings and the entry
++// points. The contract is documented in src/fx/README.md.
++
++/** Bytes in the Effect uniform (see EFFECT_WGSL). */
++export const EFFECT_BYTES = 80
++
++export const EFFECT_WGSL = /* wgsl */ `
++struct Effect {
++  time       : f32,    // page clock, s
++  elapsed    : f32,    // s since this effect was last enabled
++  viewport   : vec2f,  // visible viewport, device px
++  texel      : vec2f,  // one device px in uv (1 / viewport)
++  scroll     : vec2f,  // the viewport's document-space origin, CSS px
++  dpr        : f32,
++  _pad       : f32,
++  origin     : vec2f,  // runtime: viewport top-left in canvas device px
++  src_origin : vec2f,  // runtime: src texel (0,0) in canvas device px
++  src_size   : vec2f,  // runtime: src's valid region, device px
++  dst_origin : vec2f,  // runtime: target texel (0,0) in canvas device px
++  src_texel  : vec2f,  // runtime: 1 / src texture size
++};
++`
++
++const BINDINGS_WGSL = /* wgsl */ `
++@group(1) @binding(0) var fx_src : texture_2d<f32>;
++@group(1) @binding(1) var fx_smp : sampler;
++@group(2) @binding(0) var<uniform> fx : Effect;
++@group(2) @binding(1) var<uniform> params : Params;
++@group(2) @binding(2) var<uniform> pointer : Pointer;
++
++// uv over the visible viewport -> texture coordinates of the source,
++// clamped half a texel inside its valid region (edge texels repeat; a
++// pooled texture can be larger than what was drawn into it).
++fn src_uv(uv : vec2f) -> vec2f {
++  let p = fx.origin + uv * fx.viewport - fx.src_origin;
++  return clamp(p, vec2f(0.5), fx.src_size - 0.5) * fx.src_texel;
++}
++
++// The source (the scene, or the previous stage), premultiplied, at uv.
++// Level 0 with no derivatives, so it is legal in non-uniform control flow.
++fn sample(uv : vec2f) -> vec4f {
++  return textureSampleLevel(fx_src, fx_smp, src_uv(uv), 0.0);
++}
++
++// Viewport CSS px -> uv (the pointer's pos/follow).
++fn viewport_to_uv(p : vec2f) -> vec2f {
++  return p * fx.dpr / fx.viewport;
++}
++
++// Page (document) CSS px -> uv (pointer.page, clicks).
++fn page_to_uv(p : vec2f) -> vec2f {
++  return (p - fx.scroll) * fx.dpr / fx.viewport;
++}
++`
++
++const ENTRY_WGSL = /* wgsl */ `
++@vertex
++fn fx_vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
++  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
++  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
++}
++
++@fragment
++fn fx_fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
++  let uv = (pos.xy + fx.dst_origin - fx.origin) / fx.viewport;
++  return effect(uv, fx_src, fx_smp);
++}
++`
++
++const PASSTHROUGH = /* wgsl */ `
++fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
++  return sample(uv);
++}
++`
++
++/** The shape of a TypeGPU function this module accepts (`tgpu.fn`). */
++export interface TgpuFnLike {
++  readonly resourceType: 'function'
++  readonly shell: {
++    readonly argTypes: readonly { readonly type: string }[]
++    readonly returnType: { readonly type: string }
++  }
++}
++
++/** A Pass fragment: WGSL defining `effect`, or a `tgpu.fn`. */
++export type Fragment = string | TgpuFnLike
++
++export function isTgpuFn(f: unknown): f is TgpuFnLike {
++  if ((typeof f !== 'function' && typeof f !== 'object') || f === null) {
++    return false
++  }
++  const o = f as Partial<TgpuFnLike>
++  return o.resourceType === 'function' && Array.isArray(o.shell?.argTypes)
++}
++
++const SIGNATURE = ['vec2f', 'texture_2d', 'sampler']
++
++/**
++ * WGSL defining `fn effect` for `fragment`. A tgpu.fn is resolved by
++ * TypeGPU behind a wrapper `effect` that calls it; it must take
++ * (vec2f, texture_2d<f32>, sampler) and return vec4f. Null (and an
++ * error logged under `name`) when it doesn't fit or fails to resolve.
++ */
++export function effectSource(fragment: Fragment, name: string): string | null {
++  if (typeof fragment === 'string') {
++    return fragment
++  }
++  if (!isTgpuFn(fragment)) {
++    log.error(`fx:${name}: fragment is neither WGSL nor a tgpu.fn`)
++    return null
++  }
++  const args = fragment.shell.argTypes.map((t) => t.type)
++  const ok =
++    args.length === 3 &&
++    args.every((t, i) => t === SIGNATURE[i]) &&
++    fragment.shell.returnType.type === 'vec4f'
++  if (!ok) {
++    log.error(
++      `fx:${name}: tgpu.fn must be (vec2f, texture2d, sampler) -> vec4f, ` +
++        `got (${args.join(', ')}) -> ${fragment.shell.returnType.type}`
++    )
++    return null
++  }
++  try {
++    return tgpu.resolve({
++      template:
++        'fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) ' +
++        '-> vec4f { return fx_user(uv, src, smp); }',
++      externals: { fx_user: fragment }
++    })
++  } catch (e) {
++    log.error(`fx:${name}: tgpu.resolve failed:`, (e as Error).message)
++    return null
++  }
++}
++
++/** The complete module source for one stage. */
++export function stageSource(effect: string | null, paramsWgsl: string): string {
++  return [
++    FRAME_WGSL,
++    EFFECT_WGSL,
++    paramsWgsl,
++    POINTER_WGSL,
++    BINDINGS_WGSL,
++    effect ?? PASSTHROUGH,
++    ENTRY_WGSL
++  ].join('\n')
++}
 diff --git a/src/gpu/frame.ts b/src/gpu/frame.ts
 index 177f115..8bcf245 100644
 --- a/src/gpu/frame.ts
@@ -2631,6 +5297,344 @@ index 177f115..8bcf245 100644
    /** Re-pack instance buffers from the (dirty) scene. */
    upload(scene: Scene): void
    /**
+diff --git a/src/gpu/graph.ts b/src/gpu/graph.ts
+new file mode 100644
+index 0000000..cecb723
+--- /dev/null
++++ b/src/gpu/graph.ts
+@@ -0,0 +1,142 @@
++import type { FrameContext } from '../types'
++import { reportShaderErrors } from '../util/log'
++import { FRAME_WGSL, type Shared } from './frame'
++
++// The render-graph hook (docs/EFFECTS.md, core extension points 1 and 4):
++// what the effects layer (`compositor-gpu/fx`) plugs into. With no post
++// chain, or one whose active() is false, Renderer.render() draws straight
++// to the swapchain as before. Otherwise the scene renders into an
++// offscreen texture the size of the canvas, the chain records its stages,
++// and the canvas pass copies the scene through and lets the chain's last
++// stage overwrite `rect` (the visible viewport plus the chain's radius).
++
++/** A rect in canvas device px. */
++export interface DeviceRect {
++  x: number
++  y: number
++  width: number
++  height: number
++}
++
++/** What the post chain gets each frame it runs. */
++export interface PostFrame {
++  encoder: GPUCommandEncoder
++  /** The scene, rendered offscreen at the canvas's device size. */
++  scene: GPUTextureView
++  sceneWidth: number
++  sceneHeight: number
++  /** The visible viewport within the canvas, device px (snapped to whole
++   * pixels and clamped to the canvas). */
++  viewport: DeviceRect
++  /** `viewport` grown by the chain's radius() (× dpr), clamped: the region
++   * the chain writes. Outside it the canvas shows the scene unchanged. */
++  rect: DeviceRect
++  ctx: FrameContext
++  dpr: number
++}
++
++/** A post-processing chain run between the scene and the canvas. */
++export interface PostChain {
++  /** False: the renderer takes the direct path this frame. */
++  active(): boolean
++  /** Largest sampling radius of the active stages, CSS px. */
++  radius(): number
++  /** Record every stage except the last, into the chain's own targets. */
++  encode(frame: PostFrame): void
++  /** Draw the last stage into the canvas pass `rp` (bind group 0 is the
++   * shared Frame; the scissor is `frame.rect`). Must write without
++   * blending: the scene copy is already under it. */
++  composite(rp: GPURenderPassEncoder, frame: PostFrame): void
++}
++
++/** Per-frame participant registered through RenderGraph.addHook. */
++export interface FrameHook {
++  /** After the DOM reads and re-anchoring, before onGlyph/onFrame and
++   * render. May fill `ctx.pointer`. */
++  beforeFrame?(ctx: FrameContext): void
++  /** True keeps the rAF loop running after this frame. */
++  keepAlive?(): boolean
++}
++
++/** The compositor's extension surface for the effects layer. */
++export interface RenderGraph {
++  readonly shared: Shared
++  /** Install (or clear, with null) the post chain. Requests a frame. */
++  setPostChain(chain: PostChain | null): void
++  /** Register a frame hook; returns its removal function. */
++  addHook(hook: FrameHook): () => void
++  /** Schedule a frame (coalesced; a no-op while the compositor is
++   * stopped). */
++  requestFrame(): void
++}
++
++const COPY_WGSL = /* wgsl */ `
++${FRAME_WGSL}
++@group(1) @binding(0) var src : texture_2d<f32>;
++
++@vertex
++fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
++  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
++  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
++}
++
++@fragment
++fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
++  return textureLoad(src, vec2i(pos.xy), 0);
++}
++`
++
++/** Copies a same-size texture onto the current pass texel for texel (a
++ * fullscreen triangle, no blending). */
++export class CopyThrough {
++  private readonly pipeline: GPURenderPipeline
++  private readonly layout: GPUBindGroupLayout
++  private bindGroup: GPUBindGroup | null = null
++  private view: GPUTextureView | null = null
++
++  constructor(private readonly shared: Shared) {
++    const { device, format, frameLayout } = shared
++    this.layout = device.createBindGroupLayout({
++      entries: [
++        {
++          binding: 0,
++          visibility: GPUShaderStage.FRAGMENT,
++          texture: { sampleType: 'float' }
++        }
++      ]
++    })
++    const module = device.createShaderModule({
++      label: 'copy-through',
++      code: COPY_WGSL
++    })
++    reportShaderErrors(module, 'copy-through')
++    this.pipeline = device.createRenderPipeline({
++      label: 'copy-through',
++      layout: device.createPipelineLayout({
++        bindGroupLayouts: [frameLayout, this.layout]
++      }),
++      vertex: { module, entryPoint: 'vs' },
++      fragment: { module, entryPoint: 'fs', targets: [{ format }] },
++      primitive: { topology: 'triangle-list' }
++    })
++  }
++
++  draw(rp: GPURenderPassEncoder, view: GPUTextureView): void {
++    if (view !== this.view || !this.bindGroup) {
++      this.view = view
++      this.bindGroup = this.shared.device.createBindGroup({
++        layout: this.layout,
++        entries: [{ binding: 0, resource: view }]
++      })
++    }
++    rp.setPipeline(this.pipeline)
++    rp.setBindGroup(1, this.bindGroup)
++    rp.draw(3)
++  }
++
++  /** Drop the cached bind group (its texture is going away). */
++  release(): void {
++    this.bindGroup = null
++    this.view = null
++  }
++}
+diff --git a/src/gpu/renderer.ts b/src/gpu/renderer.ts
+index c1791a9..643ad48 100644
+--- a/src/gpu/renderer.ts
++++ b/src/gpu/renderer.ts
+@@ -5,6 +5,12 @@ import type { FrameContext, Layer } from '../types'
+ import { GroupCompositor, type GroupTarget } from './composite'
+ import type { GpuContext } from './device'
+ import { FRAME_BYTES, type RenderPass, type Shared } from './frame'
++import {
++  CopyThrough,
++  type DeviceRect,
++  type PostChain,
++  type PostFrame
++} from './graph'
+ 
+ interface FrameSlot {
+   buffer: GPUBuffer
+@@ -87,6 +93,13 @@ export class Renderer {
+    * (sibling groups need distinct buffers: writeBuffer lands before
+    * submit). Reused across frames. */
+   private readonly groupFrames: FrameSlot[] = []
++  /** The effects layer's post chain (gpu/graph.ts). While it is active the
++   * scene renders into `sceneTexture` and the chain runs before the canvas
++   * composite; otherwise render() draws straight to the swapchain. */
++  postChain: PostChain | null = null
++  private sceneTexture: GPUTexture | null = null
++  private sceneView: GPUTextureView | null = null
++  private copy: CopyThrough | null = null
+ 
+   constructor(private readonly gpu: GpuContext) {
+     this.device = gpu.device
+@@ -204,8 +217,13 @@ export class Renderer {
+     const encodeStart = performance.now()
+     const encoder = this.device.createCommandEncoder()
+     const texture = this.gpu.context.getCurrentTexture()
++    const canvasView = texture.createView({ format: this.gpu.viewFormat })
++    const chain = this.postChain?.active() ? this.postChain : null
++    if (!chain && this.sceneTexture) {
++      this.releaseScene()
++    }
+     const main: Target = {
+-      view: texture.createView({ format: this.gpu.viewFormat }),
++      view: chain ? this.sceneTarget(texture) : canvasView,
+       bindGroup: this.shared.frameBindGroup,
+       ox: ctx.canvasX,
+       oy: ctx.canvasY,
+@@ -271,11 +289,136 @@ export class Renderer {
+     this.lastGroups = groups
+     this.lastDraws = draws
+     rp.end()
++    if (chain && this.sceneView) {
++      this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
++    }
+     this.composite.flush()
+     this.device.queue.submit([encoder.finish()])
+     this.lastEncodeMs = performance.now() - encodeStart
+   }
+ 
++  /** The offscreen scene texture for the post path, re-created when the
++   * canvas size changes. */
++  private sceneTarget(canvas: GPUTexture): GPUTextureView {
++    const t = this.sceneTexture
++    if (t && t.width === canvas.width && t.height === canvas.height) {
++      return this.sceneView ?? t.createView()
++    }
++    this.releaseScene()
++    const texture = this.device.createTexture({
++      label: 'post-scene',
++      size: { width: canvas.width, height: canvas.height },
++      format: this.shared.format,
++      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
++    })
++    this.sceneTexture = texture
++    this.sceneView = texture.createView()
++    return this.sceneView
++  }
++
++  private releaseScene(): void {
++    this.sceneTexture?.destroy()
++    this.sceneTexture = null
++    this.sceneView = null
++    this.copy?.release()
++  }
++
++  /**
++   * The post path's tail: let the chain record its offscreen stages, then
++   * one canvas pass that copies the scene through and has the chain's last
++   * stage overwrite the visible viewport grown by the chain's radius.
++   */
++  private runPost(
++    chain: PostChain,
++    encoder: GPUCommandEncoder,
++    canvasView: GPUTextureView,
++    texture: GPUTexture,
++    ctx: FrameContext,
++    dpr: number
++  ): void {
++    const scene = this.sceneView
++    if (!scene) {
++      return
++    }
++    const W = texture.width
++    const H = texture.height
++    const sx = ctx.canvasWidth > 0 ? W / ctx.canvasWidth : dpr
++    const sy = ctx.canvasHeight > 0 ? H / ctx.canvasHeight : dpr
++    const span = (a: number, b: number, s: number, max: number): number[] => [
++      clamp(Math.floor(a * s), max),
++      clamp(Math.ceil(b * s), max)
++    ]
++    const [vx0 = 0, vx1 = 0] = span(
++      ctx.scrollX - ctx.canvasX,
++      ctx.scrollX - ctx.canvasX + ctx.width,
++      sx,
++      W
++    )
++    const [vy0 = 0, vy1 = 0] = span(
++      ctx.scrollY - ctx.canvasY,
++      ctx.scrollY - ctx.canvasY + ctx.height,
++      sy,
++      H
++    )
++    const viewport: DeviceRect = {
++      x: vx0,
++      y: vy0,
++      width: vx1 - vx0,
++      height: vy1 - vy0
++    }
++    const r = Math.max(0, chain.radius())
++    const rx = Math.ceil(r * sx)
++    const ry = Math.ceil(r * sy)
++    const x0 = clamp(vx0 - rx, W)
++    const y0 = clamp(vy0 - ry, H)
++    const rect: DeviceRect = {
++      x: x0,
++      y: y0,
++      width: clamp(vx1 + rx, W) - x0,
++      height: clamp(vy1 + ry, H) - y0
++    }
++    const frame: PostFrame = {
++      encoder,
++      scene,
++      sceneWidth: W,
++      sceneHeight: H,
++      viewport,
++      rect,
++      ctx,
++      dpr
++    }
++    const live = viewport.width > 0 && viewport.height > 0
++    if (live) {
++      chain.encode(frame)
++    }
++    this.copy ??= new CopyThrough(this.shared)
++    const rp = this.beginPassOn(encoder, canvasView)
++    this.copy.draw(rp, scene)
++    if (live) {
++      rp.setScissorRect(rect.x, rect.y, rect.width, rect.height)
++      chain.composite(rp, frame)
++    }
++    rp.end()
++  }
++
++  private beginPassOn(
++    encoder: GPUCommandEncoder,
++    view: GPUTextureView
++  ): GPURenderPassEncoder {
++    const rp = encoder.beginRenderPass({
++      colorAttachments: [
++        {
++          view,
++          clearValue: { r: 0, g: 0, b: 0, a: 0 },
++          loadOp: 'clear',
++          storeOp: 'store'
++        }
++      ]
++    })
++    rp.setBindGroup(0, this.shared.frameBindGroup)
++    return rp
++  }
++
+   /**
+    * Allocate the offscreen target for `g` inside `parent`: the group's
+    * bounds (padded 1 CSS px for AA fringes) clipped to the parent target
+@@ -363,5 +506,6 @@ export class Renderer {
+       f.buffer.destroy()
+     }
+     this.composite.destroy()
++    this.releaseScene()
+   }
+ }
 diff --git a/src/images/imageRenderer.ts b/src/images/imageRenderer.ts
 index 974cb95..234886b 100644
 --- a/src/images/imageRenderer.ts
@@ -2790,6 +5794,34 @@ index 974cb95..234886b 100644
    }
  
    if (rec.objectFit === 'fill') {
+diff --git a/src/index.ts b/src/index.ts
+index e2e520c..5e33c90 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,6 +1,14 @@
+ import './util/env'
+ 
+ export { createCompositor } from './compositor'
++export { FRAME_BYTES, FRAME_WGSL, type Shared } from './gpu/frame'
++export type {
++  DeviceRect,
++  FrameHook,
++  PostChain,
++  PostFrame,
++  RenderGraph
++} from './gpu/graph'
+ export type {
+   BoxRecord,
+   Glyph,
+@@ -20,5 +28,7 @@ export type {
+   FontDescriptor,
+   FrameContext,
+   Layer,
+-  Mode
++  Mode,
++  PointerClick,
++  PointerState
+ } from './types'
 diff --git a/src/scene/batches.ts b/src/scene/batches.ts
 index 2196d84..2fef2b3 100644
 --- a/src/scene/batches.ts
@@ -3003,16 +6035,17 @@ index a6645b8..3ae8b8f 100644
    }
    if (transformable && hasTransform(s)) {
 diff --git a/src/types.ts b/src/types.ts
-index 3224a4a..9580564 100644
+index 3224a4a..3457460 100644
 --- a/src/types.ts
 +++ b/src/types.ts
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  import type { SyncDiagnostics } from './dom/observer'
 +import type { TextReadStats } from './dom/textRuns'
++import type { RenderGraph } from './gpu/graph'
  import type { Glyph } from './scene/records'
  
  /** Identifies a registered font face for per-run resolution. */
-@@ -8,7 +9,7 @@ export interface FontDescriptor {
+@@ -8,7 +10,7 @@ export interface FontDescriptor {
    italic?: boolean
  }
  
@@ -3021,7 +6054,46 @@ index 3224a4a..9580564 100644
  export type Mode = 'overlay' | 'replace'
  export type Fallback = 'passthrough' | 'throw'
  
-@@ -37,7 +38,8 @@ export interface CompositorOptions {
+@@ -30,6 +32,38 @@ export interface FrameContext {
+   /** CSS px size of the canvas. */
+   canvasWidth: number
+   canvasHeight: number
++  /** Pointer state, filled in by the effects layer (`compositor-gpu/fx`)
++   * when it is installed; null otherwise. */
++  pointer: PointerState | null
++}
++
++/** One recorded click: page (document) CSS px and the page clock, s. */
++export interface PointerClick {
++  x: number
++  y: number
++  t: number
++}
++
++/** Pointer state as tracked by `compositor-gpu/fx` (src/fx/pointer.ts). */
++export interface PointerState {
++  /** Raw position, viewport CSS px. */
++  x: number
++  y: number
++  /** Raw position, page (document) CSS px. */
++  pageX: number
++  pageY: number
++  /** Raw velocity, CSS px/s, smoothed over the last few frames. */
++  vx: number
++  vy: number
++  down: boolean
++  /** False until the first pointer event. */
++  seen: boolean
++  /** Eased follower: viewport CSS px and CSS px/s. */
++  follow: { x: number; y: number; vx: number; vy: number }
++  /** Follower ease per 60 Hz frame (0..1, default 0.12). Writable. */
++  ease: number
++  /** The last 8 clicks, most recent first. */
++  clicks: PointerClick[]
+ }
+ 
+ export interface CompositorOptions {
+@@ -37,7 +71,8 @@ export interface CompositorOptions {
    root?: HTMLElement
    /** 'overlay' paints over the page; 'replace' hides DOM paint, keeps a11y. */
    mode?: Mode
@@ -3031,7 +6103,7 @@ index 3224a4a..9580564 100644
    layers?: Layer[]
    /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
    hideSource?: boolean
-@@ -54,6 +56,13 @@ export interface CompositorOptions {
+@@ -54,6 +89,13 @@ export interface CompositorOptions {
     * when the viewport leaves it; a larger margin means fewer re-anchors
     * and a larger canvas. */
    canvasMargin?: number
@@ -3045,7 +6117,7 @@ index 3224a4a..9580564 100644
    /** Verbose logging. */
    debug?: boolean
    /** Per-glyph hook, called each frame before draw. Mutate glyph.offset here. */
-@@ -67,6 +76,8 @@ export interface CompositorStats {
+@@ -67,6 +109,8 @@ export interface CompositorStats {
    boxes: number
    images: number
    glyphs: number
@@ -3054,7 +6126,7 @@ index 3224a4a..9580564 100644
    /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
    fallback: number
    /** Up to 12 distinct fallback graphemes: `"text" family weight reason`
-@@ -78,7 +89,7 @@ export interface CompositorStats {
+@@ -78,7 +122,7 @@ export interface CompositorStats {
    ligatures: number
    /** Slug faces registered (static + variable sources). */
    faces: number
@@ -3063,7 +6135,7 @@ index 3224a4a..9580564 100644
    uploads: number
    /** Draw batches issued in the most recent frame. */
    batches: number
-@@ -98,6 +109,10 @@ export interface CompositorStats {
+@@ -98,6 +142,10 @@ export interface CompositorStats {
     * means something on the page invalidates the mirror every frame; put
     * `data-gpu-ignore` on it if it isn't meant to be mirrored. */
    sync: SyncDiagnostics
@@ -3074,8 +6146,314 @@ index 3224a4a..9580564 100644
    /** Wall time of the last DOM read (full or partial), ms. */
    readMs: number
    /** Wall time spent in pass uploads in the most recent render, ms. */
+@@ -135,4 +183,7 @@ export interface Compositor {
+   readonly canvas: HTMLCanvasElement | null
+   /** Live counts + fps, for debug overlays. */
+   stats(): CompositorStats
++  /** Extension surface for `compositor-gpu/fx` (gpu/graph.ts); null when
++   * inert. */
++  readonly graph: RenderGraph | null
+ }
+diff --git a/test/fx/run.ts b/test/fx/run.ts
+new file mode 100644
+index 0000000..b921d4b
+--- /dev/null
++++ b/test/fx/run.ts
+@@ -0,0 +1,292 @@
++/// <reference path="../../playground/fx.d.ts" />
++// Effects harness: loads playground/fx.html?vr (time and pointer pinned via
++// fx.__override), captures each `section[data-vr]` GPU-only with its
++// effect state, and diffs against local goldens (regression gate 0.5%;
++// `--update` rewrites them; they are GPU-specific and gitignored).
++//
++//   fx-off            effects installed, none enabled
++//   fx-tgpu           the fx-off section through a tgpu.fn fragment
++//   fx-blur           blur enabled
++//   fx-blur-scissor   blur enabled, compositor stopped, page scrolled half a
++//                     viewport: the lower half shows canvas that was off the
++//                     viewport when the chain ran, so it must be sharp
++//   fx-displace       displace enabled
++//   fx-blur-then-off  captured off, blur on (`-on`), then off again: the
++//                     last capture must equal the first exactly
++//
++// Usage: npm run test:fx [-- --update] [-- --only fx-blur]
++import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
++import { dirname, resolve } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import pixelmatch from 'pixelmatch'
++import type { Browser, Page } from 'playwright'
++import { PNG } from 'pngjs'
++import { createServer, type ViteDevServer } from 'vite'
++import { launchWithFallback } from '../lib/browser'
++
++const here = dirname(fileURLToPath(import.meta.url))
++const root = resolve(here, '../..')
++const outDir = resolve(here, 'out')
++const goldenDir = resolve(here, 'golden')
++mkdirSync(outDir, { recursive: true })
++mkdirSync(goldenDir, { recursive: true })
++
++const VW = 1280
++const VH = 900
++
++type Effect = 'none' | 'blur' | 'displace' | 'tgpu'
++
++interface Result {
++  name: string
++  regressionPct: number | null
++  status: 'ok' | 'fail' | 'missing' | 'no-golden' | 'updated'
++  note?: string
++}
++
++const args = process.argv.slice(2)
++const update = args.includes('--update')
++const onlyIdx = args.indexOf('--only')
++const only = onlyIdx === -1 ? null : (args[onlyIdx + 1] ?? null)
++
++function diffPng(a: PNG, b: PNG, outPath: string): number {
++  if (a.width !== b.width || a.height !== b.height) {
++    return 100
++  }
++  const out = new PNG({ width: a.width, height: a.height })
++  const n = pixelmatch(a.data, b.data, out.data, a.width, a.height, {
++    threshold: 0.12,
++    includeAA: true
++  })
++  writeFileSync(outPath, PNG.sync.write(out))
++  return (n / (a.width * a.height)) * 100
++}
++
++/** Pixels whose RGBA differ at all. */
++function exactDiff(a: PNG, b: PNG): number {
++  if (a.width !== b.width || a.height !== b.height) {
++    return Number.POSITIVE_INFINITY
++  }
++  let n = 0
++  for (let i = 0; i < a.data.length; i += 4) {
++    if (
++      a.data[i] !== b.data[i] ||
++      a.data[i + 1] !== b.data[i + 1] ||
++      a.data[i + 2] !== b.data[i + 2] ||
++      a.data[i + 3] !== b.data[i + 3]
++    ) {
++      n++
++    }
++  }
++  return n
++}
++
++async function setEffect(page: Page, effect: Effect): Promise<void> {
++  await page.evaluate(async (e) => {
++    const h = window.__fx
++    if (!h) {
++      return
++    }
++    h.blur.enabled = e === 'blur'
++    h.displace.enabled = e === 'displace'
++    h.tgpu.enabled = e === 'tgpu'
++    await h.raf2()
++    await h.raf2()
++  }, effect)
++}
++
++function setMode(page: Page, mode: 'dom' | 'gpu' | 'both'): Promise<void> {
++  return page.evaluate(async (m) => {
++    await window.__fx?.setMode(m)
++  }, mode)
++}
++
++async function sectionClip(
++  page: Page,
++  name: string
++): Promise<{ x: number; y: number; width: number; height: number } | null> {
++  const r = await page.evaluate((n) => {
++    const el = document.querySelector(`section[data-vr="${n}"]`)
++    if (!el) {
++      return null
++    }
++    el.scrollIntoView({ behavior: 'instant', block: 'center' })
++    const b = el.getBoundingClientRect()
++    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
++  }, name)
++  if (!r) {
++    return null
++  }
++  const x = Math.max(0, Math.floor(r.left))
++  const y = Math.max(0, Math.floor(r.top))
++  const width = Math.min(VW, Math.ceil(r.right)) - x
++  const height = Math.min(VH, Math.ceil(r.bottom)) - y
++  return width > 0 && height > 0 ? { x, y, width, height } : null
++}
++
++async function shoot(
++  page: Page,
++  shot: string,
++  clip: { x: number; y: number; width: number; height: number }
++): Promise<PNG> {
++  const path = resolve(outDir, `${shot}-gpu.png`)
++  await page.screenshot({ path, clip })
++  return PNG.sync.read(readFileSync(path))
++}
++
++function judge(shot: string, png: PNG): Result {
++  const goldenPath = resolve(goldenDir, `${shot}.png`)
++  if (update) {
++    writeFileSync(goldenPath, PNG.sync.write(png))
++    return { name: shot, regressionPct: null, status: 'updated' }
++  }
++  if (!existsSync(goldenPath)) {
++    return { name: shot, regressionPct: null, status: 'no-golden' }
++  }
++  const golden = PNG.sync.read(readFileSync(goldenPath))
++  const pct = diffPng(golden, png, resolve(outDir, `${shot}-golden-diff.png`))
++  return { name: shot, regressionPct: pct, status: pct > 0.5 ? 'fail' : 'ok' }
++}
++
++async function main(): Promise<void> {
++  let server: ViteDevServer | null = null
++  let browser: Browser | null = null
++  const results: Result[] = []
++  const errors: string[] = []
++  try {
++    server = await createServer({
++      configFile: resolve(root, 'vite.config.ts'),
++      server: { port: 0, open: false, strictPort: false }
++    })
++    await server.listen()
++    const url = server.resolvedUrls?.local[0]
++    if (!url) {
++      throw new Error('vite dev server produced no resolved URL')
++    }
++    console.log(`[fx] vite dev server at ${url}`)
++    const launched = await launchWithFallback(url, 'fx')
++    browser = launched.browser
++    const page = await browser.newPage({
++      viewport: { width: VW, height: VH },
++      deviceScaleFactor: 1,
++      reducedMotion: 'reduce'
++    })
++    page.on('console', (m) => {
++      // Shader, validation and runtime errors; not resource loads (the
++      // dev server's 404s and dep re-optimisation).
++      if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
++        errors.push(m.text())
++      }
++    })
++    await page.goto(`${url}fx.html?vr`, { waitUntil: 'load' })
++    await page.waitForFunction(() => Boolean(window.__fx), null, {
++      timeout: 30_000
++    })
++    await page.evaluate(() => window.__fx?.ready)
++    const stats = await page.evaluate(() => window.__fx?.stats())
++    if (!stats?.active) {
++      throw new Error('[fx] compositor inactive — WebGPU did not start')
++    }
++    console.log(
++      `[fx] compositor active (${launched.usedSwiftshader ? 'swiftshader' : 'native'}) — boxes=${stats.boxes} glyphs=${stats.glyphs} images=${stats.images}`
++    )
++
++    const want = (n: string): boolean => !only || n === only
++
++    const capture = async (
++      section: string,
++      shot: string,
++      effect: Effect
++    ): Promise<PNG | null> => {
++      const clip = await sectionClip(page, section)
++      if (!clip) {
++        results.push({ name: shot, regressionPct: null, status: 'missing' })
++        return null
++      }
++      await setEffect(page, effect)
++      await setMode(page, 'gpu')
++      const png = await shoot(page, shot, clip)
++      await setMode(page, 'both')
++      results.push(judge(shot, png))
++      return png
++    }
++
++    if (want('fx-off')) {
++      await capture('fx-off', 'fx-off', 'none')
++    }
++    if (want('fx-tgpu')) {
++      await capture('fx-off', 'fx-tgpu', 'tgpu')
++    }
++    if (want('fx-blur')) {
++      await capture('fx-blur', 'fx-blur', 'blur')
++    }
++    if (want('fx-blur-scissor')) {
++      // Render blurred at this scroll, freeze the loop, scroll half a
++      // viewport: the canvas below the old viewport (+ radius) must be
++      // the unblurred scene.
++      await sectionClip(page, 'fx-blur')
++      await setEffect(page, 'blur')
++      await setMode(page, 'gpu')
++      await page.evaluate(() => window.__fx?.stop())
++      await setMode(page, 'gpu')
++      await page.evaluate((y) => window.scrollBy(0, y), VH / 2)
++      await page.evaluate(() => window.__fx?.raf2())
++      const png = await shoot(page, 'fx-blur-scissor', {
++        x: 0,
++        y: 0,
++        width: VW,
++        height: VH
++      })
++      await page.evaluate(() => window.__fx?.start())
++      await setMode(page, 'both')
++      results.push(judge('fx-blur-scissor', png))
++    }
++    if (want('fx-displace')) {
++      await capture('fx-displace', 'fx-displace', 'displace')
++    }
++    if (want('fx-blur-then-off')) {
++      const s = 'fx-blur-then-off'
++      const pre = await capture(s, `${s}-pre`, 'none')
++      await capture(s, `${s}-on`, 'blur')
++      const post = await capture(s, s, 'none')
++      if (pre && post) {
++        const n = exactDiff(pre, post)
++        const pct = diffPng(pre, post, resolve(outDir, `${s}-invariant.png`))
++        results.push({
++          name: `${s} (= pre)`,
++          regressionPct: pct,
++          status: n === 0 ? 'ok' : 'fail',
++          note: `${n} px differ`
++        })
++      }
++    }
++    await setEffect(page, 'none')
++    if (errors.length > 0) {
++      console.log(`\n[fx] console errors:\n  ${errors.join('\n  ')}`)
++    }
++  } finally {
++    await browser?.close()
++    await server?.close()
++  }
++
++  const fmt = (n: number | null): string => (n === null ? '   -' : n.toFixed(2))
++  console.log('\nsection                   regression%  status')
++  console.log('---------------------------------------------')
++  for (const r of results) {
++    console.log(
++      `${r.name.padEnd(25)} ${fmt(r.regressionPct).padStart(11)}  ${r.status}${r.note ? `  (${r.note})` : ''}`
++    )
++  }
++  if (
++    errors.length > 0 ||
++    results.some((r) => r.status === 'fail' || r.status === 'missing')
++  ) {
++    console.error('\n[fx] FAILED')
++    process.exit(1)
++  }
++  console.log('\n[fx] OK')
++}
++
++main().catch((e) => {
++  console.error(e)
++  process.exit(1)
++})
 diff --git a/test/perf/run.ts b/test/perf/run.ts
-index cef0dce..8d56377 100644
+index cef0dce..b35181a 100644
 --- a/test/perf/run.ts
 +++ b/test/perf/run.ts
 @@ -42,6 +42,7 @@ interface Stats {
@@ -3086,17 +6464,32 @@ index cef0dce..8d56377 100644
  }
  
  function median(xs: number[]): number {
-@@ -190,6 +191,9 @@ async function main(): Promise<void> {
+@@ -189,13 +190,24 @@ async function main(): Promise<void> {
+     }
  
      // (a) full read.
++    console.log('[perf] full reads')
      const fullReadMs = await sampleReadMs(page, 'full', 10)
 +    const textRead = (
 +      (await page.evaluate(() => window.__perf?.stats())) as Stats
 +    ).textRead
      // (b) partial read (text edit).
++    console.log('[perf] partial reads')
      const textReadMs = await sampleReadMs(page, 'text', 20)
      // Also: partial read (class toggle).
-@@ -218,6 +222,7 @@ async function main(): Promise<void> {
+     const classReadMs = await sampleReadMs(page, 'class', 20)
+     // (c) steady frame: nothing dirty, 30 forced frames.
++    console.log('[perf] steady frames')
+     const steady = await sampleSteadyFrames(page, 30)
++    // (c') the same with a fullscreen blur pass (viewport scissor).
++    console.log('[perf] steady frames (blur)')
++    await page.evaluate(() => window.__perf?.setBlur(true))
++    const steadyBlur = await sampleSteadyFrames(page, 30)
++    await page.evaluate(() => window.__perf?.setBlur(false))
+     // (d) final counts.
+     const finalStats = (await page.evaluate(() =>
+       window.__perf?.stats()
+@@ -218,6 +230,7 @@ async function main(): Promise<void> {
          groups: finalStats.groups,
          readElements: finalStats.readElements
        },
@@ -3104,7 +6497,19 @@ index cef0dce..8d56377 100644
        fullRead: { medianMs: median(fullReadMs), p90Ms: p90(fullReadMs) },
        partialReadText: {
          medianMs: median(textReadMs),
-@@ -257,6 +262,7 @@ function printTable(r: {
+@@ -233,6 +246,11 @@ async function main(): Promise<void> {
+         uploadMsMedian: median(uploadMs),
+         uploadMsP90: p90(uploadMs),
+         fpsMedian: median(fpsSamples)
++      },
++      steadyBlur: {
++        encodeMsMedian: median(steadyBlur.map((s) => s.encodeMs)),
++        encodeMsP90: p90(steadyBlur.map((s) => s.encodeMs)),
++        fpsMedian: median(steadyBlur.map((s) => s.fps))
+       }
+     }
+ 
+@@ -257,6 +275,7 @@ function printTable(r: {
      groups: number
      readElements: number
    }
@@ -3112,7 +6517,15 @@ index cef0dce..8d56377 100644
    fullRead: { medianMs: number; p90Ms: number }
    partialReadText: { medianMs: number; p90Ms: number }
    partialReadClass: { medianMs: number; p90Ms: number }
-@@ -278,6 +284,13 @@ function printTable(r: {
+@@ -267,6 +286,7 @@ function printTable(r: {
+     uploadMsP90: number
+     fpsMedian: number
+   }
++  steadyBlur: { encodeMsMedian: number; encodeMsP90: number; fpsMedian: number }
+ }): void {
+   const ms = (v: number): string => v.toFixed(3)
+   console.log(
+@@ -278,6 +298,13 @@ function printTable(r: {
        `batches=${r.counts.batches} draws=${r.counts.draws} ` +
        `groups=${r.counts.groups} readElements=${r.counts.readElements}`
    )
@@ -3126,3 +6539,91 @@ index cef0dce..8d56377 100644
    console.log('\n  metric                median (ms)   p90 (ms)')
    console.log('  --------------------------------------------')
    console.log(
+@@ -292,10 +319,14 @@ function printTable(r: {
+   console.log(
+     `  steady encode           ${ms(r.steadyFrame.encodeMsMedian).padStart(9)}   ${ms(r.steadyFrame.encodeMsP90).padStart(8)}`
+   )
++  console.log(
++    `  steady encode (blur)    ${ms(r.steadyBlur.encodeMsMedian).padStart(9)}   ${ms(r.steadyBlur.encodeMsP90).padStart(8)}`
++  )
+   console.log(
+     `  steady upload           ${ms(r.steadyFrame.uploadMsMedian).padStart(9)}   ${ms(r.steadyFrame.uploadMsP90).padStart(8)}`
+   )
+   console.log(`  steady fps (median)     ${r.steadyFrame.fpsMedian.toFixed(1)}`)
++  console.log(`  steady fps (blur)       ${r.steadyBlur.fpsMedian.toFixed(1)}`)
+ }
+ 
+ main().catch((e) => {
+diff --git a/test/visual/run.ts b/test/visual/run.ts
+index a0595d8..d0b3ffb 100644
+--- a/test/visual/run.ts
++++ b/test/visual/run.ts
+@@ -11,6 +11,8 @@
+ //   npm run test:visual                   # check against goldens
+ //   npm run test:visual -- --only boxes
+ //   npm run test:visual -- --parity-max 5
++//   npm run test:visual -- --with-fx      # load `?vr&fx`: compositor-gpu/fx
++//                                         # installed, no pass enabled
+ //
+ // Per-section attributes:
+ //   data-vr-body-class="c"  add class c to <body> for the capture (and force
+@@ -63,6 +65,7 @@ interface Args {
+   update: boolean
+   only: string | null
+   parityMax: number | null
++  withFx: boolean
+ }
+ 
+ function parseArgs(argv: string[]): Args {
+@@ -80,7 +83,7 @@ function parseArgs(argv: string[]): Args {
+       parityMax = Number(v)
+     }
+   }
+-  return { update, only, parityMax }
++  return { update, only, parityMax, withFx: argv.includes('--with-fx') }
+ }
+ 
+ function readPng(path: string): PNG {
+@@ -174,7 +177,9 @@ async function main(): Promise<void> {
+       reducedMotion: 'reduce'
+     })
+ 
+-    await page.goto(`${url}?vr`, { waitUntil: 'load' })
++    await page.goto(`${url}?vr${args.withFx ? '&fx' : ''}`, {
++      waitUntil: 'load'
++    })
+     await page.waitForFunction(() => Boolean(window.__vr), null, {
+       timeout: 30_000
+     })
+diff --git a/vite.config.ts b/vite.config.ts
+index 8eebc64..2e2110b 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -4,7 +4,9 @@ import dts from 'vite-plugin-dts'
+ 
+ // Two modes:
+ //   `vite`        → dev server for the playground (root = ./playground)
+-//   `vite build`  → library build of ./src into ./dist
++//   `vite build`  → library build of ./src into ./dist: two entries,
++//                   `compositor-gpu` (dist/compositor-gpu.js) and
++//                   `compositor-gpu/fx` (dist/fx.js), sharing chunks
+ export default defineConfig(({ command }) => {
+   if (command === 'serve') {
+     return {
+@@ -19,10 +21,13 @@ export default defineConfig(({ command }) => {
+     plugins: [dts({ rollupTypes: true, include: ['src'] })],
+     build: {
+       lib: {
+-        entry: resolve(import.meta.dirname, 'src/index.ts'),
+-        name: 'CompositorGPU',
++        entry: {
++          index: resolve(import.meta.dirname, 'src/index.ts'),
++          fx: resolve(import.meta.dirname, 'src/fx/index.ts')
++        },
+         formats: ['es'],
+-        fileName: () => 'compositor-gpu.js'
++        fileName: (_format, name) =>
++          name === 'index' ? 'compositor-gpu.js' : `${name}.js`
+       },
+       rollupOptions: {
+         // keep heavy deps external so host apps dedupe them

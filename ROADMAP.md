@@ -82,6 +82,32 @@ once every element is Inter, nothing invalidating the mirror at idle.
    `_to_delete/` in mds-home; upstream the opentype.js gvar fix
    (`text/slug/gvarFix.ts`) as an issue/PR so the workaround can go.
 
+**Effects layer** (`docs/EFFECTS.md`, spec settled 2026-10-01; `/fx`
+entry point, three primitives — Pass, Material, Layer — over a shared
+Params model, element-keyed Targets, a runtime pointer uniform):
+- [x] M1 — runtime spine + post: render-graph hook (`gpu/graph.ts`:
+      `RenderGraph`, `PostChain`, `FrameHook`), offscreen path only
+      while a Pass is enabled, chain scissored to the visible viewport +
+      max radius; `createEffects` (inert without a GPU); Params (schema,
+      Proxy incl. element writes, std140-style packing, wake rules,
+      time/elapsed); pointer (raw, smoothed velocity, eased follower,
+      down, 8-click ring); fullscreen Pass taking WGSL or `tgpu.fn`;
+      presets `blur`, `displace`; `playground/fx.html` + `npm run
+      test:fx` goldens, no-effect invariants, `steady encode (blur)`
+- [ ] M1 leftovers: JS-bodied (`'use gpu'`) `tgpu.fn` fragments need
+      `unplugin-typegpu` in the author's build and can't reach
+      `sample`/`params`/`pointer` yet (WGSL-bodied ones work; see
+      `src/fx/README.md`); `rollupTypes` emits per-file `.d.ts` (it did
+      before `/fx` too: `@microsoft/api-extractor` isn't installed), so
+      `exports['./fx'].types` points at `dist/fx/index.d.ts`
+- [ ] M2 — geometry: Target (live rect/xform/texture, per-glyph arrays
+      with stable indices); Layer (instanced quads, above/below/after,
+      doc or viewport space); presets `clickRipple`, `cursorGlow`; region
+      Pass on isolated groups
+- [ ] M3 — materials: snippet contract for glyph/image/box; per-material
+      batch cut and pipelines; per-Target DOM hiding while displacing;
+      `ripple`; image `subdivisions`; Layer compute hook
+
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are
 migrated. `pnpm install` on macOS leaves no linux binaries, so checks can't run

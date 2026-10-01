@@ -10,6 +10,8 @@ declare global {
       mutate(kind: MutateKind): void
       /** Force a full re-read, for the perf runner's full-read measurement. */
       invalidate(): void
+      /** Enable/disable the fullscreen blur pass (compositor-gpu/fx). */
+      setBlur(on: boolean): void
     }
   }
 }

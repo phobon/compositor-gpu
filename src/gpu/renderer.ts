@@ -5,6 +5,12 @@ import type { FrameContext, Layer } from '../types'
 import { GroupCompositor, type GroupTarget } from './composite'
 import type { GpuContext } from './device'
 import { FRAME_BYTES, type RenderPass, type Shared } from './frame'
+import {
+  CopyThrough,
+  type DeviceRect,
+  type PostChain,
+  type PostFrame
+} from './graph'
 
 interface FrameSlot {
   buffer: GPUBuffer
@@ -87,6 +93,13 @@ export class Renderer {
    * (sibling groups need distinct buffers: writeBuffer lands before
    * submit). Reused across frames. */
   private readonly groupFrames: FrameSlot[] = []
+  /** The effects layer's post chain (gpu/graph.ts). While it is active the
+   * scene renders into `sceneTexture` and the chain runs before the canvas
+   * composite; otherwise render() draws straight to the swapchain. */
+  postChain: PostChain | null = null
+  private sceneTexture: GPUTexture | null = null
+  private sceneView: GPUTextureView | null = null
+  private copy: CopyThrough | null = null
 
   constructor(private readonly gpu: GpuContext) {
     this.device = gpu.device
@@ -204,8 +217,13 @@ export class Renderer {
     const encodeStart = performance.now()
     const encoder = this.device.createCommandEncoder()
     const texture = this.gpu.context.getCurrentTexture()
+    const canvasView = texture.createView({ format: this.gpu.viewFormat })
+    const chain = this.postChain?.active() ? this.postChain : null
+    if (!chain && this.sceneTexture) {
+      this.releaseScene()
+    }
     const main: Target = {
-      view: texture.createView({ format: this.gpu.viewFormat }),
+      view: chain ? this.sceneTarget(texture) : canvasView,
       bindGroup: this.shared.frameBindGroup,
       ox: ctx.canvasX,
       oy: ctx.canvasY,
@@ -271,9 +289,134 @@ export class Renderer {
     this.lastGroups = groups
     this.lastDraws = draws
     rp.end()
+    if (chain && this.sceneView) {
+      this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
+    }
     this.composite.flush()
     this.device.queue.submit([encoder.finish()])
     this.lastEncodeMs = performance.now() - encodeStart
+  }
+
+  /** The offscreen scene texture for the post path, re-created when the
+   * canvas size changes. */
+  private sceneTarget(canvas: GPUTexture): GPUTextureView {
+    const t = this.sceneTexture
+    if (t && t.width === canvas.width && t.height === canvas.height) {
+      return this.sceneView ?? t.createView()
+    }
+    this.releaseScene()
+    const texture = this.device.createTexture({
+      label: 'post-scene',
+      size: { width: canvas.width, height: canvas.height },
+      format: this.shared.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    })
+    this.sceneTexture = texture
+    this.sceneView = texture.createView()
+    return this.sceneView
+  }
+
+  private releaseScene(): void {
+    this.sceneTexture?.destroy()
+    this.sceneTexture = null
+    this.sceneView = null
+    this.copy?.release()
+  }
+
+  /**
+   * The post path's tail: let the chain record its offscreen stages, then
+   * one canvas pass that copies the scene through and has the chain's last
+   * stage overwrite the visible viewport grown by the chain's radius.
+   */
+  private runPost(
+    chain: PostChain,
+    encoder: GPUCommandEncoder,
+    canvasView: GPUTextureView,
+    texture: GPUTexture,
+    ctx: FrameContext,
+    dpr: number
+  ): void {
+    const scene = this.sceneView
+    if (!scene) {
+      return
+    }
+    const W = texture.width
+    const H = texture.height
+    const sx = ctx.canvasWidth > 0 ? W / ctx.canvasWidth : dpr
+    const sy = ctx.canvasHeight > 0 ? H / ctx.canvasHeight : dpr
+    const span = (a: number, b: number, s: number, max: number): number[] => [
+      clamp(Math.floor(a * s), max),
+      clamp(Math.ceil(b * s), max)
+    ]
+    const [vx0 = 0, vx1 = 0] = span(
+      ctx.scrollX - ctx.canvasX,
+      ctx.scrollX - ctx.canvasX + ctx.width,
+      sx,
+      W
+    )
+    const [vy0 = 0, vy1 = 0] = span(
+      ctx.scrollY - ctx.canvasY,
+      ctx.scrollY - ctx.canvasY + ctx.height,
+      sy,
+      H
+    )
+    const viewport: DeviceRect = {
+      x: vx0,
+      y: vy0,
+      width: vx1 - vx0,
+      height: vy1 - vy0
+    }
+    const r = Math.max(0, chain.radius())
+    const rx = Math.ceil(r * sx)
+    const ry = Math.ceil(r * sy)
+    const x0 = clamp(vx0 - rx, W)
+    const y0 = clamp(vy0 - ry, H)
+    const rect: DeviceRect = {
+      x: x0,
+      y: y0,
+      width: clamp(vx1 + rx, W) - x0,
+      height: clamp(vy1 + ry, H) - y0
+    }
+    const frame: PostFrame = {
+      encoder,
+      scene,
+      sceneWidth: W,
+      sceneHeight: H,
+      viewport,
+      rect,
+      ctx,
+      dpr
+    }
+    const live = viewport.width > 0 && viewport.height > 0
+    if (live) {
+      chain.encode(frame)
+    }
+    this.copy ??= new CopyThrough(this.shared)
+    const rp = this.beginPassOn(encoder, canvasView)
+    this.copy.draw(rp, scene)
+    if (live) {
+      rp.setScissorRect(rect.x, rect.y, rect.width, rect.height)
+      chain.composite(rp, frame)
+    }
+    rp.end()
+  }
+
+  private beginPassOn(
+    encoder: GPUCommandEncoder,
+    view: GPUTextureView
+  ): GPURenderPassEncoder {
+    const rp = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }
+      ]
+    })
+    rp.setBindGroup(0, this.shared.frameBindGroup)
+    return rp
   }
 
   /**
@@ -363,5 +506,6 @@ export class Renderer {
       f.buffer.destroy()
     }
     this.composite.destroy()
+    this.releaseScene()
   }
 }

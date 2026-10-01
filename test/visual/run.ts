@@ -11,6 +11,8 @@
 //   npm run test:visual                   # check against goldens
 //   npm run test:visual -- --only boxes
 //   npm run test:visual -- --parity-max 5
+//   npm run test:visual -- --with-fx      # load `?vr&fx`: compositor-gpu/fx
+//                                         # installed, no pass enabled
 //
 // Per-section attributes:
 //   data-vr-body-class="c"  add class c to <body> for the capture (and force
@@ -63,6 +65,7 @@ interface Args {
   update: boolean
   only: string | null
   parityMax: number | null
+  withFx: boolean
 }
 
 function parseArgs(argv: string[]): Args {
@@ -80,7 +83,7 @@ function parseArgs(argv: string[]): Args {
       parityMax = Number(v)
     }
   }
-  return { update, only, parityMax }
+  return { update, only, parityMax, withFx: argv.includes('--with-fx') }
 }
 
 function readPng(path: string): PNG {
@@ -174,7 +177,9 @@ async function main(): Promise<void> {
       reducedMotion: 'reduce'
     })
 
-    await page.goto(`${url}?vr`, { waitUntil: 'load' })
+    await page.goto(`${url}?vr${args.withFx ? '&fx' : ''}`, {
+      waitUntil: 'load'
+    })
     await page.waitForFunction(() => Boolean(window.__vr), null, {
       timeout: 30_000
     })

@@ -6,6 +6,9 @@ dist
 # visual-regression captures + local, GPU-specific goldens
 test/visual/out/
 test/visual/golden/
+# effects harness captures + local goldens
+test/fx/out/
+test/fx/golden/
 # perf harness output
 test/perf/out/
 # site-parity harness output (captures + the injected bundle)

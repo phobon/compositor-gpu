@@ -1,6 +1,14 @@
 import './util/env'
 
 export { createCompositor } from './compositor'
+export { FRAME_BYTES, FRAME_WGSL, type Shared } from './gpu/frame'
+export type {
+  DeviceRect,
+  FrameHook,
+  PostChain,
+  PostFrame,
+  RenderGraph
+} from './gpu/graph'
 export type {
   BoxRecord,
   Glyph,
@@ -20,5 +28,7 @@ export type {
   FontDescriptor,
   FrameContext,
   Layer,
-  Mode
+  Mode,
+  PointerClick,
+  PointerState
 } from './types'

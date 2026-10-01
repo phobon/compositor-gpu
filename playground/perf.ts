@@ -1,4 +1,5 @@
 /// <reference path="./perf.d.ts" />
+import { blur, createEffects } from '@/fx'
 import { createCompositor } from '@/index'
 
 // Perf harness fixture: builds an N-card grid, boots the compositor with
@@ -165,6 +166,8 @@ async function boot(): Promise<void> {
     })
 
   let mutateCounter = 0
+  // A fullscreen blur for the `steady encode (blur)` row, off until asked.
+  const blurPass = blur(createEffects(compositor), { enabled: false })
 
   window.__perf = {
     ready: (async () => {
@@ -178,6 +181,9 @@ async function boot(): Promise<void> {
     })(),
     stats: () => compositor.stats(),
     invalidate: () => compositor.invalidate(),
+    setBlur(on: boolean) {
+      blurPass.enabled = on
+    },
     mutate(kind: 'text' | 'class' | 'append') {
       const stage2 = document.getElementById('stage') as HTMLElement
       if (kind === 'text') {

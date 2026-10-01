@@ -48,6 +48,21 @@ spans whole paragraphs and blocked every merge), and shadow records use a
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
+**Effects harness**: `npm run test:fx` (`test/fx/run.ts`, `-- --update`
+to rewrite goldens, `-- --only <shot>`) loads `playground/fx.html?vr`,
+pins time/elapsed/pointer through `fx.__override`, and captures each
+section GPU-only against local goldens (`test/fx/golden/`, gate 0.5%, no
+parity column): `fx-off`, `fx-tgpu` (a `tgpu.fn` fragment), `fx-blur`,
+`fx-blur-scissor` (loop stopped, scrolled half a viewport: the canvas that
+was off-viewport must be unblurred), `fx-displace`, `fx-blur-then-off`
+(off → on → off; the last must equal the first exactly). Console errors
+from the library fail it. `npm run test:visual -- --with-fx` loads the
+main playground with `/fx` installed and no pass enabled; it must match
+the plain goldens at 0.00. The perf harness also reports `steady encode
+(blur)`. Never run two harnesses at once (they time each other out), and
+don't edit files under `src/`/`playground/` during a run: the dev server
+reloads the page and the run dies.
+
 **Site harness**: `npm run test:site -- --url <url>` (`test/site/run.ts`)
 checks DOM-vs-GPU parity on an arbitrary real page instead of the playground.
 It builds a self-contained ES bundle of `src/index.ts` (typegpu/opentype.js
@@ -63,8 +78,9 @@ and any `SlugText` faces that failed to resolve (CORS/404 on an `@font-face`
 unless `--parity-max` is passed.
 
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
-bundles `src/index.ts` as an ES library with `typegpu` and `opentype.js`
-external. `@/*` aliases `src/*` in both tsconfig and vite.
+bundles two ES entries, `src/index.ts` → `dist/compositor-gpu.js` and
+`src/fx/index.ts` → `dist/fx.js` (`compositor-gpu/fx`), with `typegpu` and
+`opentype.js` external. `@/*` aliases `src/*` in both tsconfig and vite.
 
 ## Status
 
@@ -73,12 +89,24 @@ integration: checkouts, uncommitted state, how to run the site and the
 readout, and the first move on each open problem. Read it before touching
 the site side.
 
-`ROADMAP.md` is the live checklist and `docs/ARCHITECTURE.md` is the spec — the
+`ROADMAP.md` is the live checklist, `docs/ARCHITECTURE.md` is the mirror's
+spec and `docs/EFFECTS.md` the effects layer's (`compositor-gpu/fx`) — the
 spec describes the target, not all of which is built. Currently real: the box
 pass (a complete DOM→GPU vertical slice) and the Slug text pass (font pipeline +
 WGSL, rendering but still being tuned). `ImagePass` renders `<img>`, `<canvas>`,
 `<video>` and `background-image url()` with mipmaps and rounded clipping;
 gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is missing by accident.
+
+**Effects layer** (`src/fx/`, `compositor-gpu/fx`): spec in
+`docs/EFFECTS.md` (with a Deviations section for what M1 changed), author
+contract in `src/fx/README.md`. M1 is built: `createEffects(compositor)`,
+Params, the pointer, fullscreen `fx.pass`, presets `blur`/`displace`. It
+reaches the core only through `compositor.graph` (`gpu/graph.ts`): a
+`PostChain` the renderer runs when `active()` (scene → offscreen texture
+→ chain → canvas pass that copies the scene through and lets the last
+stage overwrite the visible viewport + radius), and `FrameHook`s
+(`beforeFrame` fills `FrameContext.pointer`; `keepAlive` holds the rAF
+loop). With no enabled pass `render()` takes the direct path unchanged.
 
 ## Architecture
 
