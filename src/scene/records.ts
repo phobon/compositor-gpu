@@ -258,4 +258,29 @@ export interface GlyphRun {
   space?: Space
 }
 
-export type SceneRecord = BoxRecord | ImageRecord | GlyphRun
+/**
+ * The border box of a `data-gpu-ignore` element: the cutout pass erases
+ * what the mirror drew before it (lower z) inside this rounded rect, so
+ * the element's own DOM paint shows through the canvas. Records painted
+ * after it draw over the hole normally.
+ */
+export interface CutoutRecord {
+  kind: 'cutout'
+  id: number
+  /** Global paint order (integer; back-to-front across all layers). */
+  z: number
+  /** Doc-space AABB (the transformed box's bounds when transformed). */
+  rect: Rect
+  /** Untransformed size; equals the rect size when untransformed. */
+  local: LocalSize
+  /** Maps local box coords (origin top-left, size `local`) to doc space. */
+  xform: Affine
+  /** 'viewport' inside a `position: fixed` subtree; absent = 'doc'. */
+  space?: Space
+  /** The element's border radii. */
+  radius: Corners
+  /** Clip rect from a clipping ancestor (overflow != visible). */
+  clip?: Rect | null
+}
+
+export type SceneRecord = BoxRecord | ImageRecord | GlyphRun | CutoutRecord

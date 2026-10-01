@@ -210,6 +210,23 @@ Conventions each pass must follow:
   into a pooled offscreen texture (own Frame uniform: viewport = texture size,
   scroll = group origin) and `gpu/composite.ts` draws it back once with the
   group alpha. Records therefore carry `opacity = 1`; passes stay unaware.
+- **Cutouts** (`boxes/cutoutPass.ts`). A `data-gpu-ignore` element
+  (`IGNORE_ATTR`) is not mirrored: the reader gives it an `ElNode` with one
+  own `CutoutRecord` (border box, radii, local/xform, space, ancestor clip)
+  and no kids, and it keeps its stacking context, so the hole gets the z the
+  element would paint at (never an opacity group). The `cutouts` layer
+  draws it destination-out (`zero` / `one-minus-src-alpha`, fragment
+  `vec4f(0, 0, 0, coverage)`): records painted before it are erased inside
+  the rounded rect, records after it paint over the hole, and the page's
+  own paint of the element shows through the canvas. The layer is added
+  whenever any other layer is; `stats().cutouts` counts the records. Inside
+  an opacity group a cutout clears only the group's target (the parent
+  target's content stays under the hole). Mutations inside an ignored
+  subtree are not observed; attribute changes on the ignored element
+  itself re-read its parent, so class/style toggles move the hole. Not
+  covered: its CSS transitions/animations and size changes driven by its
+  own content (a fixed element doesn't resize the root), until the next
+  read of its parent. Replace mode leaves ignored elements painting.
 - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
   bind group; `writeBuffer` only the used prefix.
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is

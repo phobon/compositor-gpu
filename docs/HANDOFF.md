@@ -34,9 +34,16 @@ only — the submodule is left for `fetch`/`checkout`):** `CLAUDE.md`,
 `src/dom/styles.ts`, `src/dom/textRuns.ts`, `src/dom/tree.ts`,
 `src/dom/observer.ts`, `src/images/imageRenderer.ts`,
 `src/scene/records.ts`, `src/scene/stacking.ts`, `src/types.ts`,
-`test/perf/run.ts`. Contents: (0) replace mode no longer blanks a page
-that has `data-gpu-ignore` chrome (`HIDDEN_ATTR` carries the pre-hide
-opacity so the reader ignores the hiding); (1) dashed/dotted borders fitted per side
+`test/perf/run.ts`, `src/boxes/cutoutPass.ts` (new), `src/scene/scene.ts`,
+`src/scene/batches.ts`. Contents: (0) `data-gpu-ignore` elements now punch
+HOLES in the mirror (`CutoutRecord`, a `cutouts` layer drawn
+destination-out at the element's paint-order z) so the site's nav, footer,
+scroll-to-top and nav popup show through in overlay and replace mode —
+before, body's opaque mirrored background covered them; and replace mode
+no longer blanks a page that has ignored chrome (`HIDDEN_ATTR` carries the
+pre-hide opacity so the reader ignores the hiding). Known gap: a CSS
+animation/transition on an ignored element does not move its hole until
+the parent is next re-read (attribute changes on the element itself do); (1) dashed/dotted borders fitted per side
 (square corners) or along the inset centre path (rounded), matching
 Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
 the `/duo` placeholder border is now pixel-identical, `duo` parity

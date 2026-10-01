@@ -1,5 +1,6 @@
 import type {
   BoxRecord,
+  CutoutRecord,
   Glyph,
   GlyphRun,
   ImageRecord,
@@ -37,6 +38,7 @@ import {
   boxInset,
   clipRectFor,
   readBox,
+  readCorners,
   readImageRecord,
   readOpacity,
   readShadows,
@@ -94,7 +96,7 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
 export const MAX_BOUNDARIES = 8
 const RECT_EPSILON = 0.01
 
-type OwnRecord = BoxRecord | ImageRecord
+type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
 
 /**
  * The records to append after the box for a background image. An image
@@ -555,9 +557,10 @@ export class SceneReader {
     parentDecor: Decoration[] | null,
     parentCb: Placement | null
   ): ElNode | null {
-    if (SKIP_TAGS.has(el.tagName) || el.hasAttribute(IGNORE_ATTR)) {
+    if (SKIP_TAGS.has(el.tagName)) {
       return null
     }
+    const ignored = el.hasAttribute(IGNORE_ATTR)
     this.readElements++
     const { scene, layers } = this
     const s = getComputedStyle(el)
@@ -599,6 +602,17 @@ export class SceneReader {
     // An inline svg root paints as one rasterised image; nothing inside its
     // subtree gets its own record (see svg.ts).
     const svgRoot = isInlineSvgRoot(el)
+
+    if (ignored) {
+      return this.cutoutNode(el, s, parent, rect, space, clip, place, lin, {
+        isContext,
+        ctxZ: isContext ? contextZIndex(s) : 0,
+        trapsFixed: parentTraps || trapsFixed(s, transformable),
+        fragmented: display === 'inline' || display === 'contents',
+        float: s.float !== 'none',
+        cb: parentCb ?? paddingPlacement(s, place)
+      })
+    }
 
     let own = NO_RECORDS
     if (layers.has('boxes')) {
@@ -758,6 +772,73 @@ export class SceneReader {
     if (space === 'viewport') {
       tagViewport(node)
     }
+    return node
+  }
+
+  /**
+   * The node for a `data-gpu-ignore` element: one CutoutRecord over its
+   * border box (none when it is invisible or empty) and no kids — its
+   * subtree is the page's own paint, shown through the hole. It keeps its
+   * stacking context (so the hole gets the z the element would paint at)
+   * but never an opacity group: a hole inside a group target would only
+   * clear the group, not the canvas.
+   */
+  private cutoutNode(
+    el: Element,
+    s: CSSStyleDeclaration,
+    parent: ElNode | null,
+    rect: Rect,
+    space: Space,
+    clip: Rect | null,
+    place: Placement,
+    lin: Mat2 | null,
+    ctx: Pick<
+      ElNode,
+      'isContext' | 'ctxZ' | 'trapsFixed' | 'fragmented' | 'float' | 'cb'
+    >
+  ): ElNode {
+    let own = NO_RECORDS
+    if (
+      this.layers.has('cutouts') &&
+      s.visibility === 'visible' &&
+      rect.width > 0 &&
+      rect.height > 0
+    ) {
+      const cut: CutoutRecord = {
+        kind: 'cutout',
+        id: this.scene.allocId(),
+        z: 0,
+        rect,
+        local: place.local,
+        xform: place.xform,
+        radius: readCorners(s, {
+          x: 0,
+          y: 0,
+          width: place.local.w,
+          height: place.local.h
+        }),
+        clip
+      }
+      if (space === 'viewport') {
+        cut.space = 'viewport'
+      }
+      own = [cut]
+    }
+    const node: ElNode = {
+      kind: 'element',
+      el,
+      parent,
+      kids: [],
+      rect,
+      space,
+      own,
+      childClip: clip,
+      alpha: 1,
+      lin,
+      decor: null,
+      ...ctx
+    }
+    this.nodes.set(el, node)
     return node
   }
 

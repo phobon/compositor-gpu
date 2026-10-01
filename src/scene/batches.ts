@@ -1,5 +1,11 @@
 import type { Layer } from '../types'
-import type { BoxRecord, GlyphRun, ImageRecord, Rect } from './records'
+import type {
+  BoxRecord,
+  CutoutRecord,
+  GlyphRun,
+  ImageRecord,
+  Rect
+} from './records'
 import { type OpacityGroup, padGlyphRect, textShadowPad } from './stacking'
 
 /**
@@ -190,8 +196,12 @@ export function unionRect(rects: Rect[]): Rect {
 }
 
 /**
- * Merge the three z-sorted layers into cross-layer draw batches, minimising
+ * Merge the four z-sorted layers into cross-layer draw batches, minimising
  * draw calls while keeping paint order correct.
+ *
+ * Cutouts are their own layer: a cutout batch erases what earlier
+ * batches drew in its rects, so the overlap rule below keeps any record
+ * that overlaps a cutout on its side of it.
  *
  * `runRects[i]` is the union of `runs[i]`'s glyph rects (compute once via
  * `unionRect` in `Scene.sort()`). Text instance indices are cumulative glyph
@@ -214,6 +224,7 @@ export function buildBatches(
   images: ImageRecord[],
   runs: GlyphRun[],
   runRects: Rect[],
+  cutouts: CutoutRecord[] = [],
   groups: readonly OpacityGroup[] = []
 ): DrawBatch[] {
   const entries: Entry[] = []
@@ -245,6 +256,21 @@ export function buildBatches(
       rect: im.rect,
       rects: [im.rect],
       space: spaceBit(im)
+    })
+  }
+  for (let i = 0; i < cutouts.length; i++) {
+    const c = cutouts[i]
+    if (!c) {
+      continue
+    }
+    entries.push({
+      layer: 'cutouts',
+      z: c.z,
+      first: i,
+      count: 1,
+      rect: c.rect,
+      rects: [c.rect],
+      space: spaceBit(c)
     })
   }
   let glyphBase = 0

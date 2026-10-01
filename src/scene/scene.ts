@@ -1,6 +1,12 @@
 import type { Layer } from '../types'
 import { buildBatches, type DrawBatch, unionRect } from './batches'
-import type { BoxRecord, GlyphRun, ImageRecord, SceneRecord } from './records'
+import type {
+  BoxRecord,
+  CutoutRecord,
+  GlyphRun,
+  ImageRecord,
+  SceneRecord
+} from './records'
 import type { OpacityGroup } from './stacking'
 
 /**
@@ -14,6 +20,8 @@ export class Scene {
   boxes: BoxRecord[] = []
   images: ImageRecord[] = []
   runs: GlyphRun[] = []
+  /** `data-gpu-ignore` holes (see CutoutRecord). */
+  cutouts: CutoutRecord[] = []
   /** Opacity groups, sorted by `first` (see stacking.ts). Set by the
    * reader before sort(). */
   groups: OpacityGroup[] = []
@@ -25,7 +33,7 @@ export class Scene {
   }
 
   /** Layers whose instance buffers need re-upload since they were last drawn. */
-  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text'])
+  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text', 'cutouts'])
   /** True when any image source is dynamic (drives a continuous render). */
   hasDynamic = false
 
@@ -39,6 +47,7 @@ export class Scene {
     this.boxes = []
     this.images = []
     this.runs = []
+    this.cutouts = []
     this.groups = []
     this.markAllDirty()
     this.hasDynamic = false
@@ -51,6 +60,7 @@ export class Scene {
     this.dirtyLayers.add('boxes')
     this.dirtyLayers.add('images')
     this.dirtyLayers.add('text')
+    this.dirtyLayers.add('cutouts')
   }
   isDirty(layer: Layer): boolean {
     return this.dirtyLayers.has(layer)
@@ -76,6 +86,10 @@ export class Scene {
         this.runs.push(record)
         this.markDirty('text')
         break
+      case 'cutout':
+        this.cutouts.push(record)
+        this.markDirty('cutouts')
+        break
     }
   }
 
@@ -85,6 +99,7 @@ export class Scene {
     this.boxes.sort(byZ)
     this.images.sort(byZ)
     this.runs.sort(byZ)
+    this.cutouts.sort(byZ)
     const runRects = this.runs.map((r) =>
       unionRect(r.glyphs.map((g) => g.rect))
     )
@@ -93,6 +108,7 @@ export class Scene {
       this.images,
       this.runs,
       runRects,
+      this.cutouts,
       this.groups
     )
   }

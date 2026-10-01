@@ -462,6 +462,50 @@
         border-radius: 6px;
         background: #f472b6;
       }
+      /* data-gpu-ignore site chrome (duo section). The fixed nav shows only
+         under body.show-duo (the harness sets it for the duo capture) or in
+         the live playground, so it doesn't cover other captures. The
+         mirror leaves a hole over each ignored element. */
+      .duo-nav { display: none; }
+      body.show-duo #panel { visibility: hidden; }
+      body.show-duo .duo-nav, body.live .duo-nav {
+        display: flex;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        height: 56px;
+        align-items: center;
+        gap: 28px;
+        padding: 0 32px;
+        background: #f5f5f0;
+        color: #111114;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .duo-nav b { font-size: 18px; margin-right: auto; }
+      .duo-overlap { position: relative; height: 140px; margin-top: 24px; }
+      .duo-overlap .box {
+        position: absolute; left: 0; top: 0; width: 320px; height: 140px;
+        background: #3b82f6;
+      }
+      .duo-overlap .ign {
+        position: absolute; left: 200px; top: 30px; width: 220px; height: 80px;
+        border-radius: 28px; background: #f59e0b; color: #1c1917;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 700;
+      }
+      .duo-overlap .over {
+        position: absolute; z-index: 2; left: 380px; top: 50px;
+        width: 40px; height: 40px; border-radius: 50%; background: #10b981;
+      }
+      .duo-footwrap { margin-top: 48px; padding: 24px; background: #1d1d24; }
+      .duo-footer {
+        padding: 32px; border-radius: 0;
+        background: #e7e5e4; color: #1c1917; font-size: 14px;
+      }
+      .duo-footer b { display: block; font-size: 18px; margin-bottom: 6px; }
       /* position: sticky */
       .sticky-block {
         height: 900px;
@@ -836,7 +880,8 @@
         </div>
       </section>
 
-      <section data-vr="duo" style="font-optical-sizing: auto;">
+      <section data-vr="duo" data-vr-body-class="show-duo" data-vr-capture="viewport" data-vr-scroll2="900" style="font-optical-sizing: auto;">
+        <nav class="duo-nav" data-gpu-ignore><b>Bonobo Labs</b><span>Apps</span><span>Duo</span><span>About</span></nav>
         <h1 style="font-weight: 700; font-size: 96px; letter-spacing: 0; text-align: center; margin: 0 0 24px;">made for iPhone Duo</h1>
         <p style="font-weight: 600; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 16px;">Timepage on iPhone Duo — DUO BOLD</p>
         <div style="display: flex; align-items: center; gap: 24px; margin: 0 0 24px;">
@@ -856,12 +901,26 @@
           <div style="width: 160px; height: 80px; border-radius: 8px; border: 6px double #fbbf24;"></div>
           <div style="width: 160px; height: 80px; border: 2px dashed #f2f2f2; border-radius: 0;"></div>
         </div>
+        <!-- An ignored rounded element over a mirrored box (rounded hole),
+             under a positioned circle painted after it (covers the hole). -->
+        <div class="duo-overlap">
+          <div class="box"></div>
+          <div class="ign" data-gpu-ignore>ignored, rounded</div>
+          <div class="over"></div>
+        </div>
       </section>
 
       <section data-vr="canvas">
         <h2>Live canvas mirrors</h2>
         <canvas class="livecanvas" width="480" height="160"></canvas>
       </section>
+
+      <div class="duo-footwrap">
+        <footer class="duo-footer" data-gpu-ignore>
+          <b>Footer (data-gpu-ignore)</b>
+          Static, in flow: the page paints it; the mirror leaves a hole.
+        </footer>
+      </div>
     </div>
 
     <div id="panel">

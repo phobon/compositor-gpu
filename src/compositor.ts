@@ -1,4 +1,5 @@
 import { BoxPass } from './boxes/boxRenderer'
+import { CutoutPass } from './boxes/cutoutPass'
 import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
 import { SceneReader } from './dom/tree'
@@ -29,6 +30,10 @@ export async function createCompositor(
 ): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
   const root = options.root ?? document.body
   const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
+  // Holes for data-gpu-ignore elements go with any painted layer.
+  if (layers.size > 0) {
+    layers.add('cutouts')
+  }
   const fallback = options.fallback ?? 'passthrough'
   const mode = options.mode ?? 'overlay'
   const hideSource = options.hideSource ?? true
@@ -83,6 +88,9 @@ export async function createCompositor(
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)
     renderer.addPass(text)
+  }
+  if (layers.has('cutouts')) {
+    renderer.addPass(new CutoutPass(renderer.shared))
   }
   gpu.device.popErrorScope().then((e) => {
     if (e) {
@@ -423,6 +431,7 @@ export async function createCompositor(
       boxes: scene.boxes.length,
       images: scene.images.length,
       glyphs: scene.glyphCount(),
+      cutouts: scene.cutouts.length,
       fallback: text?.fallbackCount ?? 0,
       fallbackSamples: text ? Array.from(text.fallbackSamples) : [],
       ligatures: text?.ligatureCount ?? 0,
@@ -492,6 +501,7 @@ function inert(): Compositor & { text: null; scene: null } {
       boxes: 0,
       images: 0,
       glyphs: 0,
+      cutouts: 0,
       fallback: 0,
       fallbackSamples: [],
       ligatures: 0,

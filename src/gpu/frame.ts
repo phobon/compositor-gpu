@@ -1,4 +1,5 @@
 import type { Scene } from '../scene/scene'
+import type { Layer } from '../types'
 
 /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
 export const FRAME_WGSL = /* wgsl */ `
@@ -34,7 +35,7 @@ export const FRAME_BYTES = 8 * 4
 
 /** A render pass owns one pipeline + its instance buffers for one layer. */
 export interface RenderPass {
-  readonly layer: 'boxes' | 'images' | 'text'
+  readonly layer: Layer
   /** Re-pack instance buffers from the (dirty) scene. */
   upload(scene: Scene): void
   /**

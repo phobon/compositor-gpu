@@ -9,7 +9,7 @@ export interface FontDescriptor {
   italic?: boolean
 }
 
-export type Layer = 'boxes' | 'images' | 'text'
+export type Layer = 'boxes' | 'images' | 'text' | 'cutouts'
 export type Mode = 'overlay' | 'replace'
 export type Fallback = 'passthrough' | 'throw'
 
@@ -38,7 +38,8 @@ export interface CompositorOptions {
   root?: HTMLElement
   /** 'overlay' paints over the page; 'replace' hides DOM paint, keeps a11y. */
   mode?: Mode
-  /** Which layers to render. Defaults to all three. */
+  /** Which layers to render. Defaults to all. 'cutouts' (the holes left
+   * by `data-gpu-ignore` elements) is added whenever any other layer is. */
   layers?: Layer[]
   /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
   hideSource?: boolean
@@ -68,6 +69,8 @@ export interface CompositorStats {
   boxes: number
   images: number
   glyphs: number
+  /** Cutout records (`data-gpu-ignore` holes) in the scene. */
+  cutouts: number
   /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
   fallback: number
   /** Up to 12 distinct fallback graphemes: `"text" family weight reason`
@@ -79,7 +82,7 @@ export interface CompositorStats {
   ligatures: number
   /** Slug faces registered (static + variable sources). */
   faces: number
-  /** Layers re-uploaded in the most recent frame (0..3). */
+  /** Layers re-uploaded in the most recent frame (0..4). */
   uploads: number
   /** Draw batches issued in the most recent frame. */
   batches: number

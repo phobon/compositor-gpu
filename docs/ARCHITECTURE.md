@@ -83,7 +83,8 @@ with the page until the next frame.
    scroll / rAF          │  Renderer      TypeGPU device             │
    FontFace ready        │                ├─ BoxPass   (instanced)   │
                          │                ├─ ImagePass (textured)    │
-                         │                └─ TextPass  (Slug)        │
+                         │                ├─ TextPass  (Slug)        │
+                         │                └─ CutoutPass (dest-out)   │
                          │                  │                        │
                          │                  ▼                        │
                          │         <canvas> (absolute, anchored)     │
@@ -113,16 +114,17 @@ invalidations, updates buffers, and draws.
 | `dom/gradient.ts` | Reads CSS `linear-gradient`/`radial-gradient`, interpolates stops in premultiplied sRGB for the box shader. |
 | `dom/textRuns.ts` | Extracts per-glyph geometry from text nodes using `Range.getClientRects()` / segmentation, mapped to font + colour. The heart of text fidelity. |
 | `dom/observer.ts` | Resize/Mutation/Intersection observers + scroll + `document.fonts.ready`; coalesces into invalidation flags. |
-| `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`) in document space. No GPU types here. |
+| `scene/records.ts` | Plain data records (`BoxRecord`, `ImageRecord`, `GlyphRun`, `CutoutRecord`) in document space. No GPU types here. |
 | `scene/scene.ts` | Holds records, assigns stable ids, produces instance buffers, tracks dirty ranges. |
 | `scene/stacking.ts` | Builds a simplified CSS stacking-context tree while walking and flattens it (Appendix E) into each record's integer paint order `z`; also produces opacity `OpacityGroup`s. |
-| `scene/batches.ts` | Merges boxes/images/text into cross-layer draw batches (splitting only where overlap forces it) and threads in push/pop markers for opacity groups. |
+| `scene/batches.ts` | Merges boxes/images/text/cutouts into cross-layer draw batches (splitting only where overlap forces it) and threads in push/pop markers for opacity groups. |
 | `text/textRasterizer.ts` | Interface a text backend must satisfy (`Slug` is the default impl; an MSDF impl can slot in). |
 | `text/slug/*` | Font outline extraction → banded curve data → GPU buffers; the Slug WGSL fragment shader. |
 | `text/glyphAtlas.ts` | Canvas-2D-rasterised fallback atlas (emoji, uncovered code points, multi-code-point clusters, unregistered faces), packed as a shared `rgba8unorm` texture. |
 | `text/atlasShader.ts` | Second pipeline in the text pass drawing textured quads from the fallback atlas, sharing one instance index space with Slug so cross-layer batches stay aligned. |
 | `text/fontSource.ts` | Resolves a `FontFace`/`@font-face` rule to its `url()` source and fetches the bytes at runtime for `SlugText.prepare()`. |
 | `boxes/boxRenderer.ts` | Instanced rounded-rect pass (backgrounds, borders, gradients, shadows). The simplest full vertical slice of the sync loop. |
+| `boxes/cutoutPass.ts` | Erases the mirror under `data-gpu-ignore` elements: one rounded-rect quad per `CutoutRecord`, blended destination-out at the record's paint-order position, so the page's own paint of the ignored element shows through the canvas. |
 | `images/imageRenderer.ts` | Uploads `<img>` / `<canvas>` / `<video>` / background images to textures, draws textured quads; collapses consecutive atlas-backed instances into one draw. |
 | `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
 | `gpu/frame.ts` | Shared `Frame` uniform (target size, target origin, time, dpr, vscroll) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |

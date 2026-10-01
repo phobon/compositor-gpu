@@ -152,9 +152,12 @@ function carriesStylesheet(n: Node): boolean {
  * (captured on the root) in `animating`; while any run, the frame re-reads
  * `animatingScopes()` every frame.
  */
-/** Elements carrying this attribute (and their subtrees) are neither
- * mirrored nor watched: debug overlays, the page's own stats readouts,
- * anything that would otherwise invalidate the mirror every frame. */
+/** Elements carrying this attribute (and their subtrees) are not mirrored
+ * and their subtrees are not watched: debug overlays, the page's own stats
+ * readouts, site chrome the page paints itself. The reader leaves a hole
+ * (a CutoutRecord) over each one so its DOM paint shows through the
+ * canvas; an attribute change on the element itself still re-reads its
+ * parent, so the hole follows class/style toggles. */
 export const IGNORE_ATTR = 'data-gpu-ignore'
 /** Set by replace mode on the elements whose paint it hides with
  * `opacity: 0`; the value is the element's computed opacity before that,
@@ -164,6 +167,18 @@ export const HIDDEN_ATTR = 'data-gpu-hidden'
 export const isIgnored = (n: Node): boolean => {
   const el = n instanceof Element ? n : n.parentElement
   return el !== null && el.closest(`[${IGNORE_ATTR}]`) !== null
+}
+
+/** An attribute change on an ignored element itself (not inside another
+ * ignored one): it can move or resize the element's hole. */
+const isIgnoreRoot = (r: MutationRecord): boolean => {
+  const t = r.target
+  return (
+    r.type === 'attributes' &&
+    t instanceof Element &&
+    t.hasAttribute(IGNORE_ATTR) &&
+    (t.parentElement === null || !isIgnored(t.parentElement))
+  )
 }
 
 /** Why the mirror was invalidated, cumulative since start(), plus the last
@@ -221,7 +236,7 @@ export class DomSync {
     this.mo = new MutationObserver((records) => {
       let flag = Dirty.NONE
       for (const r of records) {
-        if (isIgnored(r.target)) {
+        if (isIgnored(r.target) && !isIgnoreRoot(r)) {
           continue
         }
         const f = this.scope(r)
