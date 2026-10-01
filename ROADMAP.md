@@ -66,7 +66,9 @@ once every element is Inter, nothing invalidating the mirror at idle.
    the playground `duo` section (fixed nav, rounded overlap, a footer in
    an ignored `display: contents` wrapper as mds-home does it — the holes
    then land on the wrapper's children; attribute changes and CSS
-   animations on a hole element re-read its parent). Still to check
+   animations on a hole element re-read its parent). Fixed chrome goes
+   above the canvas instead (`zIndex` option; mds-home passes 500): its
+   hole would trail it by a frame while scrolling. Still to check
    interactively: hover/focus/selection,
    links, the nav popup; `::selection` is not mirrored.
 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /

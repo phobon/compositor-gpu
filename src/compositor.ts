@@ -50,7 +50,7 @@ export async function createCompositor(
     left: '0',
     top: '0',
     pointerEvents: 'none',
-    zIndex: '2147483646'
+    zIndex: String(options.zIndex ?? 2147483646)
   } satisfies Partial<CSSStyleDeclaration>)
   canvas.setAttribute('aria-hidden', 'true')
   // Mount on <html>, not <body>: replace mode hides the mirrored root's

@@ -66,7 +66,7 @@ index a96f502..2c37be0 100644
     Ligatures: `font.ts` builds a `liga`/`clig` lookup from GSUB and the
     rasterizer draws the ligature glyph over adjacent, abutting, same-line
 diff --git a/ROADMAP.md b/ROADMAP.md
-index 74fa725..f3e44a7 100644
+index 74fa725..4abc765 100644
 --- a/ROADMAP.md
 +++ b/ROADMAP.md
 @@ -14,8 +14,9 @@ footer, scroll-top, the portalled nav popup) is excluded with
@@ -106,7 +106,7 @@ index 74fa725..f3e44a7 100644
  2. **Scroll-frame lag (overlay mode)** — done. The loop stays on rAF for
     `SCROLL_SETTLE_MS` after each `scroll` event, and the canvas scrolls with
     the document: `position: absolute`, the viewport plus `canvasMargin`
-@@ -42,14 +53,26 @@ once every element is Inter, nothing invalidating the mirror at idle.
+@@ -42,14 +53,28 @@ once every element is Inter, nothing invalidating the mirror at idle.
     (viewport-space) content still moves with the page between frames. Cost:
     the canvas is up to 3× the viewport area; check fill rate on a real
     device (SwiftShader `steady fps` dropped ~5.5 → ~2 on `test:perf`).
@@ -126,7 +126,9 @@ index 74fa725..f3e44a7 100644
 +   the playground `duo` section (fixed nav, rounded overlap, a footer in
 +   an ignored `display: contents` wrapper as mds-home does it — the holes
 +   then land on the wrapper's children; attribute changes and CSS
-+   animations on a hole element re-read its parent). Still to check
++   animations on a hole element re-read its parent). Fixed chrome goes
++   above the canvas instead (`zIndex` option; mds-home passes 500): its
++   hole would trail it by a frame while scrolling. Still to check
 +   interactively: hover/focus/selection,
 +   links, the nav popup; `::selection` is not mirrored.
  4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
@@ -140,7 +142,7 @@ index 74fa725..f3e44a7 100644
     `full-width` / `full-size-kana`, Greek final sigma under `lowercase`.
  5. **Housekeeping.** Commit + push compositor-gpu, bump the submodule
     pointer in mds-home (`git -C compositor-gpu pull`), `git submodule`
-@@ -119,7 +142,11 @@ perspective transforms · culling · WebGL2 backend.
+@@ -119,7 +144,11 @@ perspective transforms · culling · WebGL2 backend.
        `stats().sync` (why the mirror was invalidated, elements tracked as
        animating, last mutation target). `data-gpu-ignore` on an element
        excludes its subtree from the mirror and from invalidation — for debug
@@ -153,7 +155,7 @@ index 74fa725..f3e44a7 100644
  - [x] opentype.js 2.0 gvar bug worked around (`text/slug/gvarFix.ts`): a
        packed point count of 0 means "all points", not "no points"; without it
        Inter's D/R (shared point list + all-points tuple) render mangled at
-@@ -164,15 +191,30 @@ perspective transforms · culling · WebGL2 backend.
+@@ -164,15 +193,30 @@ perspective transforms · culling · WebGL2 backend.
        `createImageBitmap` (naturalWidth is density-corrected), SVG `<img>`
        rasterised at display size (gatsby-plugin-image sizers stalled lazy loads),
        `process.env` shim for typegpu
@@ -187,7 +189,7 @@ index 74fa725..f3e44a7 100644
  - [ ] External `<use href>` in inline SVG
  - [x] Consolidation review: lifecycle (destroy/device-lost/start-after-stop),
        leaks, `visibility`, inline transforms + `rotate/scale/translate`,
-@@ -184,6 +226,12 @@ perspective transforms · culling · WebGL2 backend.
+@@ -184,6 +228,12 @@ perspective transforms · culling · WebGL2 backend.
  - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
  - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
        and grapheme-segmentation cache (full read −30%)
@@ -235,10 +237,10 @@ index 638cb2c..0f87263 100644
  | `images/imageAtlas.ts` | Shared mipmapped `rgba8unorm` atlas for static images ≤1024px (4px gutters, half-texel-clamped UVs); larger/dynamic images keep their own texture. |
  | `gpu/frame.ts` | Shared `Frame` uniform (target size, target origin, time, dpr, vscroll) and `doc_to_clip()`, prepended to every pass's WGSL; bind group 0 for all passes. |
 diff --git a/docs/HANDOFF.md b/docs/HANDOFF.md
-index aeb83fd..9a1788b 100644
+index aeb83fd..a4b697a 100644
 --- a/docs/HANDOFF.md
 +++ b/docs/HANDOFF.md
-@@ -23,26 +23,54 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
+@@ -23,26 +23,59 @@ back to a clean flow: commit + push in `~/code/compositor-gpu`, then in
  MDS-home `git -C compositor-gpu checkout -- . && git -C compositor-gpu pull`,
  then commit the pointer.
  
@@ -284,7 +286,11 @@ index aeb83fd..9a1788b 100644
 +`display: contents` wrapper (how `SharedLayout`'s `GpuIgnore` works) puts
 +the holes on its children; attribute changes and CSS animations on a hole
 +element re-read its parent so the hole follows (deeper mutations stay
-+unwatched); (1) dashed/dotted borders fitted per side
++unwatched). Fixed chrome should sit ABOVE the canvas rather than behind a
++hole — a hole for a fixed element trails it by a frame while scrolling
++because the canvas scrolls with the document — so `CompositorOptions.zIndex`
++exists and mds-home's `GpuCompositor.jsx` passes 500 (content ≤ 40, ScrollTop
++999, TopNav/popup 9999); (1) dashed/dotted borders fitted per side
 +(square corners) or along the inset centre path (rounded), matching
 +Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
 +the `/duo` placeholder border is now pixel-identical, `duo` parity
@@ -302,7 +308,8 @@ index aeb83fd..9a1788b 100644
 +of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
 +untracked; delete after reading).
 +
-+**MDS-home:** clean at `ea95f754` (Duo wiring, SEO `@graph` fix,
++**MDS-home:** `ea95f754` + uncommitted `src/components/Duo/GpuCompositor.jsx`
++(`zIndex` prop, default 500) (Duo wiring, SEO `@graph` fix,
 +submodule pointer). Next bump after committing batch (c): `git -C
 +compositor-gpu fetch origin && git -C compositor-gpu checkout origin/main
 +&& git add compositor-gpu && git commit`.
@@ -1166,7 +1173,7 @@ index 0000000..071bb6f
 +  }
 +}
 diff --git a/src/compositor.ts b/src/compositor.ts
-index a3438da..7716dca 100644
+index a3438da..1230c6a 100644
 --- a/src/compositor.ts
 +++ b/src/compositor.ts
 @@ -1,5 +1,7 @@
@@ -1189,6 +1196,15 @@ index a3438da..7716dca 100644
    const fallback = options.fallback ?? 'passthrough'
    const mode = options.mode ?? 'overlay'
    const hideSource = options.hideSource ?? true
+@@ -44,7 +50,7 @@ export async function createCompositor(
+     left: '0',
+     top: '0',
+     pointerEvents: 'none',
+-    zIndex: '2147483646'
++    zIndex: String(options.zIndex ?? 2147483646)
+   } satisfies Partial<CSSStyleDeclaration>)
+   canvas.setAttribute('aria-hidden', 'true')
+   // Mount on <html>, not <body>: replace mode hides the mirrored root's
 @@ -83,6 +89,9 @@ export async function createCompositor(
      text = new SlugText(renderer.shared)
      renderer.addPass(text)
@@ -2987,7 +3003,7 @@ index a6645b8..3ae8b8f 100644
    }
    if (transformable && hasTransform(s)) {
 diff --git a/src/types.ts b/src/types.ts
-index 3224a4a..9960f55 100644
+index 3224a4a..9580564 100644
 --- a/src/types.ts
 +++ b/src/types.ts
 @@ -1,4 +1,5 @@
@@ -3015,7 +3031,21 @@ index 3224a4a..9960f55 100644
    layers?: Layer[]
    /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
    hideSource?: boolean
-@@ -67,6 +69,8 @@ export interface CompositorStats {
+@@ -54,6 +56,13 @@ export interface CompositorOptions {
+    * when the viewport leaves it; a larger margin means fewer re-anchors
+    * and a larger canvas. */
+   canvasMargin?: number
++  /** z-index of the canvas (default: 2147483646, above everything). Site
++   * chrome that is `position: fixed` and `data-gpu-ignore`d is better put
++   * ABOVE the canvas than shown through a hole: the canvas scrolls with
++   * the document, so a hole for a fixed element trails it by a frame while
++   * scrolling. Pass a value below that chrome's z-index (in the root
++   * stacking context) and it paints over the canvas with no hole needed. */
++  zIndex?: number
+   /** Verbose logging. */
+   debug?: boolean
+   /** Per-glyph hook, called each frame before draw. Mutate glyph.offset here. */
+@@ -67,6 +76,8 @@ export interface CompositorStats {
    boxes: number
    images: number
    glyphs: number
@@ -3024,7 +3054,7 @@ index 3224a4a..9960f55 100644
    /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
    fallback: number
    /** Up to 12 distinct fallback graphemes: `"text" family weight reason`
-@@ -78,7 +82,7 @@ export interface CompositorStats {
+@@ -78,7 +89,7 @@ export interface CompositorStats {
    ligatures: number
    /** Slug faces registered (static + variable sources). */
    faces: number
@@ -3033,7 +3063,7 @@ index 3224a4a..9960f55 100644
    uploads: number
    /** Draw batches issued in the most recent frame. */
    batches: number
-@@ -98,6 +102,10 @@ export interface CompositorStats {
+@@ -98,6 +109,10 @@ export interface CompositorStats {
     * means something on the page invalidates the mirror every frame; put
     * `data-gpu-ignore` on it if it isn't meant to be mirrored. */
    sync: SyncDiagnostics

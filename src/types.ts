@@ -56,6 +56,13 @@ export interface CompositorOptions {
    * when the viewport leaves it; a larger margin means fewer re-anchors
    * and a larger canvas. */
   canvasMargin?: number
+  /** z-index of the canvas (default: 2147483646, above everything). Site
+   * chrome that is `position: fixed` and `data-gpu-ignore`d is better put
+   * ABOVE the canvas than shown through a hole: the canvas scrolls with
+   * the document, so a hole for a fixed element trails it by a frame while
+   * scrolling. Pass a value below that chrome's z-index (in the root
+   * stacking context) and it paints over the canvas with no hole needed. */
+  zIndex?: number
   /** Verbose logging. */
   debug?: boolean
   /** Per-glyph hook, called each frame before draw. Mutate glyph.offset here. */

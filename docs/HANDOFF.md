@@ -45,7 +45,11 @@ pre-hide opacity so the reader ignores the hiding). An ignored
 `display: contents` wrapper (how `SharedLayout`'s `GpuIgnore` works) puts
 the holes on its children; attribute changes and CSS animations on a hole
 element re-read its parent so the hole follows (deeper mutations stay
-unwatched); (1) dashed/dotted borders fitted per side
+unwatched). Fixed chrome should sit ABOVE the canvas rather than behind a
+hole — a hole for a fixed element trails it by a frame while scrolling
+because the canvas scrolls with the document — so `CompositorOptions.zIndex`
+exists and mds-home's `GpuCompositor.jsx` passes 500 (content ≤ 40, ScrollTop
+999, TopNav/popup 9999); (1) dashed/dotted borders fitted per side
 (square corners) or along the inset centre path (rounded), matching
 Blink's `SelectBestDashGap` rules and Skia's chord-measured arc lengths —
 the `/duo` placeholder border is now pixel-identical, `duo` parity
@@ -63,7 +67,8 @@ perf.html 84k → 15k, full read ~26% faster, geometry within 0.031 px,
 of this batch: `_staging/compositor-gpu-changes.diff` (`_staging/` is
 untracked; delete after reading).
 
-**MDS-home:** clean at `ea95f754` (Duo wiring, SEO `@graph` fix,
+**MDS-home:** `ea95f754` + uncommitted `src/components/Duo/GpuCompositor.jsx`
+(`zIndex` prop, default 500) (Duo wiring, SEO `@graph` fix,
 submodule pointer). Next bump after committing batch (c): `git -C
 compositor-gpu fetch origin && git -C compositor-gpu checkout origin/main
 && git add compositor-gpu && git commit`.
