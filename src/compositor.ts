@@ -82,17 +82,17 @@ export async function createCompositor(
   if (layers.has('boxes')) {
     renderer.addPass(new BoxPass(renderer.shared))
   }
+  let imagePass: ImagePass | null = null
   if (layers.has('images')) {
     // `scene`/`scheduler` are declared further down this function; this
     // closes over those bindings lazily — `onReady` only fires once a
     // `createImageBitmap()` resolves, well after both exist (see the
     // `sync`/`reader` comment below for the same pattern).
-    renderer.addPass(
-      new ImagePass(renderer.shared, () => {
-        scene.markDirty('images')
-        scheduler.request()
-      })
-    )
+    imagePass = new ImagePass(renderer.shared, () => {
+      scene.markDirty('images')
+      scheduler.request()
+    })
+    renderer.addPass(imagePass)
   }
   let text: SlugText | null = null
   if (layers.has('text')) {
@@ -419,6 +419,12 @@ export async function createCompositor(
       }
     },
     nodeOf: (el) => reader.nodeOf(el),
+    imageOf(el) {
+      const own = reader.nodeOf(el)?.own
+      const rec = own?.find((r) => r.kind === 'image')
+      return rec && imagePass ? imagePass.regionOf(rec) : null
+    },
+    glyphTable: () => text?.glyphTable() ?? null,
     get version() {
       return scene.version
     }

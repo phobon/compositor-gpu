@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import typegpu from 'unplugin-typegpu/vite'
 import { defineConfig } from 'vite'
 import dts from 'vite-plugin-dts'
 
@@ -11,6 +12,8 @@ export default defineConfig(({ command }) => {
   if (command === 'serve') {
     return {
       root: 'playground',
+      // JS-bodied ('use gpu') tgpu.fn in the fx playground.
+      plugins: [typegpu({})],
       resolve: { alias: { '@': resolve(import.meta.dirname, 'src') } },
       server: { open: true }
     }

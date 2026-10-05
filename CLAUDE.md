@@ -61,7 +61,11 @@ and on the geometry section `fx-geometry`, `fx-glow`, `fx-ripple`, `fx-after`,
 and on the materials section `fx-materials`, `fx-mat-ripple`,
 `fx-mat-wave`, `fx-mat-bend` (plus a check that the `<img>`'s DOM paint is
 hidden while on), `fx-mat-stripes`, `fx-mat-all`, `fx-mat-then-off` (must
-equal `fx-materials` exactly). Material pipelines compile asynchronously:
+equal `fx-materials` exactly), and on the M3b section `fx-m3b`,
+`fx-layer-glyphs`, `fx-layer-image`, `fx-sim` (fixed `dt` override, run
+until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
+(on the fx-off section), `fx-m3b-all`, `fx-m3b-then-off` (must equal
+`fx-m3b` exactly). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -106,10 +110,17 @@ gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is m
 
 **Effects layer** (`src/fx/`, `compositor-gpu/fx`): spec in
 `docs/EFFECTS.md` (with Deviations sections for what M1, M2 and M3
-changed), author contract in `src/fx/README.md`. M1, M2 and M3a are built:
+changed), author contract in `src/fx/README.md`. M1, M2 and M3 are built:
 `createEffects(compositor)`, Params, the pointer, fullscreen and region
-`fx.pass`, `fx.target`, `fx.layer`, `fx.material`, presets `blur`/
-`displace`/`cursorGlow`/`clickRipple`/`ripple`. Materials: the box, image
+`fx.pass`, `fx.target` (incl. `image`), `fx.layer` (with a `simulate`
+compute hook dispatched from its `frame()` in its own submit, `image`
+and `glyphs` bindings resolved at draw time via `graph.imageOf` /
+`graph.glyphTable`), `fx.material` (with `raw` programs, `rawProgram` in
+`gpu/material.ts`), the TypeGPU externals `gpu`/`MatIn`/`Quad`
+(`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
+'random'`), presets `blur`/`displace`/`cursorGlow`/`clickRipple`/
+`ripple`. The playground's dev server runs `unplugin-typegpu` (dev
+dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),
 records are tagged with a material id by `Scene.assign` before each batch

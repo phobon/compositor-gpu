@@ -3,13 +3,16 @@
 import '@/util/env'
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
+import * as std from 'typegpu/std'
 import {
   blur,
   clickRipple,
   createEffects,
   cursorGlow,
   displace,
+  gpu,
   type Layer,
+  MatIn,
   type Material,
   type Pass,
   ripple as imageRipple
@@ -206,6 +209,187 @@ async function boot(): Promise<void> {
         return mix(m.color, vec4f(m.coverage), s * 0.35);
       }`
   })
+  // M3b: layers that draw a target's glyphs and image, a simulated layer,
+  // a raw material, and JS-bodied ('use gpu') TypeGPU hooks.
+  const lgHeading = fx.target($('lg-heading'))
+  const lglyphs = fx.layer({
+    name: 'layer-glyphs',
+    count: 0,
+    stride: 1,
+    glyphs: lgHeading,
+    enabled: false,
+    params: { drop: { type: 'f32', default: 420, min: 0, max: 600 } },
+    vertex: /* wgsl */ `
+      fn vertex(i : u32, corner : vec2f) -> Quad {
+        // The heading's glyph i, dropped below the row, in a wave.
+        var q : Quad;
+        q.pos = glyph_point(i, corner) +
+          vec2f(0.0, params.drop + sin(f32(i) * 0.8) * 10.0);
+        q.uv = corner;
+        q.color = glyph_color(i);
+        return q;
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(q : Quad, i : u32) -> vec4f {
+        let a = glyph_coverage(i, q.uv) * q.color.a;
+        let rgb = mix(vec3f(0.98, 0.45, 0.6), vec3f(0.4, 0.75, 1.0),
+          f32(i) / max(f32(glyph_count()), 1.0));
+        return vec4f(rgb * a, a);
+      }`,
+    update(l) {
+      const n = lgHeading.glyphs.count
+      if (l.count !== n) {
+        l.count = n
+      }
+    }
+  })
+  const lgImg = fx.target($('lg-img'))
+  const limage = fx.layer({
+    name: 'layer-image',
+    count: 4,
+    stride: 1,
+    image: lgImg,
+    enabled: false,
+    params: {
+      origin: { type: 'vec2', default: [0, 0] },
+      size: { type: 'vec2', default: [0, 0] },
+      gap: { type: 'f32', default: 12, min: 0, max: 40 }
+    },
+    vertex: /* wgsl */ `
+      fn vertex(i : u32, corner : vec2f) -> Quad {
+        // The image as four tiles pulled apart.
+        let cell = vec2f(f32(i % 2u), f32(i / 2u));
+        let half = params.size * 0.5;
+        var q : Quad;
+        q.pos = params.origin + cell * (half + params.gap) + corner * half;
+        q.uv = (cell + corner) * 0.5;
+        return q;
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(q : Quad, i : u32) -> vec4f {
+        return image(q.uv);
+      }`,
+    update(l) {
+      const r = lgImg.rect
+      const origin = [r.x + 620, r.y]
+      if (origin.some((v, i) => v !== l.params.origin[i])) {
+        l.params.origin = origin
+        l.params.size = [r.width, r.height]
+      }
+    }
+  })
+  const simSchema = {
+    pull: { type: 'f32', default: 30, min: 0, max: 60 }
+  } as const
+  const simP = gpu.params(simSchema)
+  const L = gpu.layer
+  // Each dot eases towards its target: positions live on the GPU.
+  const simulate = tgpu.fn([d.u32])((i) => {
+    'use gpu'
+    const p = L.data2(i, 0)
+    const target = L.data2(i, 2)
+    const k = std.min(1, L.dt.$ * simP.pull.$)
+    L.setData2(i, 0, std.add(p, std.mul(std.sub(target, p), k)))
+  })
+  const section = fx.target($('lg-heading').closest('section') as Element)
+  let seeded = false
+  const sim = fx.layer({
+    name: 'sim-dots',
+    count: 64,
+    stride: 4,
+    enabled: false,
+    params: simSchema,
+    simulate,
+    vertex: /* wgsl */ `
+      fn vertex(i : u32, corner : vec2f) -> Quad {
+        var q : Quad;
+        q.pos = data2(i, 0) + (corner - 0.5) * 10.0;
+        q.uv = corner;
+        return q;
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(q : Quad, i : u32) -> vec4f {
+        let r = length(q.uv - 0.5) * 10.0;
+        let a = clamp(4.5 - r, 0.0, 1.0);
+        return vec4f(vec3f(0.98, 0.8, 0.3) * a, a);
+      }`,
+    update(l) {
+      if (seeded || !section.found) {
+        return
+      }
+      // Seed: every dot at one point, targets on an 8 × 8 grid.
+      const r = section.rect
+      const sx = r.x + r.width - 230
+      const sy = r.y + 70
+      for (let i = 0; i < 64; i++) {
+        l.data.set(
+          [sx - 300, sy + 220, sx + (i % 8) * 24, sy + Math.floor(i / 8) * 24],
+          i * 4
+        )
+      }
+      l.markDirty()
+      seeded = true
+    }
+  })
+  const raw = fx.material({
+    name: 'raw-box',
+    target: $('raw-box'),
+    enabled: false,
+    raw: {
+      box: /* wgsl */ `
+        @vertex
+        fn vs(@builtin(vertex_index) vi : u32,
+              @builtin(instance_index) ii : u32) -> VOut {
+          // The pass's own vertex stage, then nudged right in clip space.
+          var o = default_vs(vi, ii);
+          o.pos.x = o.pos.x + 0.04 * o.pos.w;
+          return o;
+        }
+        @fragment
+        fn fs(in : VOut) -> @location(0) vec4f {
+          let c = default_fs(in);
+          return vec4f(c.b, c.r, c.g, c.a);
+        }`
+    }
+  })
+  const tgFragment = tgpu.fn([MatIn], d.vec4f)((m) => {
+    'use gpu'
+    const s = std.step(0.5, std.fract((m.local.x - m.local.y) / 20))
+    const gold = d.vec4f(m.color.w, m.color.w * 0.8, 0, m.color.w)
+    return std.mix(m.color, gold, s * 0.6)
+  })
+  const tgbox = fx.material({
+    name: 'tgpu-box',
+    target: $('tg-box'),
+    kinds: ['box'],
+    enabled: false,
+    fragment: tgFragment
+  })
+  const tgjsSchema = {
+    amount: { type: 'f32', default: 1, min: 0, max: 1 }
+  } as const
+  const tgjsP = gpu.params(tgjsSchema)
+  const grey = tgpu.fn(
+    [d.vec2f, d.texture2d(d.f32), d.sampler()],
+    d.vec4f
+  )((uv, _src, _smp) => {
+    'use gpu'
+    const c = gpu.pass.sample(uv)
+    const g = std.dot(c.xyz, d.vec3f(0.299, 0.587, 0.114))
+    return d.vec4f(std.mix(c.xyz, d.vec3f(g, g, g), tgjsP.amount.$), c.w)
+  })
+  const tgjs = fx.pass({
+    name: 'tgpu-grey',
+    fragment: grey,
+    params: tgjsSchema,
+    enabled: false
+  })
+  bindPanel('lglyphs', lglyphs)
+  bindPanel('limage', limage)
+  bindPanel('sim', sim)
+  bindPanel('raw', raw)
+  bindPanel('tgbox', tgbox)
+  bindPanel('tgjs', tgjs)
   bindPanel('blur', b)
   bindPanel('displace', dsp)
   bindPanel('mripple', mripple)
@@ -265,6 +449,12 @@ async function boot(): Promise<void> {
     wave,
     bend,
     tint,
+    lglyphs,
+    limage,
+    sim,
+    raw,
+    tgbox,
+    tgjs,
     pinClicksOn(id) {
       // Two clicks on the element, 0.25 s and 0.6 s old at the pinned time.
       const r = $(id).getBoundingClientRect()

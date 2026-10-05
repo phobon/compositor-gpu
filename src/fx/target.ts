@@ -1,6 +1,6 @@
 import type { ElNode } from '../dom/tree'
 import type { RenderGraph } from '../gpu/graph'
-import type { Affine, Corners, Rect } from '../scene/records'
+import type { Affine, Corners, GlyphRun, Rect } from '../scene/records'
 
 // Targets: an element as a handle on the mirror's geometry
 // (docs/EFFECTS.md "Targets"). Resolved lazily from the reader's node for
@@ -37,8 +37,18 @@ export interface Target {
   readonly radius: Corners
   /** Glyphs in the element's subtree that share its space. */
   readonly glyphs: TargetGlyphs
+  /** The element's own image record (an `<img>`, canvas, video or first
+   * background image) as drawn by the mirror: its texel size, or null
+   * when it has none or it isn't decoded yet. A Layer samples it with
+   * `image: target`. */
+  readonly image: TargetImage | null
   /** Changes whenever the target re-resolves (the scene was rebuilt). */
   readonly version: number
+}
+
+export interface TargetImage {
+  width: number
+  height: number
 }
 
 const ZERO_RECT: Rect = { x: 0, y: 0, width: 0, height: 0 }
@@ -51,25 +61,34 @@ const NO_GLYPHS: TargetGlyphs = {
   text: []
 }
 
-function collectGlyphs(node: ElNode): TargetGlyphs {
-  const rects: number[] = []
-  const ids: number[] = []
-  const text: string[] = []
+/** The text runs whose glyphs make up a target's `glyphs`, in order. */
+export function targetRuns(node: ElNode): GlyphRun[] {
+  const runs: GlyphRun[] = []
   const space = node.space
   const visit = (n: ElNode): void => {
     for (const kid of n.kids) {
       if (kid.kind === 'element') {
         visit(kid)
       } else if (kid.kind === 'text' && (kid.space ?? 'doc') === space) {
-        for (const g of kid.glyphs) {
-          rects.push(g.rect.x, g.rect.y, g.rect.width, g.rect.height)
-          ids.push(g.glyphId)
-          text.push(g.text)
-        }
+        runs.push(kid)
       }
     }
   }
   visit(node)
+  return runs
+}
+
+function collectGlyphs(node: ElNode): TargetGlyphs {
+  const rects: number[] = []
+  const ids: number[] = []
+  const text: string[] = []
+  for (const run of targetRuns(node)) {
+    for (const g of run.glyphs) {
+      rects.push(g.rect.x, g.rect.y, g.rect.width, g.rect.height)
+      ids.push(g.glyphId)
+      text.push(g.text)
+    }
+  }
   return {
     count: ids.length,
     rects: new Float32Array(rects),
@@ -130,6 +149,10 @@ export function createTarget(el: Element, graph: RenderGraph | null): Target {
       }
       glyphs ??= collectGlyphs(n)
       return glyphs
+    },
+    get image() {
+      const r = graph?.imageOf(el)
+      return r ? { width: r.width, height: r.height } : null
     },
     get version() {
       resolve()

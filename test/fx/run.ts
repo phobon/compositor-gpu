@@ -30,6 +30,15 @@
 //                     paint must be hidden while on and restored after
 //   fx-mat-stripes    box fragment hook
 //   fx-mat-then-off   all four on, then off: equal to fx-materials exactly
+//   fx-m3b            the M3b section, nothing enabled
+//   fx-layer-glyphs   a Layer drawing the heading's glyphs through Slug
+//   fx-layer-image    a Layer sampling the <img> Target as four tiles
+//   fx-sim            a Layer with a 'use gpu' simulate hook (fixed dt,
+//                     run until converged)
+//   fx-mat-raw        a raw box program (default_vs/default_fs wrapped)
+//   fx-mat-tgpu       a 'use gpu' material fragment
+//   fx-tgpu-js        the fx-off section through a 'use gpu' pass
+//   fx-m3b-then-off   the M3b effects on, then off: equal to fx-m3b exactly
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -66,6 +75,13 @@ type Effect =
   | 'bend'
   | 'tint'
   | 'materials'
+  | 'lglyphs'
+  | 'limage'
+  | 'sim'
+  | 'raw'
+  | 'tgbox'
+  | 'tgjs'
+  | 'm3b'
 
 interface Result {
   name: string
@@ -130,6 +146,25 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.wave.enabled = e === 'wave' || e === 'materials'
     h.bend.enabled = e === 'bend' || e === 'materials'
     h.tint.enabled = e === 'tint' || e === 'materials'
+    h.lglyphs.enabled = e === 'lglyphs' || e === 'm3b'
+    h.limage.enabled = e === 'limage' || e === 'm3b'
+    h.raw.enabled = e === 'raw' || e === 'm3b'
+    h.tgbox.enabled = e === 'tgbox' || e === 'm3b'
+    h.tgjs.enabled = e === 'tgjs'
+    const sim = e === 'sim' || e === 'm3b'
+    if (sim) {
+      // A fixed step, so the eased dots converge the same way every run.
+      h.fx.__override({
+        time: 1.25,
+        elapsed: 1.25,
+        dt: 1 / 60,
+        pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
+      })
+    }
+    h.sim.enabled = sim
+    for (let i = 0; sim && i < 2000 && h.sim.steps < 90; i++) {
+      await h.raf2()
+    }
     if (e === 'ripple') {
       h.pinClicks()
     }
@@ -419,6 +454,48 @@ async function main(): Promise<void> {
         })
       }
     }
+    const m3b = 'fx-m3b'
+    let m3bPre: PNG | null = null
+    if (want(m3b) || want('fx-m3b-then-off')) {
+      m3bPre = await capture(m3b, m3b, 'none')
+    }
+    if (want('fx-layer-glyphs')) {
+      await capture(m3b, 'fx-layer-glyphs', 'lglyphs')
+    }
+    if (want('fx-layer-image')) {
+      await capture(m3b, 'fx-layer-image', 'limage')
+    }
+    if (want('fx-sim')) {
+      await capture(m3b, 'fx-sim', 'sim')
+    }
+    if (want('fx-mat-raw')) {
+      await capture(m3b, 'fx-mat-raw', 'raw')
+    }
+    if (want('fx-mat-tgpu')) {
+      await capture(m3b, 'fx-mat-tgpu', 'tgbox')
+    }
+    if (want('fx-tgpu-js')) {
+      await capture('fx-off', 'fx-tgpu-js', 'tgjs')
+    }
+    if (want('fx-m3b-then-off')) {
+      await capture(m3b, 'fx-m3b-all', 'm3b')
+      const post = await capture(m3b, 'fx-m3b-then-off', 'none')
+      if (m3bPre && post) {
+        const n = exactDiff(m3bPre, post)
+        const pct = diffPng(
+          m3bPre,
+          post,
+          resolve(outDir, 'fx-m3b-then-off-invariant.png')
+        )
+        results.push({
+          name: 'fx-m3b-then-off (= m3b)',
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    await pinPlain()
     await setEffect(page, 'none')
     if (errors.length > 0) {
       console.log(`\n[fx] console errors:\n  ${errors.join('\n  ')}`)

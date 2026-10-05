@@ -1,7 +1,7 @@
 {
   "name": "compositor-gpu",
   "version": "0.0.1",
-  "description": "Mirror a live DOM onto the GPU \u2014 boxes, images, and Slug-rendered text \u2014 kept in step with the page.",
+  "description": "Mirror a live DOM onto the GPU — boxes, images, and Slug-rendered text — kept in step with the page.",
   "type": "module",
   "license": "MIT",
   "author": "Bonobo",
@@ -59,6 +59,7 @@
     "pngjs": "^7.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
+    "unplugin-typegpu": "0.12.3",
     "vite": "^8.3.1",
     "vite-plugin-dts": "^5.1.1"
   }

@@ -22,6 +22,18 @@ declare global {
       wave: Material
       bend: Material
       tint: Material
+      /** M3b: the heading's glyphs drawn by a Layer. */
+      lglyphs: Layer
+      /** An image Target sampled by a Layer. */
+      limage: Layer
+      /** A simulated Layer ('use gpu' simulate hook). */
+      sim: Layer
+      /** A raw box program. */
+      raw: Material
+      /** A 'use gpu' material fragment. */
+      tgbox: Material
+      /** A 'use gpu' pass fragment. */
+      tgjs: Pass
       /** Pin two clicks on the element with this id. */
       pinClicksOn(id: string): void
       setMode(mode: 'dom' | 'gpu' | 'both'): Promise<void>

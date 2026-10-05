@@ -4,7 +4,7 @@ import {
   MaterialPipelines,
   PREMUL_BLEND
 } from '../../gpu/material'
-import type { Glyph, RGBA, TextShadow } from '../../scene/records'
+import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
@@ -24,6 +24,17 @@ import { SLUG_WGSL, slugShader } from './shaders'
 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
 // written through the shared u32 view of the same buffer.
 const GLYPH_FLOATS = 28
+
+/** The Slug instance and outline buffers, for drawing mirrored glyphs
+ * elsewhere (`/fx` Layers). Instance layout: the `Glyph` struct in
+ * shaders.ts. */
+export interface GlyphTable {
+  glyphs: GPUBuffer
+  bands: GPUBuffer
+  curves: GPUBuffer
+  /** Instance index of `run`'s first glyph in the last upload. */
+  start(run: GlyphRun): number | undefined
+}
 /** Max gap (px) between a component's right edge and the next one's left
  * edge for them to count as one ligature: Chrome's split rects abut. */
 const LIGATURE_GAP = 1.5
@@ -111,6 +122,8 @@ export class SlugText implements TextBackend {
   private instances = 0
   /** Per glyph index: start of its run's shadow range (see fill). */
   private shadowStart = new Uint32Array(0)
+  /** Instance index of each run's first glyph (glyphTable). */
+  private runStarts = new Map<GlyphRun, number>()
   /** The current run's doc-space clip (minX, minY, maxX, maxY). */
   private readonly clip = new Float64Array(4)
   /** The current run's space flag (1 = viewport, see frame.ts to_clip). */
@@ -188,8 +201,8 @@ export class SlugText implements TextBackend {
     this.materials = new MaterialPipelines(
       'glyph',
       device,
-      (code, n, label, layout) =>
-        describe(slugShader(code, n, true), label, layout)
+      (code, n, label, layout, wrap) =>
+        describe(wrap(slugShader(code, n, true)), label, layout)
     )
 
     this.atlasLayout = device.createBindGroupLayout({
@@ -603,6 +616,19 @@ export class SlugText implements TextBackend {
     this.atlasBindGroup = null
   }
 
+  /** The instance and outline buffers (null before the first glyph). */
+  glyphTable(): GlyphTable | null {
+    if (!this.glyphBuf || this.slugLive === 0) {
+      return null
+    }
+    return {
+      glyphs: this.glyphBuf,
+      bands: this.bandBuf,
+      curves: this.curveBuf,
+      start: (run) => this.runStarts.get(run)
+    }
+  }
+
   private rebuildBindGroup(): void {
     if (!this.glyphBuf) {
       return
@@ -662,6 +688,7 @@ export class SlugText implements TextBackend {
     this.atlasLive = 0
     this.fallbackCount = 0
     this.ligatureCount = 0
+    this.runStarts.clear()
     if (total === 0) {
       return
     }
@@ -741,6 +768,7 @@ export class SlugText implements TextBackend {
     let i = 0
     let sCursor = total
     for (const run of scene.runs) {
+      this.runStarts.set(run, i)
       const face = this.resolveFace(
         run.fontFamily,
         run.fontWeight,

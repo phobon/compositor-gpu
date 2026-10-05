@@ -85,6 +85,8 @@ export interface FxOverride {
   time?: number
   /** Every effect's elapsed, s. */
   elapsed?: number
+  /** Every layer's `fx.dt`, s (simulate steps). */
+  dt?: number
   pointer?: PointerOverride
 }
 
@@ -546,16 +548,17 @@ export function createEffects(compositor: Compositor): Effects {
           freePing(p)
         }
       }
+      any ||= layers.some((l) => l.enabled) || materials.some((m) => m.enabled)
+      // Before the layers' frames: a simulate dispatch is submitted there
+      // and must see this frame's pointer.
+      if (any) {
+        device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
+      }
       for (const l of layers) {
-        any ||= l.enabled
         l.frame(ctx)
       }
       for (const m of materials) {
-        any ||= m.enabled
         m.frame(ctx)
-      }
-      if (any) {
-        device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
       }
       // Leaving the offscreen path: free the ping-pong targets.
       if (!chainLive && ping.length > 0) {
@@ -832,6 +835,7 @@ export function createEffects(compositor: Compositor): Effects {
     pointerBuf,
     time: () => override?.time ?? timeMs / 1000,
     elapsedOverride: () => override?.elapsed ?? null,
+    dtOverride: () => override?.dt ?? null,
     wake: () => graph.requestFrame()
   }
 

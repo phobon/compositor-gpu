@@ -11,6 +11,7 @@ export {
   type Pass,
   type PassOptions
 } from './effects'
+export { gpu, type Hook, MatIn, Quad } from './gpu'
 export {
   LAYER_FX_BYTES,
   type Layer,
@@ -64,4 +65,4 @@ export {
   isTgpuFn,
   type TgpuFnLike
 } from './shader'
-export type { Target, TargetGlyphs } from './target'
+export type { Target, TargetGlyphs, TargetImage } from './target'

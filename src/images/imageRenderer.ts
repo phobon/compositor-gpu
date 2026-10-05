@@ -239,6 +239,16 @@ fn fs(in : VOut) -> @location(0) vec4f {
 }
 `
 
+/** Where an image record's pixels live on the GPU (`/fx` Target.image). */
+export interface ImageRegion {
+  view: GPUTextureView
+  /** The image's texels in `view`: u0, v0, u1, v1, inset half a texel. */
+  uv: readonly [number, number, number, number]
+  /** Texel size of the image. */
+  width: number
+  height: number
+}
+
 interface Cached {
   view: GPUTextureView
   texture: GPUTexture
@@ -295,6 +305,8 @@ export class ImagePass implements RenderPass {
   /** Aligned with scene.images: null (not ready), 'atlas' (shared bind
    * group), or a standalone per-instance bind group. */
   private draws: (GPUBindGroup | null | 'atlas')[] = []
+  /** Each drawn record's atlas entry or texture (regionOf). */
+  private regions = new Map<ImageRecord, AtlasRect | Cached>()
 
   /** Source keys with a `createImageBitmap()` in flight — fetched once. */
   private pendingBitmaps = new Set<string>()
@@ -365,8 +377,8 @@ export class ImagePass implements RenderPass {
     this.materials = new MaterialPipelines(
       'image',
       device,
-      (code, n, label, layout) =>
-        describe(shader(code, n, MATERIAL_FS), label, layout)
+      (code, n, label, layout, wrap) =>
+        describe(wrap(shader(code, n, MATERIAL_FS)), label, layout)
     )
   }
 
@@ -590,6 +602,7 @@ export class ImagePass implements RenderPass {
   upload(scene: Scene): void {
     const images = scene.images
     this.draws = []
+    this.regions.clear()
     if (images.length === 0) {
       return
     }
@@ -716,6 +729,7 @@ export class ImagePass implements RenderPass {
         this.draws.push(null)
         continue
       }
+      this.regions.set(rec, (spot ?? cached) as AtlasRect | Cached)
       const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
       const f = fit(dst, fitW ?? nw, fitH ?? nh)
       d[o + 0] = f.rect.x
@@ -791,6 +805,39 @@ export class ImagePass implements RenderPass {
       images.length * FLOATS_PER_IMAGE
     )
     this.atlas.flush()
+  }
+
+  /** The GPU pixels of `rec` as of the last upload, or null (not drawn
+   * yet: decoding, failed, or not an image this pass drew). */
+  regionOf(rec: ImageRecord): ImageRegion | null {
+    const r = this.regions.get(rec)
+    if (!r) {
+      return null
+    }
+    if ('view' in r) {
+      return {
+        view: r.view,
+        uv: [0.5 / r.w, 0.5 / r.h, 1 - 0.5 / r.w, 1 - 0.5 / r.h],
+        width: r.w,
+        height: r.h
+      }
+    }
+    const view = this.atlas.view
+    if (!view) {
+      return null
+    }
+    const s = this.atlas.size
+    return {
+      view,
+      uv: [
+        (r.x + 0.5) / s,
+        (r.y + 0.5) / s,
+        (r.x + r.w - 0.5) / s,
+        (r.y + r.h - 0.5) / s
+      ],
+      width: r.w,
+      height: r.h
+    }
   }
 
   private ensureAtlasBindGroup(): GPUBindGroup {

@@ -72,11 +72,41 @@ export interface MaterialBinding {
   readonly kinds: ReadonlySet<MaterialKind>
   /** Cells per side of each record's quad (>= 1). */
   readonly subdivisions: number
+  /** Raw programs per kind (rawProgram): replace the pass's entry points
+   * for those kinds. */
+  readonly raw?: Partial<Record<MaterialKind, string>>
   readonly layout: GPUBindGroupLayout
   readonly bindGroup: GPUBindGroup
   /** Called when a pass's pipeline for it has finished compiling (the
    * records draw with the default pipeline until then). */
   ready?(): void
+}
+
+/**
+ * A pass's material-variant module with its entry points renamed to
+ * `default_vs` / `default_fs` (plain functions the raw program may call)
+ * and the raw program, which defines `@vertex fn vs` and `@fragment fn
+ * fs` over the pass's own `VOut`, appended. Null if the module doesn't
+ * have exactly one of each entry point.
+ */
+export function rawProgram(wgsl: string, raw: string): string | null {
+  const vs = '@vertex\nfn vs('
+  const fs = '@fragment\nfn fs('
+  if (wgsl.split(vs).length !== 2 || wgsl.split(fs).length !== 2) {
+    return null
+  }
+  // IO attributes are only legal on entry points: strip them from the
+  // two signatures.
+  const plain = (src: string, from: string, to: string): string => {
+    const at = src.indexOf(from)
+    const body = src.indexOf('{', at)
+    const sig = src
+      .slice(at + from.length, body)
+      .replace(/@(builtin|location)\([\w]+\)\s*/g, '')
+    return `${src.slice(0, at)}${to}${sig}${src.slice(body)}`
+  }
+  const out = plain(plain(wgsl, vs, 'fn default_vs('), fs, 'fn default_fs(')
+  return `${out}\n${raw}`
 }
 
 /** Material pipelines still compiling (all passes). */
@@ -113,7 +143,9 @@ export class MaterialPipelines {
       code: string,
       subdivisions: number,
       label: string,
-      layout: GPUBindGroupLayout
+      layout: GPUBindGroupLayout,
+      /** Applied to the assembled module source (raw programs). */
+      wrap: (wgsl: string) => string
     ) => GPURenderPipelineDescriptor
   ) {}
 
@@ -132,14 +164,34 @@ export class MaterialPipelines {
 
   private compile(mat: MaterialBinding): void {
     const id = mat.id
-    this.cache.set(id, 'pending')
-    compiling++
+    const raw = mat.raw?.[this.kind]
+    const label = `${mat.label}:${this.kind}`
+    let bad = false
+    const wrap = (wgsl: string): string => {
+      if (raw === undefined) {
+        return wgsl
+      }
+      const out = rawProgram(wgsl, raw)
+      if (out === null) {
+        bad = true
+        return wgsl
+      }
+      return out
+    }
     const desc = this.describe(
       mat.code,
       Math.max(1, Math.floor(mat.subdivisions)),
-      `${mat.label}:${this.kind}`,
-      mat.layout
+      label,
+      mat.layout,
+      wrap
     )
+    if (bad) {
+      log.error(`${label}: raw program: the pass shader has no vs/fs`)
+      this.cache.set(id, 'failed')
+      return
+    }
+    this.cache.set(id, 'pending')
+    compiling++
     this.device
       .createRenderPipelineAsync(desc)
       .then(

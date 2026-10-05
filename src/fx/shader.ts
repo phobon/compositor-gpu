@@ -145,7 +145,10 @@ export function effectSource(fragment: Fragment, name: string): string | null {
       template:
         'fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) ' +
         '-> vec4f { return fx_user(uv, src, smp); }',
-      externals: { fx_user: fragment }
+      externals: { fx_user: fragment },
+      // Suffixed names: an author fn called `effect` or `sample` can't
+      // clash with the module's own declarations.
+      names: 'random'
     })
   } catch (e) {
     log.error(`fx:${name}: tgpu.resolve failed:`, (e as Error).message)

@@ -4,8 +4,9 @@ The effects layer of `docs/EFFECTS.md`. Built: the runtime spine and
 fullscreen post (M1: `createEffects`, Params, the pointer, `fx.pass`) and
 geometry (M2: Targets, Layers, region passes) and Materials (M3), with
 the presets `blur`, `displace`, `cursorGlow`, `clickRipple` and `ripple`.
-Still to come (M3b): a Layer compute hook, Slug glyphs in Layers,
-`Target.image`, `raw` materials, TypeGPU externals.
+M3b added the Layer `simulate` compute hook, Layers that draw a Target's
+glyphs or sample its image, `raw` materials, and TypeGPU externals for
+JS-bodied (`'use gpu'`) hooks.
 
 ```ts
 import { createCompositor } from 'compositor-gpu'
@@ -211,6 +212,7 @@ Click age is `fx.time - pointer.clicks[i].z`.
 const t = fx.target(el)              // cached per element
 const ts = fx.targets('section img') // under document, or a root
 t.found / t.rect / t.local / t.xform / t.space / t.radius / t.glyphs
+t.image                              // { width, height } | null
 t.version                            // changes when it re-resolves
 ```
 
@@ -222,8 +224,11 @@ local → space affine, `radius` the corner radii of its own box (zeros
 when it paints none). `glyphs` = `{ count, rects (x, y, w, h per glyph,
 Float32Array), ids (font glyph ids), text (grapheme per glyph) }` for the
 subtree in DOM order, so index i is stable while the text is unchanged;
-glyphs in a different space than the element are left out. Reading a
-Target reads no DOM.
+glyphs in a different space than the element are left out. `image` is
+the texel size of the element's own image record (an `<img>`, canvas,
+video, or its first background image) as the mirror drew it, or null
+when it has none or it hasn't decoded yet; a Layer samples it with
+`image: target`. Reading a Target reads no DOM.
 
 ## Layers
 
@@ -234,17 +239,21 @@ fx.layer({
   data?: Float32Array,
   space?: 'doc' | 'viewport',        // default 'doc' (page CSS px)
   place?: 'above' | 'below' | { after: target | element },
-  vertex: wgsl, fragment: wgsl,
+  vertex: hook, fragment: hook,      // WGSL or tgpu.fn (see TypeGPU)
+  simulate?: hook,                   // compute step, see below
+  image?: target | element,          // sample its image: image(uv)
+  glyphs?: target | element,         // draw its glyphs: glyph_*(k, ...)
   params?: { ...schema },
   enabled?: true, continuous?: false,
   update?: (layer, time, ctx) => void   // every frame while enabled
 }) -> Layer { name, params, data, count, stride, place, enabled,
-              continuous, markDirty(), destroy() }
+              continuous, steps, markDirty(first?, n?), destroy() }
 ```
 
 Instanced quads in the scene's paint order. Write `layer.data` (it grows
-when `count` does) and call `markDirty()`; the used prefix is uploaded
-on the next frame. Inside `update` the frame is already running, so
+when `count` does) and call `markDirty()` (or `markDirty(first, n)` for
+instances `[first, first + n)`); the marked instances are uploaded on
+the next frame, and instances added by growing `count` are marked. Inside `update` the frame is already running, so
 writes there request no further frame: keep a layer animating with
 `continuous` (set it from `update` if needed, as `clickRipple` does). Places:
 
@@ -276,6 +285,12 @@ struct LayerFx {          // offset
   count    : f32,         // 12
   scroll   : vec2f,       // 16  real document scroll, CSS px
   viewport : vec2f,       // 24  CSS px
+  dt       : f32,         // 32  s since the previous frame (<= 1/15)
+  steps    : f32,         // 36  simulate steps run since enabled
+  image_uv : vec4f,       // 48  runtime (image)
+  image_size : vec2f,     // 64  the image's texel size, 0 until decoded
+  glyph_count : f32,      // 72  runtime (glyphs)
+  _pad     : f32,
 };
 @group(1) @binding(1) var<uniform> fx      : LayerFx;
 @group(1) @binding(2) var<uniform> params  : Params;
@@ -288,6 +303,51 @@ fn page_to_viewport(p : vec2f) -> vec2f
 plus `Frame`/`to_clip` from the core. Compile errors report under
 `fx:<name>`.
 
+**`simulate`** (`fn simulate(i : u32)`) runs in a compute pass for every
+instance, each frame while the layer is enabled, before it draws. It
+reads with `data*` and writes with `set_data(i, k, v)` / `set_data2` /
+`set_data4`, so the state lives on the GPU: `layer.data` only seeds it,
+and `markDirty` overwrites the marked instances' GPU state with their
+`data` (other instances keep theirs). The state survives disabling;
+growing `count` carries it over and seeds the new instances. Step with
+`fx.dt`. `fx`, `params` and `pointer` are in scope as for the draw
+hooks (`viewport_to_page`/`page_to_viewport` too, not `Frame`). A
+layer with `simulate` defaults to `continuous: true`. `layer.steps`
+counts dispatches since it was last enabled.
+
+**`image: target`** binds the element's image record:
+
+```wgsl
+fn image(uv : vec2f) -> vec4f               // premultiplied, uv 0..1, y down
+fn image_level(uv : vec2f, lod : f32) -> vec4f  // lod > 0 can bleed
+                                                // across atlas neighbours
+```
+
+The whole image (its texels, not the `object-fit` crop). Transparent
+until it decodes; atlas and texture changes are followed.
+
+**`glyphs: target`** binds the element's mirrored glyphs (the same set
+and order as `target.glyphs`), drawn with Slug's coverage:
+
+```wgsl
+fn glyph_count() -> u32
+fn glyph_point(k : u32, uv : vec2f) -> vec2f  // ink box point, layer space
+fn glyph_size(k : u32) -> vec2f               // ink box, local CSS px
+fn glyph_color(k : u32) -> vec4f              // straight alpha
+fn glyph_clip(k : u32) -> vec4f               // min.xy max.zw, layer space
+fn glyph_coverage(k : u32, uv : vec2f) -> f32
+```
+
+`uv` spans the glyph's ink box (0..1, y down). `glyph_point` applies the
+glyph's transform and `onGlyph` offset. `glyph_coverage` anti-aliases
+from `uv`'s screen derivatives, so call it in uniform control flow (not
+after a non-uniform `return` or `discard`); it is 0 for glyphs Slug
+doesn't draw (emoji and other fallback-atlas glyphs) and for k out of
+range. The clip is not applied: discard outside `glyph_clip(k)` to
+clip. Ligatures draw on their first component (the others are empty).
+To replace the mirrored text, pair the layer with a material on the
+same target whose fragment returns `vec4f(0.0)`.
+
 ## Materials
 
 ```ts
@@ -295,10 +355,11 @@ fx.material({
   name: 'wave',
   target: el | target,             // its subtree's records are re-shaded
   kinds?: ['box', 'image', 'glyph'],  // default all three
-  vertex?: wgsl, fragment?: wgsl,   // either or both
+  vertex?: hook, fragment?: hook,   // either or both (WGSL or tgpu.fn)
+  raw?: { box?, image?, glyph?: wgsl },  // complete programs, see below
   params?: { ...schema },
   subdivisions?: 1,                 // n × n cells per quad, for bending
-  hideSource?: !!vertex,            // hide the element's DOM paint
+  hideSource?: !!(vertex || raw),   // hide the element's DOM paint
   enabled?: true, continuous?: false,
   update?: (material, time, ctx) => void
 }) -> Material { name, params, target, enabled, continuous, destroy() }
@@ -346,6 +407,27 @@ missing code points) don't. A vertex hook moves geometry away from where
 the DOM paints it, so by default the target's own DOM paint is hidden
 while the material is enabled (`opacity: 0`, as replace mode does).
 
+**`raw`** is for what the hooks can't express. Per kind, WGSL defining
+both entry points against that pass's own declarations:
+
+```wgsl
+@vertex
+fn vs(@builtin(vertex_index) vi : u32,
+      @builtin(instance_index) ii : u32) -> VOut
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f
+```
+
+It is compiled after the pass's material variant, whose entry points
+become plain functions `default_vs(vi, ii)` and `default_fs(in)` (the
+hooks, identity unless `vertex`/`fragment` are given too, still run
+inside them). `VOut`, the instance struct and bind group 1 are the
+pass's internals (`boxes/boxRenderer.ts`, `images/imageRenderer.ts`,
+`text/slug/shaders.ts`) and can change between versions; bind group 2 is
+the material's as for hooks. `kinds` defaults to the keys of `raw`. Draw
+with `6·n²` vertices per instance and premultiplied-over blending, as
+the pass does.
+
 ## Wake rules
 
 The compositor idles unless something asks for frames. `/fx` requests one
@@ -359,7 +441,9 @@ more than 0.1 px from the pointer (or velocity hasn't decayed below
 1 px/s). `continuous` defaults to true when a WGSL hook (a pass
 fragment, a layer's or material's vertex/fragment) reads `fx.time` or
 `fx.elapsed`, so time-driven effects animate without input; pass
-`continuous: false` to opt out (a `tgpu.fn` isn't inspected). `displace`
+`continuous: false` to opt out. For tgpu.fn layer and material hooks the
+resolved WGSL is inspected (so `gpu.time` counts); a tgpu.fn pass
+fragment isn't, and on an inert runtime only WGSL strings are. `displace`
 defaults to `continuous: true` (its noise drifts); `blur` is static;
 `clickRipple` and `ripple` switch it on only while a ripple runs.
 
@@ -367,28 +451,53 @@ defaults to `continuous: true` (its noise drifts); `blur` is static;
 after a pass is enabled; both come from the frame's rAF timestamp, so
 tween time scales affect params, not time.
 
-## TypeGPU fragments
+## TypeGPU
 
-A `tgpu.fn([d.vec2f, d.texture2d(d.f32), d.sampler()], d.vec4f)` is
-accepted wherever a WGSL string is. The runtime resolves it with
-`tgpu.resolve({ template, externals: { fx_user: fn } })` behind a wrapper
-`fn effect(...) { return fx_user(uv, src, smp); }`, so the function and
-its own TypeGPU dependencies are emitted with TypeGPU's naming. What works
-in 0.12:
+Every hook takes a `tgpu.fn` with the hook's signature in place of WGSL:
 
-- **WGSL-bodied** `tgpu.fn(...)(\`(uv, src, smp) { ... }\`)`: works. The
-  body is pasted as written, so it can call `sample`, read `fx`, `params`
-  and `pointer`, and use any `$uses` externals.
+| hook | signature |
+| --- | --- |
+| pass `fragment` | `([d.vec2f, d.texture2d(d.f32), d.sampler()], d.vec4f)` |
+| material `vertex` | `([d.vec2f, d.vec2f, d.vec2f, d.u32], d.vec2f)` |
+| material `fragment` | `([MatIn], d.vec4f)` |
+| layer `vertex` | `([d.u32, d.vec2f], Quad)` |
+| layer `fragment` | `([Quad, d.u32], d.vec4f)` |
+| layer `simulate` | `([d.u32])` |
+
+`MatIn` and `Quad` are exported `d.struct`s with the WGSL structs'
+fields. The runtime resolves a primitive's tgpu.fn hooks in one
+`tgpu.resolve` (`names: 'random'`, so TypeGPU's identifiers get
+suffixes and can't clash with the module's own) behind wrappers that
+call them, so shared dependencies are emitted once.
+
+- **WGSL-bodied** (`tgpu.fn(...)(\`(uv, src, smp) { ... }\`)`): the body
+  is pasted as written, so it can use the module's declarations
+  (`sample`, `fx`, `params`, `pointer`, `data`, ...) directly.
 - **JS-bodied** (`'use gpu'`) functions need `unplugin-typegpu` in the
-  author's bundler; without it `tgpu.resolve` throws "Missing metadata",
-  which is logged as `fx:<name>: tgpu.resolve failed` and the stage passes
-  the source through. With the plugin, they can't yet reach `sample`,
-  `params`, `fx` or `pointer`: those are WGSL declarations, not TypeGPU
-  values. Planned for M3: expose them as TypeGPU externals (a `d.struct`
-  generated from the Params schema, `tgpu.fn` wrappers for the helpers)
-  so JS bodies can call them.
+  author's bundler (without it `tgpu.resolve` throws "Missing metadata",
+  logged as `fx:<name>: tgpu.resolve failed`). They reach the module's
+  declarations through `gpu`:
 
-A signature mismatch is logged and the stage passes through.
+```ts
+import { gpu, MatIn } from 'compositor-gpu/fx'
+const p = gpu.params(schema)     // p.strength.$ : typed, per schema
+gpu.time.$ / gpu.elapsed.$ / gpu.dpr.$
+gpu.pointer.pos.$ / .page / .vel / .follow / .followVel / .down /
+  .seen / .clicksN, gpu.pointer.click(k)
+gpu.pass.sample(uv) / viewportToUv(p) / pageToUv(p)
+gpu.layer.data(i, k) / data2 / data4 / setData / setData2 / setData4
+  (simulate) / image(uv) / glyphCount() / glyphPoint(k, uv) /
+  glyphSize(k) / glyphColor(k) / glyphClip(k) / glyphCoverage(k, uv) /
+  count.$ / dt.$ / steps.$ / scroll.$ / viewport.$
+gpu.material.sample(delta)
+```
+
+Each stands for a declaration that only exists in that kind of shader
+(`gpu.pass.sample` in a pass, `gpu.layer.setData` in `simulate`, ...);
+used elsewhere the module fails to compile, which is logged. A
+signature mismatch or failed resolve is logged and the hook falls back
+(a pass stage passes through, a material keeps the identity hook, a
+layer draws nothing).
 
 ## Presets
 
@@ -420,7 +529,7 @@ A signature mismatch is logged and the stage passes through.
 ## Testing hook
 
 `fx.__pending()` counts material pipelines still compiling.
-`fx.__override({ time?, elapsed?, pointer?: { x, y, down, follow,
-clicks } })` pins those inputs (velocities read as zero; the follower
+`fx.__override({ time?, elapsed?, dt?, pointer?: { x, y, down, follow,
+clicks } })` pins those inputs (`dt` is every layer's `fx.dt`) (velocities read as zero; the follower
 doesn't keep the loop alive); `null` clears it. Used by `test/fx/run.ts`;
 not for production code.

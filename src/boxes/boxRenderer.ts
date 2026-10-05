@@ -639,8 +639,8 @@ export class BoxPass implements RenderPass {
     this.materials = new MaterialPipelines(
       'box',
       device,
-      (code, n, label, layout) =>
-        describe(shader(code, n, MATERIAL_FS), label, layout)
+      (code, n, label, layout, wrap) =>
+        describe(wrap(shader(code, n, MATERIAL_FS)), label, layout)
     )
   }
 

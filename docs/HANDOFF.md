@@ -11,7 +11,7 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `5c90a6b Fixed focus rings, replace bugs` + the uncommitted `realContext` / partial-read fix (open item 2) |
+| `~/code/compositor-gpu` | the library, source of truth | `a36d65b Dom stacking fixes` (the `realContext` / partial-read fix, open item 2) + uncommitted M3b (open item 3) |
 | `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
 | `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
 
@@ -122,8 +122,11 @@ the compositor.
 ## Open items, first move for each
 
 1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
-   `5c90a6b`; the `realContext` / partial-read fix (item 2) is
-   uncommitted. MDS-home: bump the submodule to `origin/main` once
+   `5c90a6b`, `realContext` / partial-read fix `a36d65b`; M3b (item 3)
+   is uncommitted. M3b adds the dev dependency
+   `unplugin-typegpu@0.12.3` (`package.json`, `pnpm-lock.yaml`): run
+   `pnpm install` before `npm run dev` or the harnesses, since
+   `vite.config.ts` imports it. MDS-home: bump the submodule to `origin/main` once
    that's pushed (`git -C compositor-gpu fetch origin && git -C
    compositor-gpu checkout origin/main`), then commit it with
    `GpuCompositor.jsx` (`zIndex`) and `GpuStats.jsx` (readout line
@@ -156,7 +159,7 @@ the compositor.
      mirrored). Ben: expected; no decision yet on mirroring it.
 3. **Effects.** M2 (Target, Layer, region Pass, `cursorGlow`,
    `clickRipple`, `displace` `mode`) is committed (`dcf94b1`; push mode
-   left as is). **M3a, materials — built 2026-10-05, uncommitted:**
+   left as is). **M3a, materials** is committed (`08433a2`):
    `fx.material({ target, kinds, vertex, fragment, subdivisions,
    hideSource })`, the `ripple` preset, and in the core the box / image /
    Slug shaders as templates around `mat_vertex` / `mat_fragment`
@@ -183,8 +186,39 @@ the compositor.
    compositor), and the hooks' local frame differed between vertex and
    fragment for glyphs and box shadows. Try `/fx.html`: the materials
    section has ripple (click the image), wave, bend and stripes toggles.
-   Next: M3b (Layer compute hook, `Target.image`, Slug glyphs in Layers,
-   `raw` materials, TypeGPU externals).
+   **M3b — built 2026-10-05, uncommitted:**
+   - Layer `simulate`: a compute hook with GPU-resident state,
+     `set_data*`, `markDirty(first, n)`, `fx.dt` / `fx.steps`, and
+     `Layer.steps`.
+   - `Target.image` and Layer `image: target` (`image(uv)`).
+   - Layer `glyphs: target`: the target's mirrored glyphs through Slug's
+     coverage (`glyph_point/size/color/clip/coverage`).
+   - `raw` materials: per-kind programs wrapping
+     `default_vs` / `default_fs`.
+   - TypeGPU externals `gpu` / `MatIn` / `Quad`; every layer and
+     material hook also takes a tgpu.fn.
+   Contract: `src/fx/README.md` (Layers, Materials, TypeGPU);
+   deviations: `docs/EFFECTS.md` "Deviations (M3b)".
+   Verified in the sandbox:
+   - typecheck, biome, build;
+   - `test:visual` 0.00 on all 25, `--with-fx` 0.00;
+   - `test:fx` all 36 rows OK, incl. 9 new M3b shots (the new goldens
+     reproduced on a second run) and an exact on→off invariant;
+   - `test:perf` same-session A/B against the baseline: full read
+     719 / 695 vs 674 ms (noise), 123 draws both, encode 0.4–0.5 ms
+     both.
+   An opus review found two real defects, both fixed before the final
+   runs: `markDirty` ranges merged into one span, so with `simulate`
+   two marks reset every instance between them (now kept apart); and
+   `simulate` read last frame's pointer (the pointer is now written
+   before the layers' frames). Smaller fixes from the same review:
+   2D dispatch past 65535 workgroups, glyph points converted to the
+   layer's space, and `glyph_clip`.
+   Try `/fx.html`: the M3b section has toggles for heading glyphs, image
+   tiles, simulated dots, a raw box, a 'use gpu' box material and a
+   'use gpu' grey pass.
+   Next: Passes taking `image`, and per-letter staggers through the
+   glyph material contract (docs/EFFECTS.md "Material").
 4. **Mirror leftovers**, one quiet batch: doubled AA on corner dots (Chrome
    paints each corner dot twice), multi-layer `url()` backgrounds (only layer
    0 paints), text under CSS transforms still reads per grapheme, a `layers`

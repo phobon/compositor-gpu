@@ -7,8 +7,9 @@ bonobolabs.com `/duo?gpu=1` from the `compositor-gpu` submodule (`&stats=1`
 readout, `&debug=1` logging, `&mode=replace`). Site chrome is
 `data-gpu-ignore`d: in-flow chrome shows through cutout holes, fixed chrome
 sits above the canvas (`zIndex: 500`). Effects layer: spec in
-`docs/EFFECTS.md`, M1, M2 and M3's materials part built (`compositor-gpu/fx`:
-Params, pointer, fullscreen and region Passes, Targets, Layers, Materials,
+`docs/EFFECTS.md`, M1, M2 and M3 built (`compositor-gpu/fx`:
+Params, pointer, fullscreen and region Passes, Targets, Layers (with
+`simulate`, `image`, `glyphs`), Materials (with `raw`), TypeGPU externals,
 presets `blur`/`displace`/`cursorGlow`/`clickRipple`/`ripple`). `docs/HANDOFF.md` has the checkouts,
 the last batch's verification and the first move on each item. Every harness passes
 on the current tree:
@@ -127,11 +128,14 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       kinds), per-target DOM hiding (`graph.hideSource`), preset
       `ripple`; fx.html materials section + 7 shots. Deviations in
       `docs/EFFECTS.md`.
-- [ ] M3b — Layer compute hook (`simulate`); `Target.image`; glyph quads
-      through Slug in a Layer; `raw` materials; TypeGPU externals (a
-      `d.struct` from the Params schema, `tgpu.fn` wrappers for
-      `sample`/`src_uv`/`page_to_uv`) so `'use gpu'` bodies can reach
-      them
+- [x] M3b — Layer `simulate` compute hook (GPU-resident state,
+      `markDirty(first, n)`, `fx.dt`/`steps`); `Target.image` + Layer
+      `image` (`ImagePass.regionOf`, `graph.imageOf`); Layer `glyphs`
+      through Slug's coverage (`SlugText.glyphTable`, shared
+      `SLUG_COVERAGE_WGSL`); `raw` materials (`rawProgram`:
+      `default_vs`/`default_fs`); TypeGPU externals (`gpu`, `MatIn`,
+      `Quad`) and tgpu.fn hooks for layers and materials; fx.html M3b
+      section + 9 shots. Deviations in `docs/EFFECTS.md`.
 
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are

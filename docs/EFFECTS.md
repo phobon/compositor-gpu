@@ -114,8 +114,8 @@ fx.layer({
 The vertex hook positions a quad from the instance's floats; the fragment
 hook shades it (SDF, sprite, or a glyph via Slug when it references a glyph
 id). The author updates the array (directly or by tween) and marks it
-dirty; the runtime uploads the used prefix. Reserved: a `simulate` compute
-hook so particle state can live on the GPU.
+dirty; the runtime uploads the used prefix. A `simulate` compute hook
+keeps particle state on the GPU (built in M3b).
 
 ### Params
 
@@ -293,7 +293,7 @@ warps behind a `mode` param, and JS-bodied TypeGPU externals wait for M3.
   `Effect`. Added an `update(layer, time, ctx)` hook run every frame while
   enabled (how `clickRipple` keeps the loop alive only while a ripple
   runs). Not built yet: glyph quads drawn through Slug, the `simulate`
-  compute hook (M3).
+  compute hook (both built in M3b).
 - **Targets** resolve lazily against `graph.version`. `glyphs` holds only
   glyphs in the target's space (a fixed descendant's glyphs are left out).
   `image` (texture/atlas region) moves to M3, where Materials consume it.
@@ -319,9 +319,7 @@ warps behind a `mode` param, and JS-bodied TypeGPU externals wait for M3.
 
 Built 2026-10-05. M3 is split: this part is the Material contract for
 boxes, images and glyphs, the batch cut, per-target DOM hiding,
-`subdivisions` and `ripple`. Still to do (M3b): the Layer `simulate`
-compute hook, glyph quads through Slug in a Layer, `Target.image`, `raw`
-materials, and TypeGPU externals for `'use gpu'` bodies.
+`subdivisions` and `ripple`. The rest of M3 is under "Deviations (M3b)".
 
 - **Contract.** `fx.material({ target, kinds?, vertex?, fragment?,
   params?, subdivisions?, hideSource?, update? })`. Hooks:
@@ -363,3 +361,63 @@ materials, and TypeGPU externals for `'use gpu'` bodies.
 - **`continuous` default** (added after Ben noticed the wave material
   froze without pointer input): true when a WGSL hook reads `fx.time` or
   `fx.elapsed`, false otherwise; an explicit value wins.
+
+## Deviations (M3b)
+
+Built 2026-10-05: the Layer compute hook, Layers drawing a Target's
+glyphs and sampling its image, `raw` materials, TypeGPU externals.
+
+- **`simulate`.** `fx.layer({ simulate })`: `fn simulate(i : u32)`, run
+  for every instance in a compute pass each frame while the layer is
+  enabled, before it draws. The data buffer is `read_write` there
+  (`set_data*`) and read-only in the draw. The dispatch is its own
+  command buffer, submitted from the layer's `frame()` (the runtime's
+  `beforeFrame` hook), not recorded into the frame's encoder: queue
+  order puts it after this frame's uploads (the pointer is written
+  before the layers' frames) and before the render. With `simulate`,
+  `data` seeds the GPU state: `markDirty(first, n)` overwrites only the
+  marked instances (ranges are kept apart, not merged into one span),
+  a grow copies the old buffer over, and the state survives disabling.
+  `LayerFx` grew to 80 bytes: `dt` (s since the previous frame, clamped
+  to 1/15; pinned by `__override({ dt })`), `steps`, and the runtime
+  fields for `image`/`glyphs`. `Layer.steps` counts dispatches since
+  enabled. Rows of 65535 workgroups, so counts past 4.19M dispatch 2D.
+- **`Target.image`** is `{ width, height } | null` (texel size), not a
+  texture: the GPU side stays internal. A Layer samples it with
+  `image: target` (`image(uv)` / `image_level(uv, lod)`, premultiplied).
+  The core gained `ImagePass.regionOf(record)` and `graph.imageOf(el)`:
+  the element's own image record's view (atlas or own texture) and its
+  inset UV rect as of the last upload. Layers resolve it at draw time
+  (after the uploads of that frame) and rebuild their bind group when
+  the view changes, so an atlas grow is followed. Materials already had
+  `mat_sample`; Passes don't take `image` yet.
+- **Glyphs in Layers.** Not "a quad that references a glyph id": a
+  Layer with `glyphs: target` gets that target's mirrored glyphs (same
+  order as `target.glyphs`) through the Slug instance buffer itself
+  (`SlugText.glyphTable()`: instance, band and curve buffers and each
+  run's first instance) plus a per-draw index buffer from target glyph
+  k to instance. Helpers `glyph_point/size/color/clip/coverage(k, ...)`;
+  the coverage code is Slug's (`SLUG_COVERAGE_WGSL`, shared with the
+  text pass, whose output is unchanged). Points convert from the glyph's
+  space to the layer's. Fallback-atlas glyphs (emoji) have no Slug
+  instance and draw nothing; the clip isn't applied (`glyph_clip`).
+- **`raw`** is per kind, `raw: { box?, image?, glyph? }`, not `raw:
+  true`: each kind's `VOut` differs. The program is compiled after the
+  pass's material-variant module with its entry points renamed to
+  `default_vs` / `default_fs` (IO attributes stripped), so a raw
+  program can wrap the default. The pass internals it sees are not a
+  stable contract. `kinds` defaults to the keys of `raw`; `hideSource`
+  defaults on.
+- **TypeGPU.** `gpu` exports raw-code snippets and WGSL-bodied
+  `tgpu.fn` stand-ins for the module declarations (`fx`, `params` per
+  schema via `gpu.params(schema)`, `pointer`, `sample`, `data`,
+  `set_data`, `image`, `glyph_*`, `mat_sample`), grouped by the shader
+  kind they exist in; `MatIn` and `Quad` are `d.struct`s for hook
+  signatures. Every Layer and Material hook (not only Pass fragments)
+  accepts a tgpu.fn; one primitive's are resolved in a single
+  `tgpu.resolve` with `names: 'random'` (deterministic suffixes, so
+  author names can't clash with the module's). JS-bodied functions still
+  need `unplugin-typegpu` in the author's build; the playground's dev
+  server now runs it (dev dependency `unplugin-typegpu@0.12.3`, matching
+  `typegpu` 0.12.5). `continuous` defaults from the resolved WGSL for
+  layer and material hooks.

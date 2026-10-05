@@ -1,6 +1,7 @@
 import type { MaterialEntry, RenderGraph } from '../gpu/graph'
 import type { MaterialKind } from '../gpu/material'
 import type { FrameContext } from '../types'
+import { type Hook, hookSource, MATERIAL_HOOKS } from './gpu'
 import {
   createParams,
   type ParamBlock,
@@ -60,23 +61,32 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
   name: string
   /** The element whose subtree is re-shaded. */
   target: Target | Element
-  /** Record kinds to re-shade. Default all three. */
+  /** Record kinds to re-shade. Default all three, or the keys of `raw`. */
   kinds?: readonly MaterialKind[]
   /** WGSL defining `fn vertex(local : vec2f, size : vec2f, uv : vec2f,
    * record : u32) -> vec2f`: the displaced local position. */
-  vertex?: string
+  vertex?: Hook
   /** WGSL defining `fn fragment(m : MatIn) -> vec4f` (premultiplied). */
-  fragment?: string
+  fragment?: Hook
+  /** Complete programs per record kind, for what the hooks can't
+   * express: WGSL defining `@vertex fn vs(@builtin(vertex_index) vi :
+   * u32, @builtin(instance_index) ii : u32) -> VOut` and `@fragment fn
+   * fs(in : VOut) -> @location(0) vec4f`, compiled after the pass's own
+   * declarations (its instance struct and bindings, `VOut`, and its
+   * entry points as `default_vs(vi, ii)` / `default_fs(in)`, which run
+   * the hooks). Bind group 2 is the material's, as for hooks. */
+  raw?: Partial<Record<MaterialKind, string>>
   params?: S
   /** Cells per side each record's quad is split into, so a vertex hook
    * can bend it. Default 1. */
   subdivisions?: number
   /** Default true. */
   enabled?: boolean
-  /** Keep the frame loop running while enabled. Default false. */
+  /** Keep the frame loop running while enabled. Default: true when a
+   * hook or raw program reads `fx.time`/`fx.elapsed`. */
   continuous?: boolean
   /** Hide the target's own DOM paint while enabled (displaced geometry
-   * would uncover it). Default: true when `vertex` is given. */
+   * would uncover it). Default: true when `vertex` or `raw` is given. */
   hideSource?: boolean
   /** Called every frame while enabled. `time` is the page clock, s. */
   update?: (material: Material<S>, time: number, ctx: FrameContext) => void
@@ -112,6 +122,15 @@ export interface MaterialState {
 
 const ALL_KINDS: readonly MaterialKind[] = ['box', 'image', 'glyph']
 
+/** `continuous` unless given: whether `hooks` (the resolved hook WGSL)
+ * or a raw program reads the clock. */
+const materialContinuous = (o: MaterialOptions, hooks?: string): boolean =>
+  o.continuous ??
+  readsTime(hooks ?? o.vertex, o.fragment, ...Object.values(o.raw ?? {}))
+
+const kindsOf = (o: MaterialOptions): readonly MaterialKind[] =>
+  o.kinds ?? (o.raw ? (Object.keys(o.raw) as MaterialKind[]) : ALL_KINDS)
+
 /** A Material with no GPU side (inert runtime). */
 export function inertMaterial<S extends ParamSchema>(
   o: MaterialOptions<S>,
@@ -123,7 +142,7 @@ export function inertMaterial<S extends ParamSchema>(
     params: block.values as ParamValues<S>,
     target,
     enabled: o.enabled ?? true,
-    continuous: o.continuous ?? readsTime(o.vertex, o.fragment),
+    continuous: materialContinuous(o as unknown as MaterialOptions),
     destroy() {}
   }
 }
@@ -137,7 +156,7 @@ export function createMaterial<S extends ParamSchema>(
   const { device, graph } = deps
   const id = graph.nextMaterialId()
   const label = `fx:${o.name}`
-  const hides = o.hideSource ?? o.vertex !== undefined
+  const hides = o.hideSource ?? (o.vertex !== undefined || o.raw !== undefined)
   let enabledAt: number | null = null
   let inFrame = false
   let destroyed = false
@@ -152,12 +171,16 @@ export function createMaterial<S extends ParamSchema>(
       wake()
     }
   }) as unknown as ParamBlock<ParamSchema>
+  const hooks =
+    hookSource(o.name, [
+      [o.vertex ?? IDENTITY_VERTEX, MATERIAL_HOOKS.vertex],
+      [o.fragment ?? IDENTITY_FRAGMENT, MATERIAL_HOOKS.fragment]
+    ]) ?? `${IDENTITY_VERTEX}\n${IDENTITY_FRAGMENT}`
   const code = [
     block.wgsl,
     POINTER_WGSL,
     UNIFORMS_WGSL,
-    o.vertex ?? IDENTITY_VERTEX,
-    o.fragment ?? IDENTITY_FRAGMENT,
+    hooks,
     HOOKS_WGSL
   ].join('\n')
   const layout = device.createBindGroupLayout({
@@ -196,7 +219,8 @@ export function createMaterial<S extends ParamSchema>(
     id,
     label,
     code,
-    kinds: new Set(o.kinds ?? ALL_KINDS),
+    kinds: new Set(kindsOf(o as unknown as MaterialOptions)),
+    ...(o.raw ? { raw: o.raw } : {}),
     subdivisions: Math.max(1, Math.floor(o.subdivisions ?? 1)),
     layout,
     bindGroup,
@@ -258,7 +282,7 @@ export function createMaterial<S extends ParamSchema>(
   const state: MaterialState = {
     handle,
     enabled: o.enabled ?? true,
-    continuous: o.continuous ?? readsTime(o.vertex, o.fragment),
+    continuous: materialContinuous(o as unknown as MaterialOptions, hooks),
     frame(ctx) {
       if (!state.enabled) {
         return

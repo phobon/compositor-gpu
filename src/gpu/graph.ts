@@ -1,4 +1,6 @@
 import type { ElNode } from '../dom/tree'
+import type { ImageRegion } from '../images/imageRenderer'
+import type { GlyphTable } from '../text/slug/rasterizer'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
@@ -150,6 +152,14 @@ export interface RenderGraph {
   hideSource(el: Element, hidden: boolean): void
   /** The mirror's node for `el` from the most recent read. */
   nodeOf(el: Element): ElNode | undefined
+  /** Where the pixels of `el`'s own image record (an `<img>`, canvas,
+   * video or its first background image) are on the GPU as of the last
+   * upload; null when it has none or it isn't decoded yet. Call while
+   * encoding (an ExtraLayer's draw): an atlas grow replaces the view. */
+  imageOf(el: Element): ImageRegion | null
+  /** The Slug glyph buffers as of the last text upload (null with no
+   * text layer or no Slug glyphs). Call while encoding, as imageOf. */
+  glyphTable(): GlyphTable | null
   /** Bumped whenever the scene is rebuilt (records and z change). */
   readonly version: number
 }

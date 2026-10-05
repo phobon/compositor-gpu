@@ -24,19 +24,8 @@ import {
  */
 const TAPS = 3
 
-/** The Slug shader with material hooks `mat` (gpu/material.ts) on a
- * `subdiv` × `subdiv` quad; SLUG_WGSL is the default variant. */
-export const slugShader = (
-  mat: string,
-  subdiv: number,
-  material: boolean
-): string => /* wgsl */ `
-${FRAME_WGSL}
-${MAT_IN_WGSL}
-${MAT_GRID_WGSL}
-${mat}
-const MAT_SUBDIV : u32 = ${subdiv}u;
-
+/** The instance, band and curve structs (GlyphTable's layout). */
+export const SLUG_STRUCTS_WGSL = /* wgsl */ `
 struct Glyph {
   rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
   offset : vec4f,   // xy displacement, space (1 = viewport), _
@@ -48,41 +37,14 @@ struct Glyph {
 };
 struct Band  { bounds : vec4f, };        // yMin, yMax, curveStart, curveEnd
 struct Curve { p : vec4f, c : vec4f, };  // x0,y0,x1,y1 ; cx,cy,_,_
+`
 
-@group(1) @binding(0) var<storage, read> glyphs : array<Glyph>;
-@group(1) @binding(1) var<storage, read> bands  : array<Band>;
-@group(1) @binding(2) var<storage, read> curves : array<Curve>;
-
-struct VOut {
-  @builtin(position) pos : vec4f,
-  @location(0) em : vec2f,                 // 0..1 within the em box, y-up
-  @location(1) @interpolate(flat) idx : u32,
-  @location(2) docp : vec2f,
-  @location(3) lp : vec2f,                 // line-box local (undisplaced)
-};
-
-@vertex
-fn vs(@builtin(vertex_index) vi : u32,
-      @builtin(instance_index) ii : u32) -> VOut {
-  let g = glyphs[ii];
-  let corner = mat_corner(vi, MAT_SUBDIV);
-  let lp0 = g.rect.xy + corner * g.rect.zw;
-  // Hooks see the ink box (origin at its top-left), as MatIn.local does.
-  // As a delta, so identity hooks leave lp0 bit-exact.
-  let q = lp0 - g.rect.xy;
-  let lp = lp0 + (mat_vertex(q, g.rect.zw, corner, ii) - q);
-  let m = g.xf0;
-  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
-    g.xf1.xy + g.offset.xy;
-  var out : VOut;
-  out.pos = to_clip(p, g.offset.z);
-  out.em = vec2f(corner.x, 1.0 - corner.y);
-  out.idx = ii;
-  out.docp = p;
-  out.lp = lp0;
-  return out;
-}
-
+/**
+ * Slug coverage: the curve maths of the fragment shader, shared with `/fx`
+ * Layers that draw mirrored glyphs. Expects `Band`/`Curve` and storage
+ * arrays named `bands` and `curves` in scope.
+ */
+export const SLUG_COVERAGE_WGSL = /* wgsl */ `
 fn bezier_x(q : Curve, t : f32) -> f32 {
   let mt = 1.0 - t;
   return mt * mt * q.p.x + 2.0 * mt * t * q.c.x + t * t * q.p.z;
@@ -165,7 +127,57 @@ fn coverage_row(em : vec2f, gref : vec4u, invPx : f32) -> f32 {
   }
   return cov;
 }
+`
 
+/** The Slug shader with material hooks `mat` (gpu/material.ts) on a
+ * `subdiv` × `subdiv` quad; SLUG_WGSL is the default variant. */
+export const slugShader = (
+  mat: string,
+  subdiv: number,
+  material: boolean
+): string => /* wgsl */ `
+${FRAME_WGSL}
+${MAT_IN_WGSL}
+${MAT_GRID_WGSL}
+${mat}
+const MAT_SUBDIV : u32 = ${subdiv}u;
+
+${SLUG_STRUCTS_WGSL}
+@group(1) @binding(0) var<storage, read> glyphs : array<Glyph>;
+@group(1) @binding(1) var<storage, read> bands  : array<Band>;
+@group(1) @binding(2) var<storage, read> curves : array<Curve>;
+
+struct VOut {
+  @builtin(position) pos : vec4f,
+  @location(0) em : vec2f,                 // 0..1 within the em box, y-up
+  @location(1) @interpolate(flat) idx : u32,
+  @location(2) docp : vec2f,
+  @location(3) lp : vec2f,                 // line-box local (undisplaced)
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vi : u32,
+      @builtin(instance_index) ii : u32) -> VOut {
+  let g = glyphs[ii];
+  let corner = mat_corner(vi, MAT_SUBDIV);
+  let lp0 = g.rect.xy + corner * g.rect.zw;
+  // Hooks see the ink box (origin at its top-left), as MatIn.local does.
+  // As a delta, so identity hooks leave lp0 bit-exact.
+  let q = lp0 - g.rect.xy;
+  let lp = lp0 + (mat_vertex(q, g.rect.zw, corner, ii) - q);
+  let m = g.xf0;
+  let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
+    g.xf1.xy + g.offset.xy;
+  var out : VOut;
+  out.pos = to_clip(p, g.offset.z);
+  out.em = vec2f(corner.x, 1.0 - corner.y);
+  out.idx = ii;
+  out.docp = p;
+  out.lp = lp0;
+  return out;
+}
+
+${SLUG_COVERAGE_WGSL}
 fn base_fs(in : VOut) -> vec4f {
   let g = glyphs[in.idx];
   if (g.gref.y == 0u) { discard; }
