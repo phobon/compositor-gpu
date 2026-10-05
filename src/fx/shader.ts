@@ -165,3 +165,12 @@ export function stageSource(effect: string | null, paramsWgsl: string): string {
     ENTRY_WGSL
   ].join('\n')
 }
+
+/** True when WGSL hook code reads the clock (`fx.time` / `fx.elapsed`):
+ * the default for `continuous`, so time-driven hooks animate without
+ * input. tgpu.fn values aren't inspected. */
+export function readsTime(...code: (unknown | undefined)[]): boolean {
+  return code.some(
+    (c) => typeof c === 'string' && /\bfx\s*\.\s*(time|elapsed)\b/.test(c)
+  )
+}

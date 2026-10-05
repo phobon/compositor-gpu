@@ -2,9 +2,16 @@ import { BoxPass } from './boxes/boxRenderer'
 import { CutoutPass } from './boxes/cutoutPass'
 import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
+import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
 import { initGpu } from './gpu/device'
-import type { FrameHook, LayerPlace, RenderGraph } from './gpu/graph'
+import type {
+  FrameHook,
+  LayerPlace,
+  MaterialEntry,
+  RenderGraph
+} from './gpu/graph'
+import { materialPipelinesPending } from './gpu/material'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
 import type { Anchor } from './scene/batches'
@@ -384,6 +391,32 @@ export async function createCompositor(
       pendingReadFlags |= Dirty.STYLE
       scheduler.request()
     },
+    addMaterial(entry) {
+      renderer.materials.set(entry.id, entry)
+      rebatch()
+      return () => {
+        if (renderer.materials.get(entry.id) === entry) {
+          renderer.dropMaterial(entry.id)
+          rebatch()
+        }
+      }
+    },
+    nextMaterialId: () => nextMaterial++,
+    materialsPending: () => materialPipelinesPending(),
+    hideSource(el, hidden) {
+      if (!(el instanceof HTMLElement) || destroyed || lost) {
+        return
+      }
+      if (hidden) {
+        fxWanted.add(el)
+        if (!stopped) {
+          applyFx(el)
+        }
+      } else {
+        fxWanted.delete(el)
+        releaseFx(el)
+      }
+    },
     nodeOf: (el) => reader.nodeOf(el),
     get version() {
       return scene.version
@@ -393,6 +426,7 @@ export async function createCompositor(
   // anchors resolved each time batches are built (after every read, and
   // on addLayer/replace).
   let nextExtra = 1
+  let nextMaterial = 1
   let nextRegion = 1
   const regionIds = new Map<Element, number>()
   const rebatch = (): void => {
@@ -432,6 +466,58 @@ export async function createCompositor(
       }
     }
     return { id, z: range[1] + 1, depth }
+  }
+  // Materials: tag the records of each active material's target subtree
+  // (registration order, so a later material wins on overlap). Tags from
+  // the previous build are cleared first; records rebuilt by a read have
+  // none.
+  let tagged: { material?: number }[] = []
+  const tagSubtree = (node: ElNode, m: MaterialEntry): void => {
+    const tag = (r: { material?: number }): void => {
+      r.material = m.id
+      tagged.push(r)
+    }
+    for (const r of node.own) {
+      if (
+        (r.kind === 'box' && m.kinds.has('box')) ||
+        (r.kind === 'image' && m.kinds.has('image'))
+      ) {
+        tag(r)
+      }
+    }
+    for (const kid of node.kids) {
+      if (kid.kind === 'element') {
+        tagSubtree(kid, m)
+      } else if (kid.kind === 'box') {
+        if (m.kinds.has('box')) {
+          tag(kid)
+        }
+      } else {
+        if (m.kinds.has('glyph')) {
+          tag(kid)
+        }
+        if (m.kinds.has('box')) {
+          for (const d of kid.decorations ?? []) {
+            tag(d)
+          }
+          for (const d of kid.decorationsOver ?? []) {
+            tag(d)
+          }
+        }
+      }
+    }
+  }
+  scene.assign = () => {
+    for (const r of tagged) {
+      delete r.material
+    }
+    tagged = []
+    for (const m of renderer.materials.values()) {
+      const node = m.active() ? reader.nodeOf(m.target) : undefined
+      if (node) {
+        tagSubtree(node, m)
+      }
+    }
   }
   scene.anchors = () => {
     const out: Anchor[] = []
@@ -491,10 +577,42 @@ export async function createCompositor(
   // paint-free wrappers.
   let sourceHidden = false
   const hiddenEls = new Map<HTMLElement, string>()
+  // graph.hideSource (displacing materials): the elements materials want
+  // hidden, and those this code hid (with the inline opacity to restore).
+  // An element replace mode already hides stays in hiddenEls; turning
+  // replace mode off hands it to fxHidden while a material still wants it.
+  const fxWanted = new Set<HTMLElement>()
+  const fxHidden = new Map<HTMLElement, string>()
+  let stopped = false
+  const applyFx = (el: HTMLElement): void => {
+    if (fxHidden.has(el) || hiddenEls.has(el)) {
+      return
+    }
+    fxHidden.set(el, el.style.opacity)
+    el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
+    el.style.opacity = '0'
+  }
+  const releaseFx = (el: HTMLElement): void => {
+    const saved = fxHidden.get(el)
+    if (saved === undefined) {
+      return
+    }
+    fxHidden.delete(el)
+    el.style.opacity = saved
+    el.removeAttribute(HIDDEN_ATTR)
+  }
   // The reader must not see the hiding opacity (it would make every
   // hidden element an opacity-0 group and skip it): HIDDEN_ATTR carries
   // the computed opacity from before, which readOpacity() prefers.
   const hide = (el: HTMLElement): void => {
+    // Already hidden by a material: take it over (its HIDDEN_ATTR holds the
+    // real opacity), restoring the pre-material inline value later.
+    const fx = fxHidden.get(el)
+    if (fx !== undefined) {
+      fxHidden.delete(el)
+      hiddenEls.set(el, fx)
+      return
+    }
     hiddenEls.set(el, el.style.opacity)
     el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
     el.style.opacity = '0'
@@ -524,6 +642,10 @@ export async function createCompositor(
       }
     } else {
       for (const [el, saved] of hiddenEls) {
+        if (fxWanted.has(el)) {
+          fxHidden.set(el, saved)
+          continue
+        }
         el.style.opacity = saved
         el.removeAttribute(HIDDEN_ATTR)
       }
@@ -539,6 +661,10 @@ export async function createCompositor(
     window.removeEventListener('resize', onResize)
     window.removeEventListener('scroll', onScroll)
     setSourceHidden(false)
+    stopped = true
+    for (const el of [...fxHidden.keys()]) {
+      releaseFx(el)
+    }
   }
   // A lost device can't render again: give the page its own paint back.
   void gpu.device.lost.then((info) => {
@@ -593,6 +719,10 @@ export async function createCompositor(
       }
       scheduler.start()
       sync.start()
+      stopped = false
+      for (const el of fxWanted) {
+        applyFx(el)
+      }
       window.addEventListener('resize', onResize)
       window.addEventListener('scroll', onScroll, { passive: true })
       if (mode === 'replace' && hideSource) {

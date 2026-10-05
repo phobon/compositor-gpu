@@ -15,7 +15,14 @@ import { type OpacityGroup, padGlyphRect, textShadowPad } from './stacking'
  *   Scene.groups). Pushes and pops nest properly.
  */
 export type DrawBatch =
-  | { kind?: 'draw'; layer: Layer; first: number; count: number }
+  | {
+      kind?: 'draw'
+      layer: Layer
+      first: number
+      count: number
+      /** Material id for the whole batch (absent: default pipeline). */
+      material?: number
+    }
   | { kind: 'push'; group: number }
   | { kind: 'pop'; group: number }
   | { kind: 'extra'; id: number }
@@ -76,6 +83,8 @@ const CELL = 128
 
 interface Entry {
   layer: Layer
+  /** 0 = no material. Batches never mix materials. */
+  material: number
   z: number
   first: number
   count: number
@@ -101,6 +110,7 @@ function spaceBit(r: { space?: 'doc' | 'viewport' }): number {
 
 interface Accum {
   layer: Layer
+  material: number
   /** Bitmask of the members' spaces. */
   spaces: number
   first: number
@@ -193,6 +203,7 @@ function insertMember(a: Accum, r: Rect): void {
 function newAccum(e: Entry): Accum {
   const a: Accum = {
     layer: e.layer,
+    material: e.material,
     spaces: e.space,
     first: e.first,
     count: e.count,
@@ -279,6 +290,7 @@ export function buildBatches(
     }
     entries.push({
       layer: 'boxes',
+      material: b.material ?? 0,
       z: b.z,
       first: i,
       count: 1,
@@ -294,6 +306,7 @@ export function buildBatches(
     }
     entries.push({
       layer: 'images',
+      material: im.material ?? 0,
       z: im.z,
       first: i,
       count: 1,
@@ -309,6 +322,7 @@ export function buildBatches(
     }
     entries.push({
       layer: 'cutouts',
+      material: 0,
       z: c.z,
       first: i,
       count: 1,
@@ -332,6 +346,7 @@ export function buildBatches(
       : run.glyphs.map((g) => g.rect)
     entries.push({
       layer: 'text',
+      material: run.material ?? 0,
       z: run.z,
       first: glyphBase,
       count,
@@ -363,6 +378,9 @@ export function buildBatches(
   events.sort(compareEvents)
 
   const batches: (Accum | GroupEvent)[] = []
+  // The batch holding each layer's most recent record: only it can take
+  // the layer's next one (instance ranges stay contiguous), and only when
+  // the material matches.
   let lastIndexForLayer: Partial<Record<Layer, number>> = {}
   let ev = 0
   const emitEventsUpTo = (z: number): void => {
@@ -375,14 +393,24 @@ export function buildBatches(
   for (const e of entries) {
     emitEventsUpTo(e.z)
     const tail = batches[batches.length - 1]
-    if (tail && 'layer' in tail && tail.layer === e.layer) {
+    if (
+      tail &&
+      'layer' in tail &&
+      tail.layer === e.layer &&
+      tail.material === e.material
+    ) {
       extend(tail, e)
       continue
     }
     const lastLIdx = lastIndexForLayer[e.layer]
     if (lastLIdx !== undefined) {
       const lastL = batches[lastLIdx]
-      if (lastL && 'layer' in lastL) {
+      if (
+        lastL &&
+        'layer' in lastL &&
+        lastL.material === e.material &&
+        lastL.first + lastL.count === e.first
+      ) {
         let blocked = false
         for (let i = lastLIdx + 1; i < batches.length; i++) {
           const later = batches[i]
@@ -405,7 +433,14 @@ export function buildBatches(
 
   return batches.map((b): DrawBatch => {
     if ('layer' in b) {
-      return { layer: b.layer, first: b.first, count: b.count }
+      return b.material
+        ? {
+            layer: b.layer,
+            first: b.first,
+            count: b.count,
+            material: b.material
+          }
+        : { layer: b.layer, first: b.first, count: b.count }
     }
     return b.kind === 'extra'
       ? { kind: 'extra', id: b.group }

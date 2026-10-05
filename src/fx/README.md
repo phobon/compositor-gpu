@@ -2,8 +2,10 @@
 
 The effects layer of `docs/EFFECTS.md`. Built: the runtime spine and
 fullscreen post (M1: `createEffects`, Params, the pointer, `fx.pass`) and
-geometry (M2: Targets, Layers, region passes), with the presets `blur`,
-`displace`, `cursorGlow` and `clickRipple`. Materials are M3.
+geometry (M2: Targets, Layers, region passes) and Materials (M3), with
+the presets `blur`, `displace`, `cursorGlow`, `clickRipple` and `ripple`.
+Still to come (M3b): a Layer compute hook, Slug glyphs in Layers,
+`Target.image`, `raw` materials, TypeGPU externals.
 
 ```ts
 import { createCompositor } from 'compositor-gpu'
@@ -286,17 +288,80 @@ fn page_to_viewport(p : vec2f) -> vec2f
 plus `Frame`/`to_clip` from the core. Compile errors report under
 `fx:<name>`.
 
+## Materials
+
+```ts
+fx.material({
+  name: 'wave',
+  target: el | target,             // its subtree's records are re-shaded
+  kinds?: ['box', 'image', 'glyph'],  // default all three
+  vertex?: wgsl, fragment?: wgsl,   // either or both
+  params?: { ...schema },
+  subdivisions?: 1,                 // n × n cells per quad, for bending
+  hideSource?: !!vertex,            // hide the element's DOM paint
+  enabled?: true, continuous?: false,
+  update?: (material, time, ctx) => void
+}) -> Material { name, params, target, enabled, continuous, destroy() }
+```
+
+A Material swaps the hooks the record passes are built around: the
+records keep their own anti-aliasing, clipping, blending and paint
+order. Records of the target's subtree are tagged whenever batches are
+built; a batch never mixes materials. Where two materials cover the same
+record, the one created later wins.
+
+```wgsl
+fn vertex(local : vec2f, size : vec2f, uv : vec2f, record : u32) -> vec2f
+fn fragment(m : MatIn) -> vec4f      // premultiplied
+
+struct MatIn {
+  color    : vec4f,  // what the record paints here, premultiplied
+  local    : vec2f,  // fragment in the record's local box, CSS px
+  size     : vec2f,  // that box (element box; glyph ink box)
+  uv       : vec2f,  // local / size
+  page     : vec2f,  // fragment in the record's space (page, or viewport
+                     // for fixed content), CSS px
+  coverage : f32,    // edge coverage (glyph outline, box edge, image clip)
+  dist     : f32,    // box/image: rounded-box SDF, CSS px, < 0 inside
+  record   : u32,    // instance index: varies per record, not stable
+  kind     : u32,    // 0 box, 1 image, 2 glyph
+};
+fn mat_sample(delta : vec2f) -> vec4f  // images: the source delta CSS px
+                                       // away (premultiplied, unclipped);
+                                       // zero for boxes and glyphs
+```
+
+`vertex` returns the displaced position of a corner in the same local
+box; `local`/`uv` in `fragment` stay undisplaced, so the content moves
+with the quad. With `subdivisions: n` the quad is n × n cells, which a
+vertex hook can bend. Also in scope: `fx : MaterialFx` (time, elapsed,
+dpr, scroll, viewport in CSS px; same layout as `LayerFx` without
+`count`), `params`, `pointer`.
+
+The pipeline compiles asynchronously the first time the records are
+drawn; until then (and for good if the WGSL fails, with the error in the
+console under `fx:<name>:<kind>`) they draw as usual. Text: Slug glyphs
+and their hard shadows take the material, fallback-atlas glyphs (emoji,
+missing code points) don't. A vertex hook moves geometry away from where
+the DOM paints it, so by default the target's own DOM paint is hidden
+while the material is enabled (`opacity: 0`, as replace mode does).
+
 ## Wake rules
 
 The compositor idles unless something asks for frames. `/fx` requests one
-on: a param write to an enabled pass or layer; `enabled` toggling;
+on: a param write to an enabled pass, layer or material; `enabled` toggling;
 `continuous` changing; creation (enabled) and destruction; a layer's
-`markDirty()` or `count` change; a pointer event while any pass or layer
-is enabled. It keeps the loop alive while any enabled pass or layer is
+`markDirty()` or `count` change; a pointer event while any pass, layer or
+material is enabled; a material pipeline finishing its compile. It keeps
+the loop alive while any enabled pass, layer or material is
 `continuous`, or while anything is enabled and the pointer follower is
 more than 0.1 px from the pointer (or velocity hasn't decayed below
-1 px/s). `displace` defaults to `continuous: true` (its noise drifts);
-`blur` is static.
+1 px/s). `continuous` defaults to true when a WGSL hook (a pass
+fragment, a layer's or material's vertex/fragment) reads `fx.time` or
+`fx.elapsed`, so time-driven effects animate without input; pass
+`continuous: false` to opt out (a `tgpu.fn` isn't inspected). `displace`
+defaults to `continuous: true` (its noise drifts); `blur` is static;
+`clickRipple` and `ripple` switch it on only while a ripple runs.
 
 `time` is the page clock and `elapsed` restarts at 0 on the first frame
 after a pass is enabled; both come from the frame's rAF timestamp, so
@@ -343,6 +408,10 @@ A signature mismatch is logged and the stage passes through.
 - `cursorGlow(fx, { radius = 160, intensity = 0.35, color = '#fff',
   place = 'above' })`: one viewport-space quad on the eased follower, a
   radial falloff; `place: 'below'` lights up behind content.
+- `ripple(fx, target, { amplitude = 8, wavelength = 24, speed = 360,
+  duration = 1.2 })`: an image Material (fragment only, `mat_sample`): a
+  wave packet travelling out from each recent click; `continuous` only
+  while the newest one runs.
 - `clickRipple(fx, { radius = 80, width = 2, duration = 0.6, color =
   '#fff', place = 'above' })`: a ring per entry of `pointer.clicks`
   (document space, so it stays where clicked), ease-out growth, linear
@@ -350,6 +419,7 @@ A signature mismatch is logged and the stage passes through.
 
 ## Testing hook
 
+`fx.__pending()` counts material pipelines still compiling.
 `fx.__override({ time?, elapsed?, pointer?: { x, y, down, follow,
 clicks } })` pins those inputs (velocities read as zero; the follower
 doesn't keep the loop alive); `null` clears it. Used by `test/fx/run.ts`;

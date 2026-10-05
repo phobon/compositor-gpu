@@ -1,4 +1,4 @@
-import type { Effects, Layer, Pass } from '@/fx'
+import type { Effects, Layer, Material, Pass } from '@/fx'
 import type { CompositorStats } from '@/types'
 
 declare global {
@@ -18,6 +18,12 @@ declare global {
       after: Layer
       /** Pin two clicks around the viewport centre (fx.__override). */
       pinClicks(): void
+      mripple: Material
+      wave: Material
+      bend: Material
+      tint: Material
+      /** Pin two clicks on the element with this id. */
+      pinClicksOn(id: string): void
       setMode(mode: 'dom' | 'gpu' | 'both'): Promise<void>
       stats(): CompositorStats
       /** Stop / restart the compositor's frame loop (the scissor check

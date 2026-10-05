@@ -43,6 +43,9 @@ export class Scene {
   /** Extra-layer positions (gpu/graph.ts `addLayer`), resolved against
    * the current paint order whenever batches are built. */
   anchors: (() => readonly Anchor[]) | null = null
+  /** Tags records with material ids (gpu/graph.ts `addMaterial`), run
+   * before every batch build. */
+  assign: (() => void) | null = null
 
   allocId(): number {
     return this.nextId++
@@ -101,6 +104,7 @@ export class Scene {
 
   /** Paint order: back-to-front by z then insertion order. Rebuilds batches. */
   sort(): void {
+    this.assign?.()
     const byZ = (a: { z: number }, b: { z: number }) => a.z - b.z
     this.boxes.sort(byZ)
     this.images.sort(byZ)

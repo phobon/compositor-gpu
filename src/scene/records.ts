@@ -64,6 +64,9 @@ export type BorderStyle = 0 | 1 | 2 | 3
 
 export interface BoxRecord {
   kind: 'box'
+  /** Material id (gpu/material.ts) re-shading this record; set when
+   * batches are built (Scene.assign), absent for the default pipeline. */
+  material?: number
   id: number
   /** Doc-space AABB (the transformed box's bounds when transformed). */
   rect: Rect
@@ -133,6 +136,9 @@ export interface BoxRecord {
 
 export interface ImageRecord {
   kind: 'image'
+  /** Material id (gpu/material.ts) re-shading this record; set when
+   * batches are built (Scene.assign), absent for the default pipeline. */
+  material?: number
   id: number
   /** Doc-space AABB (the transformed box's bounds when transformed). */
   rect: Rect
@@ -214,6 +220,9 @@ export interface TextShadow {
 
 export interface GlyphRun {
   kind: 'text'
+  /** Material id (gpu/material.ts) re-shading this record; set when
+   * batches are built (Scene.assign), absent for the default pipeline. */
+  material?: number
   id: number
   fontId: number
   /** First CSS font-family of the run's element. */

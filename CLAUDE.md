@@ -57,7 +57,12 @@ parity column): `fx-off`, `fx-tgpu` (a `tgpu.fn` fragment), `fx-blur`,
 was off-viewport must be unblurred), `fx-displace`, `fx-blur-then-off`
 (off → on → off; the last must equal the first exactly), `fx-displace-push`,
 and on the geometry section `fx-geometry`, `fx-glow`, `fx-ripple`, `fx-after`,
-`fx-region`, `fx-region-then-off` (must equal `fx-geometry` exactly). Console errors
+`fx-region`, `fx-region-then-off` (must equal `fx-geometry` exactly),
+and on the materials section `fx-materials`, `fx-mat-ripple`,
+`fx-mat-wave`, `fx-mat-bend` (plus a check that the `<img>`'s DOM paint is
+hidden while on), `fx-mat-stripes`, `fx-mat-all`, `fx-mat-then-off` (must
+equal `fx-materials` exactly). Material pipelines compile asynchronously:
+the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
 the plain goldens at 0.00. The perf harness also reports `steady encode
@@ -100,11 +105,16 @@ WGSL, rendering but still being tuned). `ImagePass` renders `<img>`, `<canvas>`,
 gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is missing by accident.
 
 **Effects layer** (`src/fx/`, `compositor-gpu/fx`): spec in
-`docs/EFFECTS.md` (with Deviations sections for what M1 and M2 changed), author
-contract in `src/fx/README.md`. M1 and M2 are built: `createEffects
-(compositor)`, Params, the pointer, fullscreen and region `fx.pass`,
-`fx.target`, `fx.layer`, presets `blur`/`displace`/`cursorGlow`/
-`clickRipple`. Layers draw at `extra` entries of `scene.batches` (anchors
+`docs/EFFECTS.md` (with Deviations sections for what M1, M2 and M3
+changed), author contract in `src/fx/README.md`. M1, M2 and M3a are built:
+`createEffects(compositor)`, Params, the pointer, fullscreen and region
+`fx.pass`, `fx.target`, `fx.layer`, `fx.material`, presets `blur`/
+`displace`/`cursorGlow`/`clickRipple`/`ripple`. Materials: the box, image
+and Slug shaders are templates around `mat_vertex`/`mat_fragment`
+(`gpu/material.ts`; default variant = identity hooks, pixel-identical),
+records are tagged with a material id by `Scene.assign` before each batch
+build and batches never mix materials; material pipelines compile async
+and fall back to the default pipeline until ready or on error. Layers draw at `extra` entries of `scene.batches` (anchors
 resolved by `Scene.anchors` at every batch build; `graph.addLayer`); a
 region pass isolates its element (`graph.isolate` → `SceneReader.isolated`
 → a group with `region` set, composited by its `RegionHandler`). It
@@ -191,8 +201,10 @@ Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
 every frame; dynamic images dirty the image layer every frame.
 
 ### RenderPass contract (`gpu/frame.ts`)
-Every layer implements `upload(scene)` / `draw(encoder, first, count)` /
-`destroy()`.
+Every layer implements `upload(scene)` / `draw(encoder, first, count,
+material?)` / `destroy()`; the record passes (box, image, Slug) also take
+a `MaterialBinding` and draw that batch with its pipeline variant (bind
+group 2, `6·n²` vertices for `subdivisions` n; see `gpu/material.ts`).
 Conventions each pass must follow:
 
 - **Bind group 0 is the shared `Frame` uniform**, set once by `Renderer`; the

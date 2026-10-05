@@ -23,6 +23,13 @@
 //   fx-region         blur as a region pass on the card only
 //   fx-region-then-off  region on, then off: equal to fx-geometry exactly
 //                     (isolation torn down)
+//   fx-materials      the materials section, nothing enabled
+//   fx-mat-ripple     ripple (image material) with two pinned clicks
+//   fx-mat-wave       glyph vertex + fragment hooks on the heading
+//   fx-mat-bend       image vertex hook on a 16×16 grid; the <img>'s DOM
+//                     paint must be hidden while on and restored after
+//   fx-mat-stripes    box fragment hook
+//   fx-mat-then-off   all four on, then off: equal to fx-materials exactly
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -54,6 +61,11 @@ type Effect =
   | 'ripple'
   | 'after'
   | 'region'
+  | 'mripple'
+  | 'wave'
+  | 'bend'
+  | 'tint'
+  | 'materials'
 
 interface Result {
   name: string
@@ -114,10 +126,22 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.ripple.enabled = e === 'ripple'
     h.after.enabled = e === 'after'
     h.region.enabled = e === 'region'
+    h.mripple.enabled = e === 'mripple' || e === 'materials'
+    h.wave.enabled = e === 'wave' || e === 'materials'
+    h.bend.enabled = e === 'bend' || e === 'materials'
+    h.tint.enabled = e === 'tint' || e === 'materials'
     if (e === 'ripple') {
       h.pinClicks()
     }
+    if (e === 'mripple' || e === 'materials') {
+      h.pinClicksOn('mat-img')
+    }
     await h.raf2()
+    // Material pipelines compile asynchronously (the default pipeline
+    // draws until they're ready).
+    for (let i = 0; i < 600 && h.fx.__pending() > 0; i++) {
+      await h.raf2()
+    }
     await h.raf2()
     // A region toggle schedules a full read; let it land.
     await h.raf2()
@@ -328,6 +352,67 @@ async function main(): Promise<void> {
         )
         results.push({
           name: 'fx-region-then-off (= geo)',
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    const pinPlain = (): Promise<void> =>
+      page.evaluate(() =>
+        window.__fx?.fx.__override({
+          time: 1.25,
+          elapsed: 1.25,
+          pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
+        })
+      )
+    const mats = 'fx-materials'
+    let matPre: PNG | null = null
+    if (want(mats) || want('fx-mat-then-off')) {
+      matPre = await capture(mats, mats, 'none')
+    }
+    if (want('fx-mat-ripple')) {
+      await capture(mats, 'fx-mat-ripple', 'mripple')
+      await pinPlain()
+    }
+    if (want('fx-mat-wave')) {
+      await capture(mats, 'fx-mat-wave', 'wave')
+    }
+    if (want('fx-mat-bend')) {
+      await capture(mats, 'fx-mat-bend', 'bend')
+      // hideSource: the <img> paints nothing in the DOM while bent...
+      await setEffect(page, 'bend')
+      const on = await page.evaluate(
+        () => document.getElementById('mat-img')?.style.opacity
+      )
+      await setEffect(page, 'none')
+      const off = await page.evaluate(
+        () => document.getElementById('mat-img')?.style.opacity
+      )
+      const ok = on === '0' && off === ''
+      results.push({
+        name: 'fx-mat-bend hides DOM',
+        regressionPct: null,
+        status: ok ? 'ok' : 'fail',
+        note: `opacity on=${JSON.stringify(on)} off=${JSON.stringify(off)}`
+      })
+    }
+    if (want('fx-mat-stripes')) {
+      await capture(mats, 'fx-mat-stripes', 'tint')
+    }
+    if (want('fx-mat-then-off')) {
+      await capture(mats, 'fx-mat-all', 'materials')
+      await pinPlain()
+      const post = await capture(mats, 'fx-mat-then-off', 'none')
+      if (matPre && post) {
+        const n = exactDiff(matPre, post)
+        const pct = diffPng(
+          matPre,
+          post,
+          resolve(outDir, 'fx-mat-then-off-invariant.png')
+        )
+        results.push({
+          name: 'fx-mat-then-off (= mats)',
           regressionPct: pct,
           status: n === 0 ? 'ok' : 'fail',
           note: `${n} px differ`

@@ -1,6 +1,6 @@
 # Handoff — compositor-gpu + bonobolabs.com `/duo`
 
-Rewritten 2026-10-03, updated 2026-10-05 (M2), to resume in a fresh
+Rewritten 2026-10-03, updated 2026-10-05 (M2, M3a), to resume in a fresh
 session. `ROADMAP.md` is the live checklist (mirror phases + effects
 milestones), `docs/ARCHITECTURE.md` the
 mirror's spec, `docs/EFFECTS.md` the effects layer's. This file is the
@@ -11,7 +11,7 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `16df20b fx pass` = `origin/main` (the batch below, `ab273c8`..`16df20b`) + the uncommitted M2 batch (open item 3) |
+| `~/code/compositor-gpu` | the library, source of truth | `dcf94b1 M2 effect presets` + the uncommitted M3a batch (open item 3) |
 | `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500) and `GpuStats.jsx` (readout line) |
 | `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `199a186 Set canvas z index` (≠ the committed pointer); `origin/main` is `16df20b` |
 
@@ -121,14 +121,13 @@ the compositor.
 
 ## Open items, first move for each
 
-1. **Commit.** Nothing from 2026-10-03 on is committed yet. In
-   compositor-gpu: the M2 batch (item 3) plus these docs. In MDS-home:
-   bump the submodule to `origin/main` once M2 is pushed (`git -C
-   compositor-gpu fetch origin && git -C compositor-gpu checkout
-   origin/main`), then commit it with `GpuCompositor.jsx` (`zIndex`) and
-   `GpuStats.jsx` (readout line `cutouts / anchorY / reanchors`, added
-   2026-10-05: the readout never showed them). Ben checked `/duo` on
-   2026-10-05: solid apart from item 2.
+1. **Commit.** compositor-gpu: M2 is `dcf94b1`; the M3a batch (item 3)
+   is uncommitted. MDS-home: bump the submodule to `origin/main` once
+   that's pushed (`git -C compositor-gpu fetch origin && git -C
+   compositor-gpu checkout origin/main`), then commit it with
+   `GpuCompositor.jsx` (`zIndex`) and `GpuStats.jsx` (readout line
+   `cutouts / anchorY / reanchors`; the readout never showed them). Ben
+   checked `/duo` on 2026-10-05: solid apart from item 2.
 2. **`/duo` findings (Ben, 2026-10-05).**
    - "The Bonobo Bundle →" and the scroll-top button render twice in Arc
      and Safari. Not reproduced in Claude's browser pane (Chromium, 607
@@ -148,29 +147,37 @@ the compositor.
      `focusin`/`focusout` (`:focus-visible` changes no attribute).
    - Drag-select doesn't show in replace mode (`::selection` not
      mirrored). Ben: expected; no decision yet on mirroring it.
-3. **Effects M2 — built 2026-10-05, uncommitted.** Target, Layer
-   (`above` / `below` / `after`), region Pass, `cursorGlow`,
-   `clickRipple`, `displace` `mode`; the core's `graph.addLayer` /
-   `isolate` / `nodeOf` / `version`. Contract: `src/fx/README.md`;
-   deviations: `docs/EFFECTS.md`. Verified in the sandbox: typecheck,
-   biome, build, `test:visual` 0.00 regression everywhere (the core
-   changes are inert without `/fx`), `--with-fx` 0.00, `test:fx` 0.00
-   on all 17 shots incl. both invariants (the five M1 shots are
-   pixel-identical to the pre-M2 tree; `fx-blur-then-off-on` differs by
-   ±1 on 65 px, the page got taller), `test:perf` full read 355 ms, 123
-   draws, encode 0.30 ms idle / 0.35 ms with blur (0.40 before: the
-   copy-through now skips the scissored rect). An opus review found five
-   defects, all fixed before the final run: region groups never went back
-   to the pool (a new texture per frame), an `after` layer could escape
-   an enclosing group that starts on its element (anchors now carry the
-   enclosing-group depth), `nodeOf` returned stale nodes for removed /
-   `display: none` elements (the map is reset per full read and pruned per
-   partial read), writes inside a Layer's `update` re-requested frames
-   forever, and a layer could draw a grown `count` before uploading it.
-   Have a look at
-   `fx-displace-push` (push folds through the centre: keep it or prefer
-   a pinch?) and try the new panel toggles in `npm run dev` → `/fx.html`.
-   Next: M3 (Materials) per `docs/EFFECTS.md`.
+3. **Effects.** M2 (Target, Layer, region Pass, `cursorGlow`,
+   `clickRipple`, `displace` `mode`) is committed (`dcf94b1`; push mode
+   left as is). **M3a, materials — built 2026-10-05, uncommitted:**
+   `fx.material({ target, kinds, vertex, fragment, subdivisions,
+   hideSource })`, the `ripple` preset, and in the core the box / image /
+   Slug shaders as templates around `mat_vertex` / `mat_fragment`
+   (`gpu/material.ts`), async material pipelines, material ids on records
+   (`Scene.assign`) with batches cut by material, `graph.addMaterial` /
+   `hideSource` / `nextMaterialId` / `materialsPending`. Contract:
+   `src/fx/README.md` "Materials"; deviations: `docs/EFFECTS.md`.
+   Verified in the sandbox: typecheck, biome, build; `test:visual` 0.00
+   on all 23 shots (the templated default shaders are pixel-identical),
+   `--with-fx` 0.00; `test:fx` all 26 rows OK incl. three exact on→off
+   invariants and the DOM-hidden check for `fx-mat-bend`; `test:perf`
+   same-session A/B against M2: full read 574 vs 884 ms (the sandbox was
+   heavily loaded; earlier today M2 measured 355), 123 draws both,
+   encode 0.40 ms both. An opus review found seven defects, all fixed
+   before the final runs: batches could draw the wrong record range when
+   a material sat between two plain records (the batch key now stays per
+   layer, merging only on equal material and contiguous ranges),
+   `mat_sample` sampled atlas images ~3 mips too coarse (gradients now
+   scaled to the atlas entry), replace mode off un-hid a displaced target
+   and `hideSource` ignored stop/start/destroy (requests are tracked in
+   their own set), an invalid material pipeline would have voided whole
+   frames (now async with a default fallback), material ids could clash
+   between two `createEffects` runtimes (now allocated by the
+   compositor), and the hooks' local frame differed between vertex and
+   fragment for glyphs and box shadows. Try `/fx.html`: the materials
+   section has ripple (click the image), wave, bend and stripes toggles.
+   Next: M3b (Layer compute hook, `Target.image`, Slug glyphs in Layers,
+   `raw` materials, TypeGPU externals).
 4. **Mirror leftovers**, one quiet batch: doubled AA on corner dots (Chrome
    paints each corner dot twice), multi-layer `url()` backgrounds (only layer
    0 paints), text under CSS transforms still reads per grapheme, a `layers`

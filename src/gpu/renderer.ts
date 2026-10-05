@@ -9,6 +9,7 @@ import {
   CopyThrough,
   type DeviceRect,
   type ExtraLayer,
+  type MaterialEntry,
   type PostChain,
   type PostFrame,
   type RegionFrame,
@@ -107,6 +108,8 @@ export class Renderer {
   readonly extras = new Map<number, ExtraLayer>()
   /** Region handlers by id (OpacityGroup.region; gpu/graph.ts). */
   readonly regions = new Map<number, RegionHandler>()
+  /** Materials by id (DrawBatch.material; gpu/graph.ts). */
+  readonly materials = new Map<number, MaterialEntry>()
   private sceneTexture: GPUTexture | null = null
   private sceneView: GPUTextureView | null = null
   private copy: CopyThrough | null = null
@@ -138,6 +141,14 @@ export class Renderer {
       dpr: 1
     }
     this.composite = new GroupCompositor(this.shared)
+  }
+
+  /** Forget material `id`'s cached pipelines in every pass. */
+  dropMaterial(id: number): void {
+    this.materials.delete(id)
+    for (const pass of this.passes) {
+      pass.dropMaterial?.(id)
+    }
   }
 
   addPass(pass: RenderPass): void {
@@ -330,7 +341,16 @@ export class Renderer {
         if (!pass) {
           continue
         }
-        draws += pass.draw(rp, batch.first, batch.count)
+        const mat =
+          batch.material !== undefined
+            ? this.materials.get(batch.material)
+            : undefined
+        draws += pass.draw(
+          rp,
+          batch.first,
+          batch.count,
+          mat?.active() ? mat : null
+        )
         batches++
       }
     }

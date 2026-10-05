@@ -7,9 +7,9 @@ bonobolabs.com `/duo?gpu=1` from the `compositor-gpu` submodule (`&stats=1`
 readout, `&debug=1` logging, `&mode=replace`). Site chrome is
 `data-gpu-ignore`d: in-flow chrome shows through cutout holes, fixed chrome
 sits above the canvas (`zIndex: 500`). Effects layer: spec in
-`docs/EFFECTS.md`, M1 and M2 built (`compositor-gpu/fx`: Params, pointer,
-fullscreen and region Passes, Targets, Layers, presets `blur`/`displace`/
-`cursorGlow`/`clickRipple`). `docs/HANDOFF.md` has the checkouts,
+`docs/EFFECTS.md`, M1, M2 and M3's materials part built (`compositor-gpu/fx`:
+Params, pointer, fullscreen and region Passes, Targets, Layers, Materials,
+presets `blur`/`displace`/`cursorGlow`/`clickRipple`/`ripple`). `docs/HANDOFF.md` has the checkouts,
 the last batch's verification and the first move on each item. Every harness passes
 on the current tree:
 
@@ -21,7 +21,10 @@ on the current tree:
 - `npm run test:fx` — effects goldens (`fx-off`, `fx-tgpu`, `fx-blur`,
   `fx-blur-scissor`, `fx-displace`, `fx-displace-push`,
   `fx-blur-then-off` ≡ `fx-off`, `fx-geometry`, `fx-glow`, `fx-ripple`,
-  `fx-after`, `fx-region`, `fx-region-then-off` ≡ `fx-geometry`).
+  `fx-after`, `fx-region`, `fx-region-then-off` ≡ `fx-geometry`,
+  `fx-materials`, `fx-mat-ripple`, `fx-mat-wave`, `fx-mat-bend` (+ DOM
+  hidden check), `fx-mat-stripes`, `fx-mat-all`, `fx-mat-then-off` ≡
+  `fx-materials`).
 - `npm run test:perf` — 400-card page: full read ~425 ms (sandbox; 587 ms
   before `FAST_TEXT_READ`), partial read ~40 ms, encode 0.30 ms idle /
   0.40 ms with blur, 123 draws.
@@ -116,13 +119,19 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       isolated group, `graph.isolate`); presets `cursorGlow`,
       `clickRipple`; `displace` `mode` (lens / push); fx.html geometry
       section + 7 shots. Deviations in `docs/EFFECTS.md`.
-- [ ] M3 — materials: snippet contract for glyph/image/box; per-material
-      batch cut and pipelines; per-Target DOM hiding while displacing;
-      `ripple`; image `subdivisions`; Layer compute hook; carried from
-      M2: `Target.image`, glyph quads through Slug in a Layer; carried
-      from M1: TypeGPU externals (a `d.struct` from the Params schema,
-      `tgpu.fn` wrappers for `sample`/`src_uv`/`page_to_uv`) so
-      `'use gpu'` bodies can reach them
+- [x] M3a — materials: hook contract for box/image/glyph (`MatIn`,
+      `mat_sample`), record passes templated around `mat_vertex` /
+      `mat_fragment` (default variant pixel-identical), async per-material
+      pipelines with default fallback, records tagged per batch build
+      (`Scene.assign`) and batches cut by material, `subdivisions` (all
+      kinds), per-target DOM hiding (`graph.hideSource`), preset
+      `ripple`; fx.html materials section + 7 shots. Deviations in
+      `docs/EFFECTS.md`.
+- [ ] M3b — Layer compute hook (`simulate`); `Target.image`; glyph quads
+      through Slug in a Layer; `raw` materials; TypeGPU externals (a
+      `d.struct` from the Params schema, `tgpu.fn` wrappers for
+      `sample`/`src_uv`/`page_to_uv`) so `'use gpu'` bodies can reach
+      them
 
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are

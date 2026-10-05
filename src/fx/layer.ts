@@ -9,6 +9,7 @@ import {
   type ParamValues
 } from './params'
 import { POINTER_WGSL } from './pointer'
+import { readsTime } from './shader'
 import type { Target } from './target'
 
 // Layers: instanced quads with no DOM counterpart, drawn at a place in the
@@ -222,7 +223,7 @@ export function inertLayer<S extends ParamSchema>(
     stride,
     place: o.place ?? 'above',
     enabled: o.enabled ?? true,
-    continuous: o.continuous ?? false,
+    continuous: o.continuous ?? readsTime(o.vertex, o.fragment),
     markDirty() {},
     destroy() {}
   }
@@ -434,7 +435,7 @@ export function createLayer<S extends ParamSchema>(
   const state: LayerState = {
     handle,
     enabled: o.enabled ?? true,
-    continuous: o.continuous ?? false,
+    continuous: o.continuous ?? readsTime(o.vertex, o.fragment),
     frame(ctx) {
       if (!state.enabled) {
         return

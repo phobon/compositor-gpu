@@ -1,5 +1,13 @@
 import { shadowPad } from '../dom/styles'
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
+import {
+  MAT_DEFAULT_WGSL,
+  MAT_GRID_WGSL,
+  MAT_IN_WGSL,
+  type MaterialBinding,
+  MaterialPipelines,
+  PREMUL_BLEND
+} from '../gpu/material'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
@@ -8,8 +16,18 @@ const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
 
-const SHADER = /* wgsl */ `
+/** The box shader with material hooks `mat` (gpu/material.ts) on a
+ * `subdiv` × `subdiv` quad; the default variant has identity hooks. */
+const shader = (
+  mat: string,
+  subdiv: number,
+  wrap: string
+): string => /* wgsl */ `
 ${FRAME_WGSL}
+${MAT_IN_WGSL}
+${MAT_GRID_WGSL}
+${mat}
+const MAT_SUBDIV : u32 = ${subdiv}u;
 
 struct Box {
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
@@ -48,13 +66,16 @@ struct VOut {
 @vertex
 fn vs(@builtin(vertex_index) vi : u32,
       @builtin(instance_index) ii : u32) -> VOut {
-  var uv = array<vec2f, 6>(
-    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
-    vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let b = boxes[ii];
-  let corner = uv[vi];
+  let corner = mat_corner(vi, MAT_SUBDIV);
   let size = b.xf1.zw;
-  let lp = corner * size;
+  let lp0 = corner * size;
+  // Hooks see the element's box: a shadow's quad is padded by sh0.y.
+  let pad = vec2f(b.sh0.y);
+  let inner = max(size - 2.0 * pad, vec2f(1e-4));
+  // As a delta, so identity hooks leave lp0 bit-exact.
+  let q = lp0 - pad;
+  let lp = lp0 + (mat_vertex(q, inner, q / inner, ii) - q);
   let m = b.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + b.xf1.xy;
   var out : VOut;
@@ -62,7 +83,8 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.half = size * 0.5;
   // Centred local coords: the SDF and gradients run in the untransformed
   // box, and fwidth() picks up the transform's scale/rotation for AA.
-  out.local = lp - size * 0.5;
+  // Undisplaced, so a material's vertex hook warps the box with the quad.
+  out.local = lp0 - size * 0.5;
   out.idx = ii;
   out.docp = p;
   return out;
@@ -340,8 +362,7 @@ fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
                   floor(wr * 0.5), a);
 }
 
-@fragment
-fn fs(in : VOut) -> @location(0) vec4f {
+fn base_fs(in : VOut) -> vec4f {
   let b = boxes[in.idx];
   let cl = b.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
@@ -479,6 +500,36 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let bd = vec4f(bc.rgb * bc.a, bc.a);
   return (bd * bcov + bg * fillCov - bg * (bc.a * under)) * opacity;
 }
+
+${wrap}
+`
+
+const DEFAULT_FS = /* wgsl */ `
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  return base_fs(in);
+}
+`
+
+const MATERIAL_FS = /* wgsl */ `
+fn mat_sample(delta : vec2f) -> vec4f {
+  return vec4f(0.0);
+}
+
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  let c = base_fs(in);
+  let b = boxes[in.idx];
+  let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
+  let apx = max(length(vec2f(length(dpdx(in.local)),
+                             length(dpdy(in.local)))) * 0.70710678, 1e-4);
+  // The element's box (a shadow's quad is padded by sh0.y).
+  let pad = vec2f(b.sh0.y);
+  let size = max(in.half * 2.0 - 2.0 * pad, vec2f(1e-4));
+  let local = in.local + in.half - pad;
+  return mat_fragment(MatIn(c, local, size, local / size, in.docp,
+    edge_cov(d, apx), d, in.idx, 0u));
+}
 `
 
 type Pt = [number, number]
@@ -532,6 +583,7 @@ function skQuarterArc(r: number): number {
 export class BoxPass implements RenderPass {
   readonly layer = 'boxes' as const
   private pipeline: GPURenderPipeline
+  private readonly materials: MaterialPipelines
   private group1Layout: GPUBindGroupLayout
   private buffer: GPUBuffer | null = null
   private bindGroup: GPUBindGroup | null = null
@@ -558,28 +610,38 @@ export class BoxPass implements RenderPass {
         }
       ]
     })
-    const module = device.createShaderModule({ code: SHADER })
-    reportShaderErrors(module, 'box')
-    this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [frameLayout, this.group1Layout]
-      }),
-      vertex: { module, entryPoint: 'vs' },
-      fragment: {
-        module,
-        entryPoint: 'fs',
-        targets: [
-          {
-            format,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-            }
-          }
-        ]
-      },
-      primitive: { topology: 'triangle-list' }
-    })
+    const describe = (
+      code: string,
+      label: string,
+      extra: GPUBindGroupLayout | null
+    ): GPURenderPipelineDescriptor => {
+      const module = device.createShaderModule({ label, code })
+      reportShaderErrors(module, label)
+      const layouts = [frameLayout, this.group1Layout]
+      if (extra) {
+        layouts.push(extra)
+      }
+      return {
+        label,
+        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [{ format, blend: PREMUL_BLEND }]
+        },
+        primitive: { topology: 'triangle-list' }
+      }
+    }
+    this.pipeline = device.createRenderPipeline(
+      describe(shader(MAT_DEFAULT_WGSL, 1, DEFAULT_FS), 'box', null)
+    )
+    this.materials = new MaterialPipelines(
+      'box',
+      device,
+      (code, n, label, layout) =>
+        describe(shader(code, n, MATERIAL_FS), label, layout)
+    )
   }
 
   /** Grow the instance buffer; returns true when it was recreated. */
@@ -795,14 +857,30 @@ export class BoxPass implements RenderPass {
     }
   }
 
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+  draw(
+    encoder: GPURenderPassEncoder,
+    first: number,
+    count: number,
+    material?: MaterialBinding | null
+  ): number {
     if (count === 0 || !this.bindGroup) {
       return 0
     }
-    encoder.setPipeline(this.pipeline)
+    const mp = this.materials.get(material)
+    encoder.setPipeline(mp ?? this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
-    encoder.draw(6, count, 0, first)
+    let verts = 6
+    if (mp && material) {
+      encoder.setBindGroup(2, material.bindGroup)
+      const n = Math.max(1, Math.floor(material.subdivisions))
+      verts = 6 * n * n
+    }
+    encoder.draw(verts, count, 0, first)
     return 1
+  }
+
+  dropMaterial(id: number): void {
+    this.materials.drop(id)
   }
 
   destroy(): void {

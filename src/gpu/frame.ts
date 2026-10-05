@@ -1,5 +1,6 @@
 import type { Scene } from '../scene/scene'
 import type { Layer } from '../types'
+import type { MaterialBinding } from './material'
 
 /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
 export const FRAME_WGSL = /* wgsl */ `
@@ -45,7 +46,15 @@ export interface RenderPass {
    * number of `encoder.draw` calls issued (the `draws` stat) — a pass may
    * collapse several instances into one draw (e.g. atlas-backed images).
    */
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): number
+  draw(
+    encoder: GPURenderPassEncoder,
+    first: number,
+    count: number,
+    material?: MaterialBinding | null
+  ): number
+  /** Forget a destroyed material's cached pipeline (passes that support
+   * materials). */
+  dropMaterial?(id: number): void
   destroy(): void
 }
 

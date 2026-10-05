@@ -314,3 +314,52 @@ warps behind a `mode` param, and JS-bodied TypeGPU externals wait for M3.
   constant-strength outward shove that folds through the centre). Its
   pointer maths now goes through `viewport_to_uv`, so it works as a
   region pass.
+
+## Deviations (M3, materials part)
+
+Built 2026-10-05. M3 is split: this part is the Material contract for
+boxes, images and glyphs, the batch cut, per-target DOM hiding,
+`subdivisions` and `ripple`. Still to do (M3b): the Layer `simulate`
+compute hook, glyph quads through Slug in a Layer, `Target.image`, `raw`
+materials, and TypeGPU externals for `'use gpu'` bodies.
+
+- **Contract.** `fx.material({ target, kinds?, vertex?, fragment?,
+  params?, subdivisions?, hideSource?, update? })`. Hooks:
+  `fn vertex(local, size, uv, record) -> vec2f` returns the displaced
+  local position; `fn fragment(m : MatIn) -> vec4f` returns premultiplied
+  colour. `MatIn` = `color` (what the record paints there, premultiplied,
+  coverage included), `local`, `size`, `uv`, `page`, `coverage`, `dist`
+  (rounded-box SDF for boxes and images, 0 for glyphs), `record`, `kind`.
+  Instead of separate base colour + coverage inputs, the hook gets the
+  record's finished colour and its coverage: boxes paint borders,
+  gradients and shadows, so "base colour" has no single value. Images get
+  `mat_sample(delta)` (the source `delta` CSS px away, premultiplied,
+  unclipped); for boxes and glyphs it returns zero. Hooks see undisplaced
+  coordinates in the element's box (a shadow's padding and a glyph's
+  line-box offset are taken out), so a vertex hook warps the content with
+  the quad.
+- **Passes.** Each record pass builds its shader around `mat_vertex` /
+  `mat_fragment` (`gpu/material.ts`): the default variant uses identity
+  hooks and a `fs` that returns the old result unchanged (pixel-identical,
+  0.00 on every visual shot); a material variant adds bind group 2
+  (`MaterialFx` time/elapsed/dpr/scroll/viewport, Params, Pointer). The
+  pipeline is compiled asynchronously on first use; records draw with the
+  default pipeline until it is ready, and keep doing so if it fails (an
+  invalid pipeline would void the frame's command buffer).
+- **Batching.** Records carry `material?`; `Scene.assign` tags the active
+  materials' target subtrees before every batch build (registration order:
+  the later material wins where two overlap, e.g. `ripple` and a bend on
+  the same image). A batch never mixes materials.
+- **Glyphs**: Slug glyphs and their hard text shadows take the material;
+  fallback-atlas glyphs (emoji, missing code points) keep drawing plainly.
+- **`subdivisions`** applies to every kind, not only images: each quad is
+  drawn as n × n cells (6n² vertices).
+- **DOM hiding** (`hideSource`, default on when `vertex` is given): the
+  target gets `opacity: 0` + `HIDDEN_ATTR` like replace mode, tracked
+  separately so replace mode on/off, `stop()`/`start()` and destroy leave
+  it in the right state.
+- **`ripple`** is `ripple(fx, target, opts)`: fragment-only, image kind,
+  rings from `pointer.clicks`, `continuous` only while the newest one runs.
+- **`continuous` default** (added after Ben noticed the wave material
+  froze without pointer input): true when a WGSL hook reads `fx.time` or
+  `fx.elapsed`, false otherwise; an explicit value wins.

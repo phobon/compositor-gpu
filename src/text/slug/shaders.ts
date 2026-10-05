@@ -1,4 +1,9 @@
 import { FRAME_WGSL } from '../../gpu/frame'
+import {
+  MAT_DEFAULT_WGSL,
+  MAT_GRID_WGSL,
+  MAT_IN_WGSL
+} from '../../gpu/material'
 
 /**
  * Slug fragment shader.
@@ -19,8 +24,18 @@ import { FRAME_WGSL } from '../../gpu/frame'
  */
 const TAPS = 3
 
-export const SLUG_WGSL = /* wgsl */ `
+/** The Slug shader with material hooks `mat` (gpu/material.ts) on a
+ * `subdiv` × `subdiv` quad; SLUG_WGSL is the default variant. */
+export const slugShader = (
+  mat: string,
+  subdiv: number,
+  material: boolean
+): string => /* wgsl */ `
 ${FRAME_WGSL}
+${MAT_IN_WGSL}
+${MAT_GRID_WGSL}
+${mat}
+const MAT_SUBDIV : u32 = ${subdiv}u;
 
 struct Glyph {
   rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
@@ -43,17 +58,19 @@ struct VOut {
   @location(0) em : vec2f,                 // 0..1 within the em box, y-up
   @location(1) @interpolate(flat) idx : u32,
   @location(2) docp : vec2f,
+  @location(3) lp : vec2f,                 // line-box local (undisplaced)
 };
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32,
       @builtin(instance_index) ii : u32) -> VOut {
-  var uv = array<vec2f, 6>(
-    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
-    vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let g = glyphs[ii];
-  let corner = uv[vi];
-  let lp = g.rect.xy + corner * g.rect.zw;
+  let corner = mat_corner(vi, MAT_SUBDIV);
+  let lp0 = g.rect.xy + corner * g.rect.zw;
+  // Hooks see the ink box (origin at its top-left), as MatIn.local does.
+  // As a delta, so identity hooks leave lp0 bit-exact.
+  let q = lp0 - g.rect.xy;
+  let lp = lp0 + (mat_vertex(q, g.rect.zw, corner, ii) - q);
   let m = g.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
     g.xf1.xy + g.offset.xy;
@@ -62,6 +79,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.em = vec2f(corner.x, 1.0 - corner.y);
   out.idx = ii;
   out.docp = p;
+  out.lp = lp0;
   return out;
 }
 
@@ -148,8 +166,7 @@ fn coverage_row(em : vec2f, gref : vec4u, invPx : f32) -> f32 {
   return cov;
 }
 
-@fragment
-fn fs(in : VOut) -> @location(0) vec4f {
+fn base_fs(in : VOut) -> vec4f {
   let g = glyphs[in.idx];
   if (g.gref.y == 0u) { discard; }
   let cl = g.clip;
@@ -170,4 +187,31 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let a = cov * g.color.a;
   return vec4f(g.color.rgb * a, a);
 }
+
+${material ? MATERIAL_FS : DEFAULT_FS}
 `
+
+const DEFAULT_FS = /* wgsl */ `
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  return base_fs(in);
+}
+`
+
+const MATERIAL_FS = /* wgsl */ `
+fn mat_sample(delta : vec2f) -> vec4f {
+  return vec4f(0.0);
+}
+
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  let c = base_fs(in);
+  let g = glyphs[in.idx];
+  let uv = vec2f(in.em.x, 1.0 - in.em.y);
+  let cov = c.a / max(g.color.a, 1e-4);
+  return mat_fragment(MatIn(c, in.lp - g.rect.xy, g.rect.zw, uv, in.docp,
+    cov, 0.0, in.idx, 2u));
+}
+`
+
+export const SLUG_WGSL = slugShader(MAT_DEFAULT_WGSL, 1, false)

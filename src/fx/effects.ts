@@ -15,6 +15,13 @@ import {
   type LayerState
 } from './layer'
 import {
+  createMaterial,
+  inertMaterial,
+  type Material,
+  type MaterialOptions,
+  type MaterialState
+} from './material'
+import {
   createParams,
   type ParamBlock,
   type ParamSchema,
@@ -31,6 +38,7 @@ import {
   EFFECT_BYTES,
   effectSource,
   type Fragment,
+  readsTime,
   stageSource
 } from './shader'
 import { createTarget, type Target } from './target'
@@ -88,6 +96,8 @@ export interface Effects {
   pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S>
   /** Instanced quads drawn in paint order (see LayerOptions). */
   layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S>
+  /** Re-shade a target's mirrored records (see MaterialOptions). */
+  material<S extends ParamSchema>(opts: MaterialOptions<S>): Material<S>
   /** The (cached) Target for `el`. */
   target(el: Element): Target
   /** Targets for every element matching `selector` (under `root`). */
@@ -96,6 +106,8 @@ export interface Effects {
   destroy(): void
   /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
   __override(o: FxOverride | null): void
+  /** Test hook: material pipelines still compiling. */
+  __pending(): number
 }
 
 interface Stage {
@@ -209,6 +221,7 @@ function inertEffects(): Effects {
     active: false,
     pointer,
     layer: (opts) => inertLayer(opts),
+    material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
@@ -219,7 +232,11 @@ function inertEffects(): Effects {
         block,
         radius: radiusFn(opts, block.values),
         enabled: opts.enabled ?? true,
-        continuous: opts.continuous ?? false,
+        continuous:
+          opts.continuous ??
+          readsTime(
+            ...(Array.isArray(opts.fragment) ? opts.fragment : [opts.fragment])
+          ),
         enabledAt: null,
         paramsBuf: null,
         stages: [],
@@ -233,7 +250,8 @@ function inertEffects(): Effects {
       )
     },
     destroy() {},
-    __override() {}
+    __override() {},
+    __pending: () => 0
   }
 }
 
@@ -253,12 +271,15 @@ export function createEffects(compositor: Compositor): Effects {
   const { device, format, frameLayout } = graph.shared
   const passes: PassState[] = []
   const layers: LayerState[] = []
+  const materials: MaterialState[] = []
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
 
   const anyEnabled = (): boolean =>
-    passes.some((p) => p.enabled) || layers.some((l) => l.enabled)
+    passes.some((p) => p.enabled) ||
+    layers.some((l) => l.enabled) ||
+    materials.some((m) => m.enabled)
   const tracker = new PointerTracker(() => {
     if (anyEnabled()) {
       graph.requestFrame()
@@ -529,6 +550,10 @@ export function createEffects(compositor: Compositor): Effects {
         any ||= l.enabled
         l.frame(ctx)
       }
+      for (const m of materials) {
+        any ||= m.enabled
+        m.frame(ctx)
+      }
       if (any) {
         device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
       }
@@ -539,7 +564,7 @@ export function createEffects(compositor: Compositor): Effects {
     },
     keepAlive() {
       let any = false
-      for (const e of [...passes, ...layers]) {
+      for (const e of [...passes, ...layers, ...materials]) {
         if (e.enabled) {
           if (e.continuous) {
             return true
@@ -828,7 +853,11 @@ export function createEffects(compositor: Compositor): Effects {
         block: generic,
         radius: radiusFn(opts, block.values),
         enabled: opts.enabled ?? true,
-        continuous: opts.continuous ?? false,
+        continuous:
+          opts.continuous ??
+          readsTime(
+            ...(Array.isArray(opts.fragment) ? opts.fragment : [opts.fragment])
+          ),
         enabledAt: null,
         paramsBuf: null,
         stages: [],
@@ -903,6 +932,21 @@ export function createEffects(compositor: Compositor): Effects {
       layers.push(s)
       return s.handle as unknown as Layer<S>
     },
+    material<S extends ParamSchema>(opts: MaterialOptions<S>): Material<S> {
+      const target = targetOf(opts.target, targetCache, graph)
+      if (destroyed) {
+        return inertMaterial(opts, target)
+      }
+      const s = createMaterial(opts, target, layerDeps, (st) => {
+        const i = materials.indexOf(st)
+        if (i !== -1) {
+          materials.splice(i, 1)
+        }
+        graph.requestFrame()
+      })
+      materials.push(s)
+      return s.handle as unknown as Material<S>
+    },
     target: (el) => targetOf(el, targetCache, graph),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) =>
@@ -928,12 +972,17 @@ export function createEffects(compositor: Compositor): Effects {
         l.handle.destroy()
       }
       layers.length = 0
+      for (const m of [...materials]) {
+        m.handle.destroy()
+      }
+      materials.length = 0
       releaseTargets()
       pointerBuf.destroy()
     },
     __override(o) {
       override = o
       graph.requestFrame()
-    }
+    },
+    __pending: () => graph.materialsPending()
   }
 }

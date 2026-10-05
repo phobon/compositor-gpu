@@ -10,7 +10,9 @@ import {
   cursorGlow,
   displace,
   type Layer,
-  type Pass
+  type Material,
+  type Pass,
+  ripple as imageRipple
 } from '@/fx'
 import { createCompositor } from '@/index'
 
@@ -51,7 +53,7 @@ function imagesReady(): Promise<void> {
 }
 
 /** Bind a checkbox to `pass.enabled` and each slider to a param. */
-function bindPanel(key: string, pass: Pass | Layer): void {
+function bindPanel(key: string, pass: Pass | Layer | Material): void {
   const box = $(`c-${key}`) as HTMLInputElement
   box.checked = pass.enabled
   box.addEventListener('change', () => {
@@ -152,8 +154,64 @@ async function boot(): Promise<void> {
       }
     }
   })
+  // Materials (M3).
+  const mripple = imageRipple(fx, $('mat-img'), {
+    enabled: false,
+    amplitude: 10,
+    duration: 1.5
+  })
+  const wave = fx.material({
+    name: 'wave',
+    target: $('mat-heading'),
+    kinds: ['glyph'],
+    enabled: false,
+    params: { amount: { type: 'f32', default: 6, min: 0, max: 20 } },
+    vertex: /* wgsl */ `
+      fn vertex(local : vec2f, size : vec2f, uv : vec2f, record : u32)
+          -> vec2f {
+        let ph = f32(record) * 0.55 + fx.time * 4.0;
+        return local + vec2f(0.0, sin(ph) * params.amount);
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(m : MatIn) -> vec4f {
+        // Tint by the same phase, so the wave reads in colour too.
+        let k = 0.5 + 0.5 * sin(f32(m.record) * 0.55 + fx.time * 4.0);
+        let rgb = mix(vec3f(1.0), vec3f(0.96, 0.62, 0.04), k);
+        return vec4f(rgb * m.color.a, m.color.a);
+      }`
+  })
+  const bend = fx.material({
+    name: 'bend',
+    target: $('mat-img'),
+    kinds: ['image'],
+    subdivisions: 16,
+    enabled: false,
+    params: { amount: { type: 'f32', default: 40, min: -80, max: 80 } },
+    vertex: /* wgsl */ `
+      fn vertex(local : vec2f, size : vec2f, uv : vec2f, record : u32)
+          -> vec2f {
+        // A page curl: lift the right edge, more towards the bottom.
+        let k = uv.x * uv.x * (0.4 + 0.6 * uv.y);
+        return local + vec2f(-k * params.amount * 0.4, -k * params.amount);
+      }`
+  })
+  const tint = fx.material({
+    name: 'stripes',
+    target: $('mat-box'),
+    kinds: ['box'],
+    enabled: false,
+    fragment: /* wgsl */ `
+      fn fragment(m : MatIn) -> vec4f {
+        let s = step(0.5, fract((m.local.x + m.local.y) / 16.0));
+        return mix(m.color, vec4f(m.coverage), s * 0.35);
+      }`
+  })
   bindPanel('blur', b)
   bindPanel('displace', dsp)
+  bindPanel('mripple', mripple)
+  bindPanel('wave', wave)
+  bindPanel('bend', bend)
+  bindPanel('tint', tint)
   bindPanel('glow', glow)
   bindPanel('ripple', ripple)
   bindPanel('region', region)
@@ -203,6 +261,29 @@ async function boot(): Promise<void> {
     ripple,
     region,
     after,
+    mripple,
+    wave,
+    bend,
+    tint,
+    pinClicksOn(id) {
+      // Two clicks on the element, 0.25 s and 0.6 s old at the pinned time.
+      const r = $(id).getBoundingClientRect()
+      const x = window.scrollX + r.left + r.width * 0.45
+      const y = window.scrollY + r.top + r.height * 0.5
+      fx.__override({
+        time: 1.25,
+        elapsed: 1.25,
+        pointer: {
+          x: 640,
+          y: 450,
+          follow: { x: 640, y: 450 },
+          clicks: [
+            { x, y, t: 1.0 },
+            { x: x + 40, y: y - 30, t: 0.65 }
+          ]
+        }
+      })
+    },
     pinClicks() {
       // Two clicks at the viewport centre, 0.2 s and 0.5 s old at the
       // pinned time.

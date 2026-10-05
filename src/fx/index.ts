@@ -3,6 +3,7 @@
 // work.
 import '../util/env'
 
+export type { MaterialKind } from '../gpu/material'
 export {
   createEffects,
   type Effects,
@@ -15,6 +16,11 @@ export {
   type Layer,
   type LayerOptions
 } from './layer'
+export {
+  MATERIAL_FX_BYTES,
+  type Material,
+  type MaterialOptions
+} from './material'
 export {
   createParams,
   type ParamBlock,
@@ -46,6 +52,11 @@ export {
   type DisplaceSchema,
   displace
 } from './presets/displace'
+export {
+  type RippleOptions,
+  type RippleSchema,
+  ripple
+} from './presets/ripple'
 export {
   EFFECT_BYTES,
   EFFECT_WGSL,

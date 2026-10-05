@@ -2,6 +2,7 @@ import type { ElNode } from '../dom/tree'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
+import type { MaterialBinding } from './material'
 
 // The render-graph hook (docs/EFFECTS.md, core extension points 1 and 4):
 // what the effects layer (`compositor-gpu/fx`) plugs into. With no post
@@ -102,6 +103,14 @@ export interface RegionHandler {
   composite(rp: GPURenderPassEncoder, frame: RegionFrame): void
 }
 
+/** A Material registered with the graph (an `/fx` Material). */
+export interface MaterialEntry extends MaterialBinding {
+  /** The element whose subtree's records it re-shades. */
+  readonly target: Element
+  /** False: the records draw with the default pipeline this frame. */
+  active(): boolean
+}
+
 /** Per-frame participant registered through RenderGraph.addHook. */
 export interface FrameHook {
   /** After the DOM reads and re-anchoring, before onGlyph/onFrame and
@@ -128,6 +137,17 @@ export interface RenderGraph {
   /** Render `el`'s subtree as one group composited by `handler` (null
    * ends it). Takes effect on the next read, which this schedules. */
   isolate(el: Element, handler: RegionHandler | null): void
+  /** Re-shade `entry.target`'s subtree (records of `entry.kinds`) with
+   * the material; returns its removal. On overlap the later wins. Call
+   * replace() after `active()` changes. */
+  addMaterial(entry: MaterialEntry): () => void
+  /** A material id unique for this compositor (for MaterialEntry.id). */
+  nextMaterialId(): number
+  /** Material pipelines still compiling (test harnesses wait on 0). */
+  materialsPending(): number
+  /** Hide (or restore) `el`'s own paint in the DOM, as replace mode does
+   * per element; the mirror is unaffected. */
+  hideSource(el: Element, hidden: boolean): void
   /** The mirror's node for `el` from the most recent read. */
   nodeOf(el: Element): ElNode | undefined
   /** Bumped whenever the scene is rebuilt (records and z change). */

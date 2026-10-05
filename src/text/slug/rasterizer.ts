@@ -1,4 +1,9 @@
 import type { Shared } from '../../gpu/frame'
+import {
+  type MaterialBinding,
+  MaterialPipelines,
+  PREMUL_BLEND
+} from '../../gpu/material'
 import type { Glyph, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
@@ -14,7 +19,7 @@ import {
   makeInstance,
   type ParsedFont
 } from './font'
-import { SLUG_WGSL } from './shaders'
+import { SLUG_WGSL, slugShader } from './shaders'
 
 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
 // written through the shared u32 view of the same buffer.
@@ -76,6 +81,7 @@ export class SlugText implements TextBackend {
   readonly failedFaces: string[] = []
 
   private pipeline: GPURenderPipeline
+  private readonly materials: MaterialPipelines
   private layout: GPUBindGroupLayout
   private glyphBuf: GPUBuffer | null = null
   private readonly bandBuf: GPUBuffer
@@ -153,28 +159,38 @@ export class SlugText implements TextBackend {
         buffer: { type: 'read-only-storage' as const }
       }))
     })
-    const module = device.createShaderModule({ code: SLUG_WGSL })
-    reportShaderErrors(module, 'slug')
-    this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [frameLayout, this.layout]
-      }),
-      vertex: { module, entryPoint: 'vs' },
-      fragment: {
-        module,
-        entryPoint: 'fs',
-        targets: [
-          {
-            format,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-            }
-          }
-        ]
-      },
-      primitive: { topology: 'triangle-list' }
-    })
+    const describe = (
+      code: string,
+      label: string,
+      extra: GPUBindGroupLayout | null
+    ): GPURenderPipelineDescriptor => {
+      const module = device.createShaderModule({ label, code })
+      reportShaderErrors(module, label)
+      const layouts = [frameLayout, this.layout]
+      if (extra) {
+        layouts.push(extra)
+      }
+      return {
+        label,
+        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [{ format, blend: PREMUL_BLEND }]
+        },
+        primitive: { topology: 'triangle-list' }
+      }
+    }
+    this.pipeline = device.createRenderPipeline(
+      describe(SLUG_WGSL, 'slug', null)
+    )
+    this.materials = new MaterialPipelines(
+      'glyph',
+      device,
+      (code, n, label, layout) =>
+        describe(slugShader(code, n, true), label, layout)
+    )
 
     this.atlasLayout = device.createBindGroupLayout({
       entries: [
@@ -1024,9 +1040,29 @@ export class SlugText implements TextBackend {
     return this.glyphIndex(face, g.glyphId)
   }
 
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+  draw(
+    encoder: GPURenderPassEncoder,
+    first: number,
+    count: number,
+    material?: MaterialBinding | null
+  ): number {
     if (this.count === 0 || count === 0) {
       return 0
+    }
+    // A material re-shades the Slug glyphs (and their hard shadows); atlas
+    // (fallback) glyphs keep the default pipeline.
+    const mp = this.materials.get(material)
+    const slugPipeline = mp ?? this.pipeline
+    let verts = 6
+    if (mp && material) {
+      const n = Math.max(1, Math.floor(material.subdivisions))
+      verts = 6 * n * n
+    }
+    const useSlug = (): void => {
+      encoder.setPipeline(slugPipeline)
+      if (mp && material) {
+        encoder.setBindGroup(2, material.bindGroup)
+      }
     }
     let draws = 0
     const slug = this.ready && this.slugLive > 0 && this.bindGroup
@@ -1043,16 +1079,16 @@ export class SlugText implements TextBackend {
         draws++
       }
       if (slug) {
-        encoder.setPipeline(this.pipeline)
+        useSlug()
         encoder.setBindGroup(1, slug)
-        encoder.draw(6, s1 - s0, 0, s0)
+        encoder.draw(verts, s1 - s0, 0, s0)
         draws++
       }
     }
     if (slug) {
-      encoder.setPipeline(this.pipeline)
+      useSlug()
       encoder.setBindGroup(1, slug)
-      encoder.draw(6, count, 0, first)
+      encoder.draw(verts, count, 0, first)
       draws++
     }
     if (atlas) {
@@ -1062,6 +1098,10 @@ export class SlugText implements TextBackend {
       draws++
     }
     return draws
+  }
+
+  dropMaterial(id: number): void {
+    this.materials.drop(id)
   }
 
   destroy(): void {

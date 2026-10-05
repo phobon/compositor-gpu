@@ -141,6 +141,16 @@
         </div>
       </section>
 
+      <section data-vr="fx-materials">
+        <h2 id="mat-heading">Materials re-shade records</h2>
+        <p>Hooks in the box, image and glyph shaders: a ripple and a bend
+          on the image, a wave through this heading, stripes on the box.</p>
+        <div class="row">
+          <img id="mat-img" src="./test.png" alt="" />
+          <div class="box b2" id="mat-box"></div>
+        </div>
+      </section>
+
       <div id="panel" data-gpu-ignore>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
@@ -171,6 +181,21 @@
         </fieldset>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-after" /> layer after blue box</label></legend>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-mripple" /> ripple (image material, click it)</label></legend>
+          <label>amplitude <input type="range" id="s-mripple-amplitude" min="0" max="40" step="0.5" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-wave" /> wave (heading glyphs)</label></legend>
+          <label>amount <input type="range" id="s-wave-amount" min="0" max="20" step="0.5" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-bend" /> bend (image, 16×16)</label></legend>
+          <label>amount <input type="range" id="s-bend-amount" min="-80" max="80" step="1" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-tint" /> stripes (box)</label></legend>
         </fieldset>
       </div>
     </div>

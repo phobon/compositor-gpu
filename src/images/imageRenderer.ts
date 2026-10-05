@@ -1,4 +1,12 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
+import {
+  MAT_DEFAULT_WGSL,
+  MAT_GRID_WGSL,
+  MAT_IN_WGSL,
+  type MaterialBinding,
+  MaterialPipelines,
+  PREMUL_BLEND
+} from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
@@ -61,8 +69,18 @@ const FLAG_ATLAS = 4
  * positions and clip exclude the scroll offset (see frame.ts to_clip). */
 const FLAG_VIEWPORT = 8
 
-const SHADER = /* wgsl */ `
+/** The image shader with material hooks `mat` (gpu/material.ts) on a
+ * `subdiv` × `subdiv` quad; the default variant has identity hooks. */
+const shader = (
+  mat: string,
+  subdiv: number,
+  wrap: string
+): string => /* wgsl */ `
 ${FRAME_WGSL}
+${MAT_IN_WGSL}
+${MAT_GRID_WGSL}
+${mat}
+const MAT_SUBDIV : u32 = ${subdiv}u;
 
 // Local space: the record's untransformed box, origin at its top-left.
 struct Img {
@@ -91,12 +109,10 @@ struct VOut {
 @vertex
 fn vs(@builtin(vertex_index) vi : u32,
       @builtin(instance_index) ii : u32) -> VOut {
-  var quad = array<vec2f, 6>(
-    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
-    vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let im = imgs[ii];
-  let corner = quad[vi];
-  let lp = im.rect.xy + corner * im.rect.zw;
+  let corner = mat_corner(vi, MAT_SUBDIV);
+  let lp0 = im.rect.xy + corner * im.rect.zw;
+  let lp = mat_vertex(lp0, im.xf1.zw, lp0 / max(im.xf1.zw, vec2f(1e-4)), ii);
   let m = im.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + im.xf1.xy;
   var out : VOut;
@@ -105,7 +121,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.uv = mix(im.uv.xy, im.uv.zw, corner);
   out.idx = ii;
   out.docp = p;
-  out.lp = lp;
+  out.lp = lp0;
   return out;
 }
 
@@ -118,8 +134,14 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
 }
 
-@fragment
-fn fs(in : VOut) -> @location(0) vec4f {
+// Set by base_fs for material hooks (mat_sample): the fragment's source
+// uv before the atlas mapping, its derivatives and the record.
+var<private> mat_uv : vec2f;
+var<private> mat_ddx : vec2f;
+var<private> mat_ddy : vec2f;
+var<private> mat_rec : u32;
+
+fn base_fs(in : VOut) -> vec4f {
   let im = imgs[in.idx];
   let cl = im.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
@@ -135,6 +157,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
       discard;
     }
   }
+  mat_uv = uv;
+  mat_ddx = dpdx(uv);
+  mat_ddy = dpdy(uv);
+  mat_rec = in.idx;
   if ((flags & ${FLAG_ATLAS}u) != 0u) {
     let inset = im.params.zw;
     let cu = clamp(uv, inset, vec2f(1.0) - inset);
@@ -152,6 +178,58 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let c = textureSample(tex, samp, uv);
   let o = im.params.x * cov;
   return vec4f(c.rgb * c.a * o, c.a * o); // premultiplied
+}
+
+${wrap}
+`
+
+const DEFAULT_FS = /* wgsl */ `
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  return base_fs(in);
+}
+`
+
+const MATERIAL_FS = /* wgsl */ `
+// The source image \`delta\` CSS px away from this fragment (in the
+// image's local axes), premultiplied, without the rounded clip.
+fn mat_sample(delta : vec2f) -> vec4f {
+  let im = imgs[mat_rec];
+  let flags = u32(im.params.y);
+  var per = (im.uv.zw - im.uv.xy) / max(im.rect.zw, vec2f(1e-4));
+  if ((flags & ${FLAG_UV_FROM_TILE}u) != 0u) {
+    per = 1.0 / max(im.tile.zw, vec2f(1e-4));
+  }
+  var uv = mat_uv + delta * per;
+  if ((flags & ${FLAG_REPEAT}u) != 0u) {
+    uv = fract(uv);
+  }
+  uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+  var gx = mat_ddx;
+  var gy = mat_ddy;
+  if ((flags & ${FLAG_ATLAS}u) != 0u) {
+    let inset = im.params.zw;
+    uv = mix(im.atlas.xy, im.atlas.zw, clamp(uv, inset, vec2f(1.0) - inset));
+    // The derivatives were taken before the atlas mapping.
+    let span = im.atlas.zw - im.atlas.xy;
+    gx = gx * span;
+    gy = gy * span;
+  }
+  let c = textureSampleGrad(tex, samp, uv, gx, gy);
+  return vec4f(c.rgb * c.a, c.a);
+}
+
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  let c = base_fs(in);
+  let im = imgs[in.idx];
+  let size = im.xf1.zw;
+  let half = size * 0.5;
+  let d = sd_round_box(in.lp - half, half, im.radius);
+  let aa = max(fwidth(d), 1e-4);
+  let cov = (1.0 - smoothstep(-aa, aa, d)) * im.params.x;
+  return mat_fragment(MatIn(c, in.lp, size,
+    in.lp / max(size, vec2f(1e-4)), in.docp, cov, d, in.idx, 1u));
 }
 `
 
@@ -188,6 +266,7 @@ interface Cached {
 export class ImagePass implements RenderPass {
   readonly layer = 'images' as const
   private pipeline: GPURenderPipeline
+  private readonly materials: MaterialPipelines
   private group1Layout: GPUBindGroupLayout
   private sampler: GPUSampler
   private buffer: GPUBuffer | null = null
@@ -245,28 +324,38 @@ export class ImagePass implements RenderPass {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     })
-    const module = device.createShaderModule({ code: SHADER })
-    reportShaderErrors(module, 'image')
-    this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [frameLayout, this.group1Layout]
-      }),
-      vertex: { module, entryPoint: 'vs' },
-      fragment: {
-        module,
-        entryPoint: 'fs',
-        targets: [
-          {
-            format: shared.format,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-            }
-          }
-        ]
-      },
-      primitive: { topology: 'triangle-list' }
-    })
+    const describe = (
+      code: string,
+      label: string,
+      extra: GPUBindGroupLayout | null
+    ): GPURenderPipelineDescriptor => {
+      const module = device.createShaderModule({ label, code })
+      reportShaderErrors(module, label)
+      const layouts = [frameLayout, this.group1Layout]
+      if (extra) {
+        layouts.push(extra)
+      }
+      return {
+        label,
+        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [{ format: shared.format, blend: PREMUL_BLEND }]
+        },
+        primitive: { topology: 'triangle-list' }
+      }
+    }
+    this.pipeline = device.createRenderPipeline(
+      describe(shader(MAT_DEFAULT_WGSL, 1, DEFAULT_FS), 'image', null)
+    )
+    this.materials = new MaterialPipelines(
+      'image',
+      device,
+      (code, n, label, layout) =>
+        describe(shader(code, n, MATERIAL_FS), label, layout)
+    )
   }
 
   private ensureCapacity(n: number): void {
@@ -679,11 +768,23 @@ export class ImagePass implements RenderPass {
   /** Consecutive atlas-backed instances collapse into one draw call;
    * standalone ones (and gaps) draw individually / are skipped. Returns the
    * number of draw calls issued. */
-  draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
+  draw(
+    encoder: GPURenderPassEncoder,
+    first: number,
+    count: number,
+    material?: MaterialBinding | null
+  ): number {
     if (this.draws.length === 0) {
       return 0
     }
-    encoder.setPipeline(this.pipeline)
+    const mp = this.materials.get(material)
+    encoder.setPipeline(mp ?? this.pipeline)
+    let verts = 6
+    if (mp && material) {
+      encoder.setBindGroup(2, material.bindGroup)
+      const n = Math.max(1, Math.floor(material.subdivisions))
+      verts = 6 * n * n
+    }
     const end = first + count
     let issued = 0
     let i = first
@@ -699,17 +800,21 @@ export class ImagePass implements RenderPass {
           j++
         }
         encoder.setBindGroup(1, this.ensureAtlasBindGroup())
-        encoder.draw(6, j - i, 0, i)
+        encoder.draw(verts, j - i, 0, i)
         issued++
         i = j
         continue
       }
       encoder.setBindGroup(1, bg)
-      encoder.draw(6, 1, 0, i)
+      encoder.draw(verts, 1, 0, i)
       issued++
       i++
     }
     return issued
+  }
+
+  dropMaterial(id: number): void {
+    this.materials.drop(id)
   }
 
   destroy(): void {
