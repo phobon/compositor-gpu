@@ -1,5 +1,5 @@
 import type { Layer } from '../types'
-import { buildBatches, type DrawBatch, unionRect } from './batches'
+import { type Anchor, buildBatches, type DrawBatch, unionRect } from './batches'
 import type {
   BoxRecord,
   CutoutRecord,
@@ -38,6 +38,11 @@ export class Scene {
   hasDynamic = false
 
   private nextId = 1
+  /** Bumped on every rebuild (clear()): record identity changes. */
+  version = 0
+  /** Extra-layer positions (gpu/graph.ts `addLayer`), resolved against
+   * the current paint order whenever batches are built. */
+  anchors: (() => readonly Anchor[]) | null = null
 
   allocId(): number {
     return this.nextId++
@@ -49,6 +54,7 @@ export class Scene {
     this.runs = []
     this.cutouts = []
     this.groups = []
+    this.version++
     this.markAllDirty()
     this.hasDynamic = false
   }
@@ -109,7 +115,8 @@ export class Scene {
       this.runs,
       runRects,
       this.cutouts,
-      this.groups
+      this.groups,
+      this.anchors?.() ?? []
     )
   }
 

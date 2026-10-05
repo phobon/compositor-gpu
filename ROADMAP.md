@@ -1,27 +1,35 @@
 # Roadmap
 
-## Where to pick up (2026-09-29)
+## Where to pick up (2026-10-03)
 
-**State.** Phases 0–2 complete, Phase 3 largely done, and the library is
-mounted on the real site: mds-home's `/duo?gpu=1` runs it from the
-`compositor-gpu` submodule (`&stats=1` corner readout, `&debug=1` library
-logging, `&mode=replace` hides the DOM's own paint). Site chrome (nav,
-footer, scroll-top, the portalled nav popup) is excluded with
-`data-gpu-ignore`. Every harness passes on the current tree:
+**State.** Mirror: Phases 0–2 complete, Phase 3 largely done, mounted on
+bonobolabs.com `/duo?gpu=1` from the `compositor-gpu` submodule (`&stats=1`
+readout, `&debug=1` logging, `&mode=replace`). Site chrome is
+`data-gpu-ignore`d: in-flow chrome shows through cutout holes, fixed chrome
+sits above the canvas (`zIndex: 500`). Effects layer: spec in
+`docs/EFFECTS.md`, M1 and M2 built (`compositor-gpu/fx`: Params, pointer,
+fullscreen and region Passes, Targets, Layers, presets `blur`/`displace`/
+`cursorGlow`/`clickRipple`). `docs/HANDOFF.md` has the checkouts,
+the last batch's verification and the first move on each item. Every harness passes
+on the current tree:
 
-- `npm run test:visual` — 20 playground sections, DOM-vs-GPU parity
-  0.15–2.2% (images 5% from resampling); text sections ~2% now that glyph
-  placement matches Blink and the capture is grayscale-AA. Goldens are
-  local + GPU-specific: run `-- --update` once after `npx playwright install
-  chromium` on a new machine.
-- `npm run test:perf` — 400-card page: full read ~430 ms (587 ms before
-  `FAST_TEXT_READ`, same session; sandbox noise ±30%), partial read
-  ~20–50 ms, encode <1 ms, 114 draws.
-- `npm run test:site -- --url http://localhost:8000/duo` (gatsby develop
-  running) — 0.3–1.0% at three offsets, clean console.
+- `npm run test:visual` — 23 shots (incl. `borderfill`, `texttransform`,
+  `duo`/`duo-s900` full-viewport), DOM-vs-GPU parity 0.14–2.2% (images 5%
+  from resampling). `-- --with-fx` installs `/fx` with no pass and must
+  match the plain goldens at 0.00. Goldens are local + GPU-specific: run
+  `-- --update` once on a new machine.
+- `npm run test:fx` — effects goldens (`fx-off`, `fx-tgpu`, `fx-blur`,
+  `fx-blur-scissor`, `fx-displace`, `fx-displace-push`,
+  `fx-blur-then-off` ≡ `fx-off`, `fx-geometry`, `fx-glow`, `fx-ripple`,
+  `fx-after`, `fx-region`, `fx-region-then-off` ≡ `fx-geometry`).
+- `npm run test:perf` — 400-card page: full read ~425 ms (sandbox; 587 ms
+  before `FAST_TEXT_READ`), partial read ~40 ms, encode 0.30 ms idle /
+  0.40 ms with blur, 123 draws.
+- `npm run test:site -- --url http://localhost:8000/duo` — ~1% at three
+  offsets, clean console.
 
-**Chrome on `/duo`** is in good shape: read 0.7 ms idle, no fallback glyphs
-once every element is Inter, nothing invalidating the mirror at idle.
+**Chrome on `/duo`**: read 0.6 ms idle, frame 0.3 ms, no fallback glyphs,
+nothing invalidating the mirror at idle. **Safari**: read 2 ms, frame 1 ms.
 
 **Next, in order.**
 1. **Safari — closed.** The "scroll lock" and the 8 s stall on load were
@@ -94,19 +102,27 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       down, 8-click ring); fullscreen Pass taking WGSL or `tgpu.fn`;
       presets `blur`, `displace`; `playground/fx.html` + `npm run
       test:fx` goldens, no-effect invariants, `steady encode (blur)`
-- [ ] M1 leftovers: JS-bodied (`'use gpu'`) `tgpu.fn` fragments need
-      `unplugin-typegpu` in the author's build and can't reach
-      `sample`/`params`/`pointer` yet (WGSL-bodied ones work; see
-      `src/fx/README.md`); `rollupTypes` emits per-file `.d.ts` (it did
+- [ ] M1 leftovers: `rollupTypes` emits per-file `.d.ts` (it did
       before `/fx` too: `@microsoft/api-extractor` isn't installed), so
-      `exports['./fx'].types` points at `dist/fx/index.d.ts`
-- [ ] M2 — geometry: Target (live rect/xform/texture, per-glyph arrays
-      with stable indices); Layer (instanced quads, above/below/after,
-      doc or viewport space); presets `clickRipple`, `cursorGlow`; region
-      Pass on isolated groups
+      `exports['./fx'].types` points at `dist/fx/index.d.ts`. (JS-bodied
+      `tgpu.fn` externals moved to M3; the copy-through under the
+      scissored rect is gone.)
+- [x] M2 — geometry: Target (lazy, element-keyed: rect/local/xform/
+      space/radius, per-glyph arrays with stable indices); Layer
+      (instanced quads from an author Float32Array, above / below = over
+      the page background / after a target, doc or viewport space,
+      `update` hook); extension point 3 (`graph.addLayer`, scene anchors
+      → `extra` batch entries); region Pass (`fx.pass({ region })` on an
+      isolated group, `graph.isolate`); presets `cursorGlow`,
+      `clickRipple`; `displace` `mode` (lens / push); fx.html geometry
+      section + 7 shots. Deviations in `docs/EFFECTS.md`.
 - [ ] M3 — materials: snippet contract for glyph/image/box; per-material
       batch cut and pipelines; per-Target DOM hiding while displacing;
-      `ripple`; image `subdivisions`; Layer compute hook
+      `ripple`; image `subdivisions`; Layer compute hook; carried from
+      M2: `Target.image`, glyph quads through Slug in a Layer; carried
+      from M1: TypeGPU externals (a `d.struct` from the Params schema,
+      `tgpu.fn` wrappers for `sample`/`src_uv`/`page_to_uv`) so
+      `'use gpu'` bodies can reach them
 
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are

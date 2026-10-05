@@ -3,7 +3,15 @@
 import '@/util/env'
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
-import { blur, createEffects, displace, type Pass } from '@/fx'
+import {
+  blur,
+  clickRipple,
+  createEffects,
+  cursorGlow,
+  displace,
+  type Layer,
+  type Pass
+} from '@/fx'
 import { createCompositor } from '@/index'
 
 // Effects playground: the mirror plus `compositor-gpu/fx` with the blur
@@ -43,7 +51,7 @@ function imagesReady(): Promise<void> {
 }
 
 /** Bind a checkbox to `pass.enabled` and each slider to a param. */
-function bindPanel(key: string, pass: Pass): void {
+function bindPanel(key: string, pass: Pass | Layer): void {
   const box = $(`c-${key}`) as HTMLInputElement
   box.checked = pass.enabled
   box.addEventListener('change', () => {
@@ -90,8 +98,66 @@ async function boot(): Promise<void> {
       pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
     })
   }
+  // Geometry (M2): layers in paint order and a region pass.
+  const glow = cursorGlow(fx, {
+    enabled: false,
+    place: 'below',
+    radius: 260,
+    intensity: 0.5,
+    color: '#60a5fa'
+  })
+  const ripple = clickRipple(fx, {
+    enabled: false,
+    radius: 120,
+    width: 3,
+    duration: 1,
+    color: '#f472b6'
+  })
+  const region = blur(fx, {
+    name: 'region-blur',
+    enabled: false,
+    radius: 6,
+    region: $('region-card')
+  })
+  // A quad straddling the first three boxes, drawn right after the blue
+  // one: over it, under the two that follow.
+  const anchor = fx.target($('after-anchor'))
+  const after = fx.layer({
+    name: 'after-quad',
+    count: 1,
+    stride: 1,
+    place: { after: anchor },
+    enabled: false,
+    vertex: /* wgsl */ `
+      fn vertex(i : u32, corner : vec2f) -> Quad {
+        var q : Quad;
+        q.pos = params.rect.xy + corner * params.rect.zw;
+        q.uv = corner;
+        return q;
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(q : Quad, i : u32) -> vec4f {
+        let a = 0.9;
+        return vec4f(vec3f(0.98, 0.98, 0.98) * a, a);
+      }`,
+    params: { rect: { type: 'vec4', default: [0, 0, 0, 0] } },
+    update(l) {
+      // Follow the anchor: a band through the middle of the row, from the
+      // blue box's centre to past the third box.
+      const r = anchor.rect
+      const rect = l.params.rect as number[]
+      const next = [r.x + r.width / 2, r.y + r.height * 0.35, 260, r.height * 0.3]
+      if (next.some((v, i) => v !== rect[i])) {
+        l.params.rect = next
+      }
+    }
+  })
   bindPanel('blur', b)
   bindPanel('displace', dsp)
+  bindPanel('glow', glow)
+  bindPanel('ripple', ripple)
+  bindPanel('region', region)
+  bindPanel('after', after)
   // A TypeGPU fragment (WGSL-bodied tgpu.fn): premultiplied invert.
   const invert = tgpu.fn(
     [d.vec2f, d.texture2d(d.f32), d.sampler()],
@@ -133,6 +199,29 @@ async function boot(): Promise<void> {
     blur: b,
     displace: dsp,
     tgpu: inv,
+    glow,
+    ripple,
+    region,
+    after,
+    pinClicks() {
+      // Two clicks at the viewport centre, 0.2 s and 0.5 s old at the
+      // pinned time.
+      const x = window.scrollX + 640
+      const y = window.scrollY + 450
+      fx.__override({
+        time: 1.25,
+        elapsed: 1.25,
+        pointer: {
+          x: 640,
+          y: 450,
+          follow: { x: 640, y: 450 },
+          clicks: [
+            { x, y, t: 1.05 },
+            { x: x - 160, y: y + 60, t: 0.75 }
+          ]
+        }
+      })
+    },
     async setMode(mode) {
       const cv = compositor.canvas
       if (cv) {

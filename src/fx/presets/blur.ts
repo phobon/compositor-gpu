@@ -1,4 +1,5 @@
 import type { Effects, Pass } from '../effects'
+import type { Target } from '../target'
 
 // Separable Gaussian blur: a horizontal then a vertical stage sharing one
 // `radius` param (CSS px, the kernel's reach; σ = radius / 3). Taps are
@@ -40,6 +41,8 @@ export interface BlurOptions {
   radius?: number
   enabled?: boolean
   name?: string
+  /** Blur only this element (a region pass). */
+  region?: Target | Element
 }
 
 export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
@@ -48,7 +51,8 @@ export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
     fragment: [axis('vec2f(1.0, 0.0)'), axis('vec2f(0.0, 1.0)')],
     params: schema,
     radius: (p) => p.radius,
-    enabled: opts.enabled
+    enabled: opts.enabled,
+    region: opts.region
   })
   if (opts.radius !== undefined) {
     pass.params.radius = opts.radius

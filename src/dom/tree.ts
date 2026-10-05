@@ -175,6 +175,10 @@ export interface ElNode {
   cb: Placement
   /** A synthetic node wrapping a positioned pseudo-element's records. */
   pseudo?: boolean
+  /** Border-box local size + affine to the node's space (Targets). */
+  place?: Placement
+  /** Region id when isolated for a region effect (SceneReader.isolated). */
+  region?: number
 }
 
 export type ElKid = ElNode | GlyphRun | BoxRecord
@@ -258,6 +262,9 @@ export function flatten(
         items: [],
         ownCount: node.own.length,
         alpha: node.alpha
+      }
+      if (node.region !== undefined) {
+        c.region = node.region
       }
       ctx.items.push(c)
     }
@@ -380,6 +387,9 @@ export class SceneReader {
   /** Inside an ignored `display: contents` subtree: children become
    * cutouts too. */
   private inIgnored = false
+  /** Elements isolated for region effects, by region id (gpu/graph.ts
+   * `isolate`). Read on the next read; changing it needs a full read. */
+  readonly isolated = new Map<Element, number>()
   /** Partial reads that completed without escalating. */
   partialReads = 0
   /** Elements with computed `position: sticky` in the current tree. Their
@@ -399,6 +409,12 @@ export class SceneReader {
   ) {}
 
   /** Re-read the whole root subtree and rebuild the scene. */
+  /** The element's node from the most recent read (undefined when it is
+   * outside the mirrored root, display:none, or not read yet). */
+  nodeOf(el: Element): ElNode | undefined {
+    return this.nodes.get(el)
+  }
+
   fullRead(): void {
     beginRead()
     beginTextRead()
@@ -468,6 +484,9 @@ export class SceneReader {
         return
       }
       const p = old.parent
+      // Drop the old subtree's entries: elements gone from it (removed,
+      // display:none) must not resolve to stale nodes.
+      this.forget(old)
       const fresh = this.readNode(
         b,
         p,
@@ -526,6 +545,17 @@ export class SceneReader {
     return out
   }
 
+  private forget(node: ElNode): void {
+    if (this.nodes.get(node.el) === node) {
+      this.nodes.delete(node.el)
+    }
+    for (const kid of node.kids) {
+      if (kid.kind === 'element') {
+        this.forget(kid)
+      }
+    }
+  }
+
   /** Drop pending asset callbacks and the element tree. */
   destroy(): void {
     disposeBackgrounds(this)
@@ -535,6 +565,7 @@ export class SceneReader {
   }
 
   private readAll(): void {
+    this.nodes = new WeakMap()
     this.stickies.clear()
     this.rootTrapsFixed = ancestorsTrapFixed(this.root)
     this.tree = this.readNode(this.root, null, null, true, null, null, null)
@@ -596,8 +627,13 @@ export class SceneReader {
       ? transformedPlacement(el, lin, rect)
       : rectPlacement(rect)
     const ownAlpha = readOpacity(s, el)
+    // An element isolated for a region effect is a context (as with
+    // `isolation: isolate`) so its subtree can render as one group.
+    const region = ignored || isRoot ? undefined : this.isolated.get(el)
     const isContext =
-      !isRoot && createsStackingContext(s, transformable, ownAlpha)
+      !isRoot &&
+      (region !== undefined ||
+        createsStackingContext(s, transformable, ownAlpha))
     const alpha = isContext ? Math.max(0, ownAlpha) : 1
     const decor = layers.has('text')
       ? propagateDecorations(el, s, parentDecor)
@@ -752,7 +788,11 @@ export class SceneReader {
       float: s.float !== 'none',
       lin,
       decor,
-      cb
+      cb,
+      place
+    }
+    if (region !== undefined) {
+      node.region = region
     }
     this.nodes.set(el, node)
 
@@ -873,6 +913,7 @@ export class SceneReader {
       alpha: 1,
       lin,
       decor: null,
+      place,
       ...ctx
     }
     this.nodes.set(el, node)
@@ -1143,4 +1184,42 @@ function transformGlyphs(
     g.xform = affine(lin, tx, ty)
     g.local = { w, h }
   }
+}
+
+/** Paint-index range [first, last] of every record in `node`'s subtree
+ * (own records, kids, decorations), or null when it has none. Valid after
+ * flatten() assigned `z`. */
+export function subtreeZ(node: ElNode): [number, number] | null {
+  let lo = Number.POSITIVE_INFINITY
+  let hi = Number.NEGATIVE_INFINITY
+  const see = (r: { z: number }): void => {
+    if (r.z < lo) {
+      lo = r.z
+    }
+    if (r.z > hi) {
+      hi = r.z
+    }
+  }
+  const visit = (n: ElNode): void => {
+    for (const r of n.own) {
+      see(r)
+    }
+    for (const kid of n.kids) {
+      if (kid.kind === 'element') {
+        visit(kid)
+      } else {
+        see(kid)
+        if (kid.kind === 'text') {
+          for (const d of kid.decorations ?? []) {
+            see(d)
+          }
+          for (const d of kid.decorationsOver ?? []) {
+            see(d)
+          }
+        }
+      }
+    }
+  }
+  visit(node)
+  return lo <= hi ? [lo, hi] : null
 }

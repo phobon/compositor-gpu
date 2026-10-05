@@ -55,7 +55,9 @@ section GPU-only against local goldens (`test/fx/golden/`, gate 0.5%, no
 parity column): `fx-off`, `fx-tgpu` (a `tgpu.fn` fragment), `fx-blur`,
 `fx-blur-scissor` (loop stopped, scrolled half a viewport: the canvas that
 was off-viewport must be unblurred), `fx-displace`, `fx-blur-then-off`
-(off → on → off; the last must equal the first exactly). Console errors
+(off → on → off; the last must equal the first exactly), `fx-displace-push`,
+and on the geometry section `fx-geometry`, `fx-glow`, `fx-ripple`, `fx-after`,
+`fx-region`, `fx-region-then-off` (must equal `fx-geometry` exactly). Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
 the plain goldens at 0.00. The perf harness also reports `steady encode
@@ -98,9 +100,14 @@ WGSL, rendering but still being tuned). `ImagePass` renders `<img>`, `<canvas>`,
 gradients live in the box pass. Read `ROADMAP.md` before assuming a feature is missing by accident.
 
 **Effects layer** (`src/fx/`, `compositor-gpu/fx`): spec in
-`docs/EFFECTS.md` (with a Deviations section for what M1 changed), author
-contract in `src/fx/README.md`. M1 is built: `createEffects(compositor)`,
-Params, the pointer, fullscreen `fx.pass`, presets `blur`/`displace`. It
+`docs/EFFECTS.md` (with Deviations sections for what M1 and M2 changed), author
+contract in `src/fx/README.md`. M1 and M2 are built: `createEffects
+(compositor)`, Params, the pointer, fullscreen and region `fx.pass`,
+`fx.target`, `fx.layer`, presets `blur`/`displace`/`cursorGlow`/
+`clickRipple`. Layers draw at `extra` entries of `scene.batches` (anchors
+resolved by `Scene.anchors` at every batch build; `graph.addLayer`); a
+region pass isolates its element (`graph.isolate` → `SceneReader.isolated`
+→ a group with `region` set, composited by its `RegionHandler`). It
 reaches the core only through `compositor.graph` (`gpu/graph.ts`): a
 `PostChain` the renderer runs when `active()` (scene → offscreen texture
 → chain → canvas pass that copies the scene through and lets the last

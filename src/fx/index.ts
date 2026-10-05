@@ -11,6 +11,11 @@ export {
   type PassOptions
 } from './effects'
 export {
+  LAYER_FX_BYTES,
+  type Layer,
+  type LayerOptions
+} from './layer'
+export {
   createParams,
   type ParamBlock,
   type ParamDef,
@@ -27,6 +32,16 @@ export {
 } from './pointer'
 export { type BlurOptions, type BlurSchema, blur } from './presets/blur'
 export {
+  type ClickRippleOptions,
+  type ClickRippleSchema,
+  clickRipple
+} from './presets/clickRipple'
+export {
+  type CursorGlowOptions,
+  type CursorGlowSchema,
+  cursorGlow
+} from './presets/cursorGlow'
+export {
   type DisplaceOptions,
   type DisplaceSchema,
   displace
@@ -38,3 +53,4 @@ export {
   isTgpuFn,
   type TgpuFnLike
 } from './shader'
+export type { Target, TargetGlyphs } from './target'

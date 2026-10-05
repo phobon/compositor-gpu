@@ -13,6 +13,16 @@
 //   fx-displace       displace enabled
 //   fx-blur-then-off  captured off, blur on (`-on`), then off again: the
 //                     last capture must equal the first exactly
+//   fx-displace-push  displace with the pointer warp in push mode
+//   fx-geometry       the geometry section, nothing enabled
+//   fx-glow           cursorGlow placed 'below' (over the page background,
+//                     under the section's content)
+//   fx-ripple         clickRipple with two pinned clicks
+//   fx-after          a Layer placed after the blue box: over it, under the
+//                     boxes that follow
+//   fx-region         blur as a region pass on the card only
+//   fx-region-then-off  region on, then off: equal to fx-geometry exactly
+//                     (isolation torn down)
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -34,7 +44,16 @@ mkdirSync(goldenDir, { recursive: true })
 const VW = 1280
 const VH = 900
 
-type Effect = 'none' | 'blur' | 'displace' | 'tgpu'
+type Effect =
+  | 'none'
+  | 'blur'
+  | 'displace'
+  | 'displace-push'
+  | 'tgpu'
+  | 'glow'
+  | 'ripple'
+  | 'after'
+  | 'region'
 
 interface Result {
   name: string
@@ -87,9 +106,20 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
       return
     }
     h.blur.enabled = e === 'blur'
-    h.displace.enabled = e === 'displace'
+    h.displace.enabled = e === 'displace' || e === 'displace-push'
+    ;(h.displace.params as Record<string, number>).mode =
+      e === 'displace-push' ? 1 : 0
     h.tgpu.enabled = e === 'tgpu'
+    h.glow.enabled = e === 'glow'
+    h.ripple.enabled = e === 'ripple'
+    h.after.enabled = e === 'after'
+    h.region.enabled = e === 'region'
+    if (e === 'ripple') {
+      h.pinClicks()
+    }
     await h.raf2()
+    await h.raf2()
+    // A region toggle schedules a full read; let it land.
     await h.raf2()
   }, effect)
 }
@@ -253,6 +283,51 @@ async function main(): Promise<void> {
         const pct = diffPng(pre, post, resolve(outDir, `${s}-invariant.png`))
         results.push({
           name: `${s} (= pre)`,
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    if (want('fx-displace-push')) {
+      await capture('fx-displace', 'fx-displace-push', 'displace-push')
+    }
+    const geo = 'fx-geometry'
+    let geoPre: PNG | null = null
+    if (want(geo) || want('fx-region-then-off')) {
+      geoPre = await capture(geo, geo, 'none')
+    }
+    if (want('fx-glow')) {
+      await capture(geo, 'fx-glow', 'glow')
+    }
+    if (want('fx-ripple')) {
+      await capture(geo, 'fx-ripple', 'ripple')
+      // Back to the plain pinned pointer (fx.html's vr override).
+      await page.evaluate(() =>
+        window.__fx?.fx.__override({
+          time: 1.25,
+          elapsed: 1.25,
+          pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
+        })
+      )
+    }
+    if (want('fx-after')) {
+      await capture(geo, 'fx-after', 'after')
+    }
+    if (want('fx-region') || want('fx-region-then-off')) {
+      await capture(geo, 'fx-region', 'region')
+    }
+    if (want('fx-region-then-off')) {
+      const post = await capture(geo, 'fx-region-then-off', 'none')
+      if (geoPre && post) {
+        const n = exactDiff(geoPre, post)
+        const pct = diffPng(
+          geoPre,
+          post,
+          resolve(outDir, 'fx-region-then-off-invariant.png')
+        )
+        results.push({
+          name: 'fx-region-then-off (= geo)',
           regressionPct: pct,
           status: n === 0 ? 'ok' : 'fail',
           note: `${n} px differ`

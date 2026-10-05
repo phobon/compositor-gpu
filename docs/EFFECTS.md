@@ -264,3 +264,53 @@ contract as built.
 - **Types.** `vite-plugin-dts`'s `rollupTypes` emits per-file `.d.ts`
   (it already did before `/fx`: `@microsoft/api-extractor` isn't
   installed), so `exports['./fx'].types` is `dist/fx/index.d.ts`.
+
+## Deviations (M2 implementation)
+
+Built 2026-10-05. Decisions taken with Ben: `place: 'below'` means over
+the page background (not under everything), `displace` gets both pointer
+warps behind a `mode` param, and JS-bodied TypeGPU externals wait for M3.
+
+- **Core surface.** `RenderGraph` gained `addLayer(layer)` (extension
+  point 3), `replace()`, `isolate(el, handler | null)`, `nodeOf(el)` and
+  `version`. Layers are placed by anchors the scene resolves whenever it
+  builds batches (`Scene.anchors`, `buildBatches(..., anchors)`); an anchor
+  becomes an `extra` entry in `scene.batches`, a hard cut like a group
+  boundary, and the renderer calls the layer's `draw` there into whatever
+  target is current.
+- **Places.** `'above'`: after every record, outside all groups (under
+  post). `'below'`: after the own records (the backgrounds) of the
+  mirrored root, `<html>` and `<body>`. `{ after: target }`: after the
+  element's subtree; groups the element itself opened close first,
+  enclosing groups stay open, so the layer is drawn into an enclosing
+  opacity group's texture and is clipped to that group's bounds. A target
+  with no records in the mirror draws nothing.
+- **Layer contract.** `fn vertex(i : u32, corner : vec2f) -> Quad` and
+  `fn fragment(q : Quad, i : u32) -> vec4f`; `Quad` is `pos` (CSS px in
+  the layer's space), `uv`, `color`, `extra`, all interpolated. Data is
+  read with `data(i, k)` / `data2` / `data4`; the uniform is `LayerFx`
+  (time, elapsed, dpr, count, real scroll, viewport in CSS px), not
+  `Effect`. Added an `update(layer, time, ctx)` hook run every frame while
+  enabled (how `clickRipple` keeps the loop alive only while a ripple
+  runs). Not built yet: glyph quads drawn through Slug, the `simulate`
+  compute hook (M3).
+- **Targets** resolve lazily against `graph.version`. `glyphs` holds only
+  glyphs in the target's space (a fixed descendant's glyphs are left out).
+  `image` (texture/atlas region) moves to M3, where Materials consume it.
+- **Region pass** is `fx.pass({ ..., region: target })`. While enabled
+  the element is isolated: the reader treats it as a stacking context
+  (like `isolation: isolate`; for an element that wasn't one, positioned
+  descendants that would have interleaved with outside content now paint
+  inside it) and its group texture is grown by the pass radius. Toggling
+  `enabled` re-isolates, which schedules a full read. `uv` spans the
+  element's border-box AABB; the last stage is blended premultiplied-over
+  onto the parent target, times the element's own opacity. One region
+  pass per element (a second replaces the first's isolation). `Effect`
+  grew to 96 bytes (`page_scroll`, `alpha`), and `viewport_to_uv` goes
+  through `page_scroll` so it is right in a region too.
+- **Copy-through.** With a fullscreen pass the scene is copied only
+  around the scissored rect (up to four bands), not under it.
+- **`displace` `mode`**: 0 lens (as before), 1 radial push (a
+  constant-strength outward shove that folds through the centre). Its
+  pointer maths now goes through `viewport_to_uv`, so it works as a
+  region pass.

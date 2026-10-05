@@ -18,12 +18,55 @@ export type DrawBatch =
   | { kind?: 'draw'; layer: Layer; first: number; count: number }
   | { kind: 'push'; group: number }
   | { kind: 'pop'; group: number }
+  | { kind: 'extra'; id: number }
+
+/**
+ * Where an extra layer (gpu/graph.ts `addLayer`) draws: before the record
+ * with paint index `z` (z = last + 1 to draw after record `last`; Infinity
+ * for the top). `depth` is the number of opacity groups enclosing the
+ * element it follows: groups ending at `z` at that depth or deeper (the
+ * element's own and its descendants') close before it, enclosing ones stay
+ * open.
+ */
+export interface Anchor {
+  id: number
+  z: number
+  depth: number
+}
 
 interface GroupEvent {
   z: number
-  kind: 'push' | 'pop'
+  kind: 'push' | 'pop' | 'extra'
+  /** Group index, or the extra layer's id. */
   group: number
+  /** Group: nesting depth. Extra: Anchor.depth. */
   depth: number
+}
+
+/** Order of events at equal z: pops and extras (see Anchor), then pushes
+ * (outer before inner). */
+function compareEvents(a: GroupEvent, b: GroupEvent): number {
+  if (a.z !== b.z) {
+    return a.z - b.z
+  }
+  if (a.kind === 'push' || b.kind === 'push') {
+    if (a.kind !== b.kind) {
+      return a.kind === 'push' ? 1 : -1
+    }
+    return a.depth - b.depth
+  }
+  if (a.kind === 'pop' && b.kind === 'pop') {
+    return b.depth - a.depth
+  }
+  if (a.kind === 'extra' && b.kind === 'extra') {
+    return b.depth - a.depth
+  }
+  // pop vs extra: the pop closes first unless its group encloses the
+  // element the extra follows.
+  const pop = a.kind === 'pop' ? a : b
+  const extra = a.kind === 'pop' ? b : a
+  const popFirst = pop.depth >= extra.depth
+  return (a === pop) === popFirst ? -1 : 1
 }
 
 // Members are indexed in a coarse uniform grid so the overlap test stays
@@ -225,7 +268,8 @@ export function buildBatches(
   runs: GlyphRun[],
   runRects: Rect[],
   cutouts: CutoutRecord[] = [],
-  groups: readonly OpacityGroup[] = []
+  groups: readonly OpacityGroup[] = [],
+  anchors: readonly Anchor[] = []
 ): DrawBatch[] {
   const entries: Entry[] = []
   for (let i = 0; i < boxes.length; i++) {
@@ -301,26 +345,22 @@ export function buildBatches(
   }
   entries.sort((a, b) => a.z - b.z)
 
-  // At equal z: pops before pushes; outer pushes before inner, inner pops
-  // before outer.
+  // At equal z: pops (inner first) and extras, then pushes (outer first);
+  // see compareEvents. Extras are hard cuts like group boundaries.
   const events: GroupEvent[] = []
   for (let g = 0; g < groups.length; g++) {
     const grp = groups[g]
     if (!grp) {
       continue
     }
-    events.push({ z: grp.first, kind: 'push', group: g, depth: grp.depth })
-    events.push({ z: grp.last, kind: 'pop', group: g, depth: grp.depth })
+    const { first, last, depth } = grp
+    events.push({ z: first, kind: 'push', group: g, depth })
+    events.push({ z: last, kind: 'pop', group: g, depth })
   }
-  events.sort((a, b) => {
-    if (a.z !== b.z) {
-      return a.z - b.z
-    }
-    if (a.kind !== b.kind) {
-      return a.kind === 'pop' ? -1 : 1
-    }
-    return a.kind === 'push' ? a.depth - b.depth : b.depth - a.depth
-  })
+  for (const a of anchors) {
+    events.push({ z: a.z, kind: 'extra', group: a.id, depth: a.depth })
+  }
+  events.sort(compareEvents)
 
   const batches: (Accum | GroupEvent)[] = []
   let lastIndexForLayer: Partial<Record<Layer, number>> = {}
@@ -363,10 +403,12 @@ export function buildBatches(
 
   emitEventsUpTo(Number.POSITIVE_INFINITY)
 
-  return batches.map(
-    (b): DrawBatch =>
-      'layer' in b
-        ? { layer: b.layer, first: b.first, count: b.count }
-        : { kind: b.kind, group: b.group }
-  )
+  return batches.map((b): DrawBatch => {
+    if ('layer' in b) {
+      return { layer: b.layer, first: b.first, count: b.count }
+    }
+    return b.kind === 'extra'
+      ? { kind: 'extra', id: b.group }
+      : { kind: b.kind, group: b.group }
+  })
 }

@@ -8,8 +8,11 @@ import { FRAME_BYTES, type RenderPass, type Shared } from './frame'
 import {
   CopyThrough,
   type DeviceRect,
+  type ExtraLayer,
   type PostChain,
-  type PostFrame
+  type PostFrame,
+  type RegionFrame,
+  type RegionHandler
 } from './graph'
 
 interface FrameSlot {
@@ -40,6 +43,9 @@ interface Target {
   rect: [number, number, number, number]
   w: number
   h: number
+  /** Top-left of the used region in the parent target's device px. */
+  px: number
+  py: number
 }
 
 function clamp(v: number, max: number): number {
@@ -97,6 +103,10 @@ export class Renderer {
    * scene renders into `sceneTexture` and the chain runs before the canvas
    * composite; otherwise render() draws straight to the swapchain. */
   postChain: PostChain | null = null
+  /** Extra layers by id (scene.batches `extra` entries; gpu/graph.ts). */
+  readonly extras = new Map<number, ExtraLayer>()
+  /** Region handlers by id (OpacityGroup.region; gpu/graph.ts). */
+  readonly regions = new Map<number, RegionHandler>()
   private sceneTexture: GPUTexture | null = null
   private sceneView: GPUTextureView | null = null
   private copy: CopyThrough | null = null
@@ -235,7 +245,9 @@ export class Renderer {
       pooled: null,
       rect: [0, 0, 0, 0],
       w: 0,
-      h: 0
+      h: 0,
+      px: 0,
+      py: 0
     }
     this.composite.begin(scene.groups.length)
     const stack: Target[] = [main]
@@ -253,8 +265,11 @@ export class Renderer {
       if (batch.kind === 'push') {
         const parent = stack[stack.length - 1] ?? main
         const g = scene.groups[batch.group]
+        const region =
+          g?.region !== undefined ? this.regions.get(g.region) : undefined
+        const pad = region?.active() ? Math.max(0, region.pad()) : 0
         const child =
-          g && g.alpha > 0 ? this.openGroup(g, parent, slot, ctx) : null
+          g && g.alpha > 0 ? this.openGroup(g, parent, slot, ctx, pad) : null
         if (!child) {
           i = skipGroup(list, i, batch.group)
           continue
@@ -272,10 +287,44 @@ export class Renderer {
         rp.end()
         stack.pop()
         const parent = stack[stack.length - 1] ?? main
-        rp = this.beginPass(encoder, parent, 'load')
-        const alpha = scene.groups[batch.group]?.alpha ?? 1
-        this.composite.draw(rp, top.pooled, top.rect, top.w, top.h, alpha)
+        const g = scene.groups[batch.group]
+        const alpha = g?.alpha ?? 1
+        const region =
+          g?.region !== undefined ? this.regions.get(g.region) : undefined
+        if (region?.active()) {
+          const frame: RegionFrame = {
+            encoder,
+            source: top.pooled.view,
+            sourceWidth: top.pooled.width,
+            sourceHeight: top.pooled.height,
+            x: top.px,
+            y: top.py,
+            width: top.w,
+            height: top.h,
+            parentX: parent.ox,
+            parentY: parent.oy,
+            scale: parent.sx,
+            alpha,
+            ctx,
+            dpr
+          }
+          region.encode(frame)
+          rp = this.beginPass(encoder, parent, 'load')
+          rp.setScissorRect(top.px, top.py, top.w, top.h)
+          region.composite(rp, frame)
+          rp.setScissorRect(0, 0, parent.devW, parent.devH)
+          this.composite.release(top.pooled)
+        } else {
+          rp = this.beginPass(encoder, parent, 'load')
+          this.composite.draw(rp, top.pooled, top.rect, top.w, top.h, alpha)
+        }
         groups++
+      } else if (batch.kind === 'extra') {
+        const layer = this.extras.get(batch.id)
+        if (layer?.active()) {
+          layer.draw(rp, ctx)
+          draws++
+        }
       } else {
         const pass = this.passByLayer.get(batch.layer)
         if (!pass) {
@@ -393,10 +442,25 @@ export class Renderer {
     }
     this.copy ??= new CopyThrough(this.shared)
     const rp = this.beginPassOn(encoder, canvasView)
-    this.copy.draw(rp, scene)
     if (live) {
+      // The chain overwrites `rect`: copy the scene through only around
+      // it (up to four bands).
+      const bands: [number, number, number, number][] = [
+        [0, 0, W, rect.y],
+        [0, rect.y + rect.height, W, H - rect.y - rect.height],
+        [0, rect.y, rect.x, rect.height],
+        [rect.x + rect.width, rect.y, W - rect.x - rect.width, rect.height]
+      ]
+      for (const [x, y, w, h] of bands) {
+        if (w > 0 && h > 0) {
+          rp.setScissorRect(x, y, w, h)
+          this.copy.draw(rp, scene)
+        }
+      }
       rp.setScissorRect(rect.x, rect.y, rect.width, rect.height)
       chain.composite(rp, frame)
+    } else {
+      this.copy.draw(rp, scene)
     }
     rp.end()
   }
@@ -429,7 +493,8 @@ export class Renderer {
     g: OpacityGroup,
     parent: Target,
     slot: number,
-    ctx: FrameContext
+    ctx: FrameContext,
+    pad = 0
   ): Target | null {
     // Doc-space extent at the current scroll: viewport-space members
     // (fixed subtrees) sit at their viewport rect + scroll.
@@ -454,10 +519,11 @@ export class Renderer {
     if (!(bx1 > bx0 && by1 > by0)) {
       return null
     }
-    const x0 = clamp(Math.floor((bx0 - 1 - parent.ox) * parent.sx), parent.devW)
-    const y0 = clamp(Math.floor((by0 - 1 - parent.oy) * parent.sy), parent.devH)
-    const x1 = clamp(Math.ceil((bx1 + 1 - parent.ox) * parent.sx), parent.devW)
-    const y1 = clamp(Math.ceil((by1 + 1 - parent.oy) * parent.sy), parent.devH)
+    const p = 1 + pad
+    const x0 = clamp(Math.floor((bx0 - p - parent.ox) * parent.sx), parent.devW)
+    const y0 = clamp(Math.floor((by0 - p - parent.oy) * parent.sy), parent.devH)
+    const x1 = clamp(Math.ceil((bx1 + p - parent.ox) * parent.sx), parent.devW)
+    const y1 = clamp(Math.ceil((by1 + p - parent.oy) * parent.sy), parent.devH)
     const w = x1 - x0
     const h = y1 - y0
     if (w <= 0 || h <= 0) {
@@ -493,7 +559,9 @@ export class Renderer {
       pooled,
       rect: [ox, oy, ox + w / parent.sx, oy + h / parent.sy],
       w,
-      h
+      h,
+      px: x0,
+      py: y0
     }
   }
 

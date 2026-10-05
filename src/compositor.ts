@@ -2,11 +2,12 @@ import { BoxPass } from './boxes/boxRenderer'
 import { CutoutPass } from './boxes/cutoutPass'
 import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
-import { SceneReader } from './dom/tree'
+import { SceneReader, subtreeZ } from './dom/tree'
 import { initGpu } from './gpu/device'
-import type { FrameHook, RenderGraph } from './gpu/graph'
+import type { FrameHook, LayerPlace, RenderGraph } from './gpu/graph'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
+import type { Anchor } from './scene/batches'
 import { Scene } from './scene/scene'
 import { SlugText } from './text/slug/rasterizer'
 import type {
@@ -70,6 +71,7 @@ export async function createCompositor(
   const dpr = options.devicePixelRatio ?? window.devicePixelRatio ?? 1
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
+  renderer.shared.dpr = dpr
   if (layers.has('boxes')) {
     renderer.addPass(new BoxPass(renderer.shared))
   }
@@ -351,7 +353,95 @@ export async function createCompositor(
         hooks.delete(hook)
       }
     },
-    requestFrame: () => scheduler.request()
+    requestFrame: () => scheduler.request(),
+    addLayer(layer) {
+      const id = nextExtra++
+      renderer.extras.set(id, layer)
+      rebatch()
+      return () => {
+        if (renderer.extras.delete(id)) {
+          rebatch()
+        }
+      }
+    },
+    replace: () => rebatch(),
+    isolate(el, handler) {
+      let id = regionIds.get(el)
+      if (handler) {
+        if (id === undefined) {
+          id = nextRegion++
+          regionIds.set(el, id)
+        }
+        reader.isolated.set(el, id)
+        renderer.regions.set(id, handler)
+      } else if (id !== undefined) {
+        regionIds.delete(el)
+        reader.isolated.delete(el)
+        renderer.regions.delete(id)
+      } else {
+        return
+      }
+      pendingReadFlags |= Dirty.STYLE
+      scheduler.request()
+    },
+    nodeOf: (el) => reader.nodeOf(el),
+    get version() {
+      return scene.version
+    }
+  }
+  // Extra layers: ids into renderer.extras, placed in paint order by the
+  // anchors resolved each time batches are built (after every read, and
+  // on addLayer/replace).
+  let nextExtra = 1
+  let nextRegion = 1
+  const regionIds = new Map<Element, number>()
+  const rebatch = (): void => {
+    scene.sort()
+    scheduler.request()
+  }
+  // 'below' sits over the page background: after the own records (the
+  // background boxes) of the mirrored root and of <html>/<body>.
+  const belowZ = (): number => {
+    let z = -1
+    for (const el of [root, document.documentElement, document.body]) {
+      const node = el ? reader.nodeOf(el) : undefined
+      for (const r of node?.own ?? []) {
+        z = Math.max(z, r.z)
+      }
+    }
+    return z + 1
+  }
+  const anchorOf = (id: number, place: LayerPlace): Anchor | null => {
+    if (place === 'above') {
+      return { id, z: Number.POSITIVE_INFINITY, depth: 0 }
+    }
+    if (place === 'below') {
+      return { id, z: belowZ(), depth: 0 }
+    }
+    const node = reader.nodeOf(place.after)
+    const range = node ? subtreeZ(node) : null
+    if (!node || !range) {
+      return null
+    }
+    // Opacity groups enclosing the element (contexts with alpha < 1 or
+    // isolated for a region), as assignPaintOrder nests them.
+    let depth = 0
+    for (let p = node.parent; p; p = p.parent) {
+      if (p.isContext && (p.alpha < 1 || p.region !== undefined)) {
+        depth++
+      }
+    }
+    return { id, z: range[1] + 1, depth }
+  }
+  scene.anchors = () => {
+    const out: Anchor[] = []
+    for (const [id, layer] of renderer.extras) {
+      const a = anchorOf(id, layer.place)
+      if (a) {
+        out.push(a)
+      }
+    }
+    return out
   }
   const sync = new DomSync(root, () => scheduler.request())
 

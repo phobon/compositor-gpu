@@ -1,10 +1,13 @@
 import type { Effects, Pass } from '../effects'
+import type { Target } from '../target'
 
 // UV displacement by animated value noise: each pixel samples the scene
 // `strength` CSS px away along a noise vector of feature size `scale` CSS
 // px, drifting at `speed` (scale units per second). With
-// `pointerStrength > 0` the eased pointer follower also magnifies the
-// scene within `pointerRadius` CSS px of it.
+// `pointerStrength > 0` the eased pointer follower also warps the scene
+// within `pointerRadius` CSS px of it: `mode` 0 is a lens (magnifies), 1 a
+// radial push (shoves content outward at a constant strength, folding at
+// the centre).
 
 const FRAGMENT = /* wgsl */ `
 fn dsp_hash(p : vec2f) -> f32 {
@@ -30,13 +33,22 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
   let n = vec2f(dsp_noise(p), dsp_noise(p + vec2f(17.3, 9.1))) * 2.0 - 1.0;
   var off = n * params.strength;
   if (params.pointerStrength > 0.0 && pointer.seen > 0.5) {
-    // A lens: the shift grows with distance from the follower and fades
-    // out by pointerRadius (peak about 0.26 * pointerStrength), so the
-    // centre has no fold.
     let r = max(params.pointerRadius, 1.0);
-    let d = px - pointer.follow;
+    // The follower in the same CSS px as px (the viewport, or a region's
+    // box).
+    let f = viewport_to_uv(pointer.follow) * fx.viewport / fx.dpr;
+    let d = px - f;
     let k = 1.0 - smoothstep(0.0, r, length(d));
-    off += d * k * params.pointerStrength / r;
+    if (params.mode < 0.5) {
+      // Lens: the shift grows with distance from the follower and fades
+      // out by pointerRadius (peak about 0.26 * pointerStrength), so the
+      // centre has no fold.
+      off += d * k * params.pointerStrength / r;
+    } else {
+      // Push: a constant-strength outward shove, fading by pointerRadius.
+      let dir = select(vec2f(0.0), d / max(length(d), 1e-3), length(d) > 1e-3);
+      off += dir * k * params.pointerStrength;
+    }
   }
   return sample(uv - off * fx.dpr * fx.texel);
 }
@@ -47,7 +59,9 @@ const schema = {
   scale: { type: 'f32', default: 80, min: 4, max: 400 },
   speed: { type: 'f32', default: 0.3, min: 0, max: 4 },
   pointerStrength: { type: 'f32', default: 0, min: 0, max: 80 },
-  pointerRadius: { type: 'f32', default: 160, min: 8, max: 600 }
+  pointerRadius: { type: 'f32', default: 160, min: 8, max: 600 },
+  /** Pointer warp: 0 lens, 1 radial push. */
+  mode: { type: 'f32', default: 0, min: 0, max: 1 }
 } as const
 
 export type DisplaceSchema = typeof schema
@@ -58,10 +72,14 @@ export interface DisplaceOptions {
   speed?: number
   pointerStrength?: number
   pointerRadius?: number
+  /** 'lens' (default) or 'push'. */
+  mode?: 'lens' | 'push'
   enabled?: boolean
   /** Default true: the noise drifts with time. */
   continuous?: boolean
   name?: string
+  /** Displace only this element (a region pass). */
+  region?: Target | Element
 }
 
 export function displace(
@@ -75,9 +93,13 @@ export function displace(
     // Samples reach at most strength + pointerStrength CSS px.
     radius: (p) => p.strength + p.pointerStrength,
     enabled: opts.enabled,
-    continuous: opts.continuous ?? true
+    continuous: opts.continuous ?? true,
+    region: opts.region
   })
   const p = pass.params
+  if (opts.mode === 'push') {
+    p.mode = 1
+  }
   for (const k of [
     'strength',
     'scale',

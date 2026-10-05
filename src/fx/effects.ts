@@ -1,6 +1,19 @@
-import type { PostChain, PostFrame, RenderGraph } from '../gpu/graph'
+import type {
+  PostChain,
+  PostFrame,
+  RegionFrame,
+  RegionHandler,
+  RenderGraph
+} from '../gpu/graph'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
+import {
+  createLayer,
+  inertLayer,
+  type Layer,
+  type LayerOptions,
+  type LayerState
+} from './layer'
 import {
   createParams,
   type ParamBlock,
@@ -20,6 +33,7 @@ import {
   type Fragment,
   stageSource
 } from './shader'
+import { createTarget, type Target } from './target'
 
 export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Labels pipelines and shader errors. */
@@ -37,6 +51,10 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Keep the frame loop running while enabled (time-based motion).
    * Default false. */
   continuous?: boolean
+  /** Apply to this element only (a region pass): while enabled its
+   * subtree renders to its own texture and the pass composites it, `uv`
+   * spanning the element's border box. Not part of the fullscreen chain. */
+  region?: Target | Element
 }
 
 export interface Pass<S extends ParamSchema = ParamSchema> {
@@ -47,6 +65,8 @@ export interface Pass<S extends ParamSchema = ParamSchema> {
   continuous: boolean
   /** The declared sampling radius right now, CSS px. */
   readonly radius: number
+  /** The element a region pass applies to; null for fullscreen. */
+  readonly region: Target | null
   /** Remove the pass from the chain and free its GPU resources. */
   destroy(): void
 }
@@ -66,7 +86,13 @@ export interface Effects {
   /** Live pointer state (`ease` is writable). */
   readonly pointer: PointerState
   pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S>
-  /** Remove every pass and the pointer listeners. */
+  /** Instanced quads drawn in paint order (see LayerOptions). */
+  layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S>
+  /** The (cached) Target for `el`. */
+  target(el: Element): Target
+  /** Targets for every element matching `selector` (under `root`). */
+  targets(selector: string, root?: ParentNode): Target[]
+  /** Remove every pass and layer and the pointer listeners. */
   destroy(): void
   /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
   __override(o: FxOverride | null): void
@@ -74,6 +100,8 @@ export interface Effects {
 
 interface Stage {
   pipeline: GPURenderPipeline
+  /** Region passes' last stage: blended over the parent target. */
+  over: GPURenderPipeline | null
   effect: GPUBuffer
   bindGroup: GPUBindGroup
 }
@@ -100,13 +128,18 @@ interface PassState {
   enabledAt: number | null
   paramsBuf: GPUBuffer | null
   stages: Stage[]
+  /** Region passes: the element, and its ping-pong pair (multi-stage). */
+  region: Target | null
+  ping: GPUTexture[]
 }
 
-/** A Pass object over `s` (shared by the inert and GPU paths). */
+/** A Pass object over `s` (shared by the inert and GPU paths).
+ * `toggled` runs after `enabled` changes. */
 function passHandle<S extends ParamSchema>(
   s: PassState,
   wake: () => void,
-  remove: () => void
+  remove: () => void,
+  toggled?: () => void
 ): Pass<S> {
   return {
     name: s.name,
@@ -122,6 +155,7 @@ function passHandle<S extends ParamSchema>(
       if (on) {
         s.enabledAt = null
       }
+      toggled?.()
       wake()
     },
     get continuous() {
@@ -134,6 +168,7 @@ function passHandle<S extends ParamSchema>(
     get radius() {
       return s.radius()
     },
+    region: s.region,
     destroy: remove
   }
 }
@@ -150,11 +185,33 @@ function radiusFn<S extends ParamSchema>(
   return () => n
 }
 
+/** `el` as a Target (cached per element in `cache`). */
+function targetOf(
+  el: Target | Element,
+  cache: WeakMap<Element, Target>,
+  graph: RenderGraph | null
+): Target {
+  if (!(el instanceof Element)) {
+    return el
+  }
+  let t = cache.get(el)
+  if (!t) {
+    t = createTarget(el, graph)
+    cache.set(el, t)
+  }
+  return t
+}
+
 function inertEffects(): Effects {
   const pointer = emptyPointer()
+  const cache = new WeakMap<Element, Target>()
   return {
     active: false,
     pointer,
+    layer: (opts) => inertLayer(opts),
+    target: (el) => targetOf(el, cache, null),
+    targets: (sel, root = document) =>
+      Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
       const block = createParams(opts.params ?? ({} as S), () => {})
       const s: PassState = {
@@ -165,7 +222,9 @@ function inertEffects(): Effects {
         continuous: opts.continuous ?? false,
         enabledAt: null,
         paramsBuf: null,
-        stages: []
+        stages: [],
+        region: opts.region ? targetOf(opts.region, cache, null) : null,
+        ping: []
       }
       return passHandle<S>(
         s,
@@ -193,10 +252,13 @@ export function createEffects(compositor: Compositor): Effects {
   }
   const { device, format, frameLayout } = graph.shared
   const passes: PassState[] = []
+  const layers: LayerState[] = []
+  const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
 
-  const anyEnabled = (): boolean => passes.some((p) => p.enabled)
+  const anyEnabled = (): boolean =>
+    passes.some((p) => p.enabled) || layers.some((l) => l.enabled)
   const tracker = new PointerTracker(() => {
     if (anyEnabled()) {
       graph.requestFrame()
@@ -298,7 +360,9 @@ export function createEffects(compositor: Compositor): Effects {
   /** This frame's running stages, in order (filled by encode). */
   const running: { pass: PassState; stage: Stage }[] = []
 
-  const live = (p: PassState): boolean => p.enabled && p.stages.length > 0
+  /** In the fullscreen chain this frame (region passes never are). */
+  const live = (p: PassState): boolean =>
+    p.enabled && p.stages.length > 0 && !p.region
 
   const writeEffect = (
     p: PassState,
@@ -329,6 +393,10 @@ export function createEffects(compositor: Compositor): Effects {
     d[17] = dst.y
     d[18] = 1 / src.texW
     d[19] = 1 / src.texH
+    d[20] = frame.ctx.scrollX
+    d[21] = frame.ctx.scrollY
+    d[22] = 1
+    d[23] = 0
     device.queue.writeBuffer(stage.effect, 0, d)
   }
 
@@ -356,7 +424,6 @@ export function createEffects(compositor: Compositor): Effects {
           running.push({ pass: p, stage })
         }
       }
-      device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
       if (frame.scene !== lastScene) {
         if (lastScene) {
           srcGroups.delete(lastScene)
@@ -446,23 +513,35 @@ export function createEffects(compositor: Compositor): Effects {
         ? applyOverride(tracker.state, o, ctx.scrollX, ctx.scrollY)
         : tracker.state
       ctx.pointer = pointerNow
+      let chainLive = false
       let any = false
       for (const p of passes) {
         if (p.enabled) {
           any = true
+          chainLive ||= !p.region
           p.enabledAt ??= ctx.time
         }
+        if (!p.enabled && p.ping.length > 0) {
+          freePing(p)
+        }
+      }
+      for (const l of layers) {
+        any ||= l.enabled
+        l.frame(ctx)
+      }
+      if (any) {
+        device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
       }
       // Leaving the offscreen path: free the ping-pong targets.
-      if (!any && ping.length > 0) {
+      if (!chainLive && ping.length > 0) {
         releaseTargets()
       }
     },
     keepAlive() {
       let any = false
-      for (const p of passes) {
-        if (p.enabled) {
-          if (p.continuous) {
+      for (const e of [...passes, ...layers]) {
+        if (e.enabled) {
+          if (e.continuous) {
             return true
           }
           any = true
@@ -478,7 +557,8 @@ export function createEffects(compositor: Compositor): Effects {
     fragment: Fragment,
     block: ParamBlock<ParamSchema>,
     paramsBuf: GPUBuffer,
-    index: number
+    index: number,
+    over: boolean
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
     const code = stageSource(effectSource(fragment, name), block.wgsl)
@@ -491,6 +571,24 @@ export function createEffects(compositor: Compositor): Effects {
       fragment: { module, entryPoint: 'fx_fs', targets: [{ format }] },
       primitive: { topology: 'triangle-list' }
     })
+    const blend: GPUBlendComponent = {
+      srcFactor: 'one',
+      dstFactor: 'one-minus-src-alpha',
+      operation: 'add'
+    }
+    const overPipeline = over
+      ? device.createRenderPipeline({
+          label: `${label}:over`,
+          layout: pipelineLayout,
+          vertex: { module, entryPoint: 'fx_vs' },
+          fragment: {
+            module,
+            entryPoint: 'fx_fs_over',
+            targets: [{ format, blend: { color: blend, alpha: blend } }]
+          },
+          primitive: { topology: 'triangle-list' }
+        })
+      : null
     const effect = device.createBuffer({
       label: `${label}:effect`,
       size: EFFECT_BYTES,
@@ -504,16 +602,212 @@ export function createEffects(compositor: Compositor): Effects {
         { binding: 2, resource: { buffer: pointerBuf } }
       ]
     })
-    return { pipeline, effect, bindGroup }
+    return { pipeline, over: overPipeline, effect, bindGroup }
   }
 
+  const freePing = (s: PassState): void => {
+    for (const t of s.ping) {
+      t.destroy()
+    }
+    s.ping = []
+  }
   const freePass = (s: PassState): void => {
+    freePing(s)
     for (const st of s.stages) {
       st.effect.destroy()
     }
     s.stages = []
     s.paramsBuf?.destroy()
     s.paramsBuf = null
+  }
+
+  // Region passes: the renderer hands over the element's group texture
+  // when the group closes (gpu/graph.ts RegionHandler). Coordinates are the
+  // parent target's device px; `uv` spans the element's border box.
+  const regionSrc = new WeakMap<GPUTextureView, GPUBindGroup>()
+  const regionSrcGroup = (view: GPUTextureView): GPUBindGroup => {
+    let g = regionSrc.get(view)
+    if (!g) {
+      g = device.createBindGroup({
+        layout: srcLayout,
+        entries: [
+          { binding: 0, resource: view },
+          { binding: 1, resource: sampler }
+        ]
+      })
+      regionSrc.set(view, g)
+    }
+    return g
+  }
+  const views = new WeakMap<GPUTexture, GPUTextureView>()
+  const viewOf = (t: GPUTexture): GPUTextureView => {
+    let v = views.get(t)
+    if (!v) {
+      v = t.createView()
+      views.set(t, v)
+    }
+    return v
+  }
+  const regionPing = (p: PassState, w: number, h: number): void => {
+    const t = p.ping[0]
+    if (t && t.width >= w && t.height >= h) {
+      return
+    }
+    freePing(p)
+    const width = Math.ceil(w / SIZE_STEP) * SIZE_STEP
+    const height = Math.ceil(h / SIZE_STEP) * SIZE_STEP
+    for (let i = 0; i < 2; i++) {
+      p.ping.push(
+        device.createTexture({
+          label: `fx:${p.name}:ping-${i}`,
+          size: { width, height },
+          format,
+          usage:
+            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+        })
+      )
+    }
+  }
+  const writeRegion = (
+    p: PassState,
+    stage: Stage,
+    f: RegionFrame,
+    src: Source,
+    dst: { x: number; y: number },
+    alpha: number
+  ): void => {
+    const t = p.region
+    const r = t?.rect
+    const s = f.scale
+    // The element's border box in the parent's device px (the group's
+    // rect when it has no size).
+    let bx = f.x
+    let by = f.y
+    let bw = f.width
+    let bh = f.height
+    let docX = f.parentX + f.x / s
+    let docY = f.parentY + f.y / s
+    if (t && r && r.width > 0 && r.height > 0) {
+      docX = r.x + (t.space === 'viewport' ? f.ctx.scrollX : 0)
+      docY = r.y + (t.space === 'viewport' ? f.ctx.scrollY : 0)
+      bx = (docX - f.parentX) * s
+      by = (docY - f.parentY) * s
+      bw = r.width * s
+      bh = r.height * s
+    }
+    const d = effectData
+    d[0] = override?.time ?? timeMs / 1000
+    d[1] = override?.elapsed ?? (timeMs - (p.enabledAt ?? timeMs)) / 1000
+    d[2] = bw
+    d[3] = bh
+    d[4] = 1 / Math.max(1, bw)
+    d[5] = 1 / Math.max(1, bh)
+    d[6] = docX
+    d[7] = docY
+    d[8] = s
+    d[9] = 0
+    d[10] = bx
+    d[11] = by
+    d[12] = src.x
+    d[13] = src.y
+    d[14] = src.w
+    d[15] = src.h
+    d[16] = dst.x
+    d[17] = dst.y
+    d[18] = 1 / src.texW
+    d[19] = 1 / src.texH
+    d[20] = f.ctx.scrollX
+    d[21] = f.ctx.scrollY
+    d[22] = alpha
+    d[23] = 0
+    device.queue.writeBuffer(stage.effect, 0, d)
+  }
+  const regionSource = (p: PassState, i: number, f: RegionFrame): Source => {
+    const view = i > 0 ? p.ping[(i - 1) % 2] : undefined
+    if (!view) {
+      return {
+        view: f.source,
+        x: f.x,
+        y: f.y,
+        w: f.width,
+        h: f.height,
+        texW: f.sourceWidth,
+        texH: f.sourceHeight
+      }
+    }
+    return {
+      view: viewOf(view),
+      x: f.x,
+      y: f.y,
+      w: f.width,
+      h: f.height,
+      texW: view.width,
+      texH: view.height
+    }
+  }
+  const regionHandler = (p: PassState): RegionHandler => ({
+    pad: () => p.radius(),
+    active: () => p.enabled && p.stages.length > 0 && !destroyed,
+    encode(f) {
+      if (p.block.dirty && p.paramsBuf) {
+        device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
+      }
+      const n = p.stages.length
+      if (n > 1) {
+        regionPing(p, f.width, f.height)
+      }
+      for (let i = 0; i < n - 1; i++) {
+        const stage = p.stages[i]
+        const out = p.ping[i % 2]
+        if (!stage || !out) {
+          continue
+        }
+        const src = regionSource(p, i, f)
+        writeRegion(p, stage, f, src, { x: f.x, y: f.y }, 1)
+        const rp = f.encoder.beginRenderPass({
+          label: `fx:${p.name}`,
+          colorAttachments: [
+            {
+              view: viewOf(out),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store'
+            }
+          ]
+        })
+        rp.setBindGroup(0, graph.shared.frameBindGroup)
+        rp.setScissorRect(0, 0, f.width, f.height)
+        rp.setPipeline(stage.pipeline)
+        rp.setBindGroup(1, regionSrcGroup(src.view))
+        rp.setBindGroup(2, stage.bindGroup)
+        rp.draw(3)
+        rp.end()
+      }
+    },
+    composite(rp, f) {
+      const i = p.stages.length - 1
+      const stage = p.stages[i]
+      if (!stage?.over) {
+        return
+      }
+      const src = regionSource(p, i, f)
+      writeRegion(p, stage, f, src, { x: 0, y: 0 }, f.alpha)
+      rp.setPipeline(stage.over)
+      rp.setBindGroup(1, regionSrcGroup(src.view))
+      rp.setBindGroup(2, stage.bindGroup)
+      rp.draw(3)
+    }
+  })
+
+  const layerDeps = {
+    device,
+    format,
+    frameLayout,
+    graph,
+    pointerBuf,
+    time: () => override?.time ?? timeMs / 1000,
+    elapsedOverride: () => override?.elapsed ?? null,
+    wake: () => graph.requestFrame()
   }
 
   return {
@@ -537,7 +831,16 @@ export function createEffects(compositor: Compositor): Effects {
         continuous: opts.continuous ?? false,
         enabledAt: null,
         paramsBuf: null,
-        stages: []
+        stages: [],
+        region: opts.region ? targetOf(opts.region, targetCache, graph) : null,
+        ping: []
+      }
+      const handler = state.region ? regionHandler(state) : null
+      const isolate = (): void => {
+        const el = state.region?.el
+        if (el && handler) {
+          graph.isolate(el, state.enabled && !destroyed ? handler : null)
+        }
       }
       if (!destroyed) {
         const paramsBuf = device.createBuffer({
@@ -551,9 +854,17 @@ export function createEffects(compositor: Compositor): Effects {
           ? (opts.fragment as readonly Fragment[])
           : [opts.fragment as Fragment]
         state.stages = frags.map((f, i) =>
-          buildStage(opts.name, f, generic, paramsBuf, i)
+          buildStage(
+            opts.name,
+            f,
+            generic,
+            paramsBuf,
+            i,
+            handler !== null && i === frags.length - 1
+          )
         )
         passes.push(state)
+        isolate()
         if (state.enabled) {
           graph.requestFrame()
         }
@@ -569,13 +880,34 @@ export function createEffects(compositor: Compositor): Effects {
           passes.splice(i, 1)
           freePass(state)
           state.enabled = false
+          isolate()
           if (passes.length === 0) {
             releaseTargets()
           }
           graph.requestFrame()
-        }
+        },
+        isolate
       )
     },
+    layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S> {
+      if (destroyed) {
+        return inertLayer(opts)
+      }
+      const s = createLayer(opts, layerDeps, (st) => {
+        const i = layers.indexOf(st)
+        if (i !== -1) {
+          layers.splice(i, 1)
+        }
+        graph.requestFrame()
+      })
+      layers.push(s)
+      return s.handle as unknown as Layer<S>
+    },
+    target: (el) => targetOf(el, targetCache, graph),
+    targets: (sel, root = document) =>
+      Array.from(root.querySelectorAll(sel), (el) =>
+        targetOf(el, targetCache, graph)
+      ),
     destroy() {
       if (destroyed) {
         return
@@ -587,8 +919,15 @@ export function createEffects(compositor: Compositor): Effects {
       for (const p of passes) {
         freePass(p)
         p.enabled = false
+        if (p.region) {
+          graph.isolate(p.region.el, null)
+        }
       }
       passes.length = 0
+      for (const l of [...layers]) {
+        l.handle.destroy()
+      }
+      layers.length = 0
       releaseTargets()
       pointerBuf.destroy()
     },

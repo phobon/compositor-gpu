@@ -1,3 +1,4 @@
+import type { ElNode } from '../dom/tree'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
@@ -49,6 +50,58 @@ export interface PostChain {
   composite(rp: GPURenderPassEncoder, frame: PostFrame): void
 }
 
+/** Where an extra layer draws in paint order (RenderGraph.addLayer). */
+export type LayerPlace = 'above' | 'below' | { after: Element }
+
+/** Geometry drawn in the scene's paint order (an `/fx` Layer). */
+export interface ExtraLayer {
+  place: LayerPlace
+  /** Draw into the current target (the canvas, the post scene texture or
+   * a group texture); bind group 0 is that target's Frame, so `to_clip`
+   * places doc and viewport positions. */
+  draw(rp: GPURenderPassEncoder, ctx: FrameContext): void
+  /** False: skipped this frame. */
+  active(): boolean
+}
+
+/** What a region handler gets when its isolated group closes. */
+export interface RegionFrame {
+  encoder: GPUCommandEncoder
+  /** The group texture: the element's subtree at full opacity. */
+  source: GPUTextureView
+  /** Its allocated size, device px (>= the used region). */
+  sourceWidth: number
+  sourceHeight: number
+  /** The used region in the parent target's device px (also the group
+   * texture's texel (0, 0) and size). */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** The parent target: doc-space origin and device px per CSS px. */
+  parentX: number
+  parentY: number
+  scale: number
+  /** The group's opacity (the element's own, 1 when it has none). */
+  alpha: number
+  ctx: FrameContext
+  dpr: number
+}
+
+/** Composites one isolated element (a region `/fx` Pass). */
+export interface RegionHandler {
+  /** CSS px to grow the group texture by on every side (the effect's
+   * reach past the element). */
+  pad(): number
+  /** False: composite the group plainly this frame. */
+  active(): boolean
+  /** Record any intermediate stages, before the parent pass resumes. */
+  encode(frame: RegionFrame): void
+  /** Draw into the parent target's pass (premultiplied over; the
+   * renderer resets the scissor afterwards). */
+  composite(rp: GPURenderPassEncoder, frame: RegionFrame): void
+}
+
 /** Per-frame participant registered through RenderGraph.addHook. */
 export interface FrameHook {
   /** After the DOM reads and re-anchoring, before onGlyph/onFrame and
@@ -68,6 +121,17 @@ export interface RenderGraph {
   /** Schedule a frame (coalesced; a no-op while the compositor is
    * stopped). */
   requestFrame(): void
+  /** Draw `layer` at its place in paint order; returns its removal. */
+  addLayer(layer: ExtraLayer): () => void
+  /** Re-resolve extra-layer places now (a Layer's `place` changed). */
+  replace(): void
+  /** Render `el`'s subtree as one group composited by `handler` (null
+   * ends it). Takes effect on the next read, which this schedules. */
+  isolate(el: Element, handler: RegionHandler | null): void
+  /** The mirror's node for `el` from the most recent read. */
+  nodeOf(el: Element): ElNode | undefined
+  /** Bumped whenever the scene is rebuilt (records and z change). */
+  readonly version: number
 }
 
 const COPY_WGSL = /* wgsl */ `

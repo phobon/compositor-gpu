@@ -10,7 +10,7 @@ import { POINTER_WGSL } from './pointer'
 // points. The contract is documented in src/fx/README.md.
 
 /** Bytes in the Effect uniform (see EFFECT_WGSL). */
-export const EFFECT_BYTES = 80
+export const EFFECT_BYTES = 96
 
 export const EFFECT_WGSL = /* wgsl */ `
 struct Effect {
@@ -26,6 +26,9 @@ struct Effect {
   src_size   : vec2f,  // runtime: src's valid region, device px
   dst_origin : vec2f,  // runtime: target texel (0,0) in canvas device px
   src_texel  : vec2f,  // runtime: 1 / src texture size
+  page_scroll : vec2f, // runtime: the real document scroll, CSS px
+  alpha      : f32,    // runtime: region group opacity (1 fullscreen)
+  _pad2      : f32,
 };
 `
 
@@ -52,7 +55,7 @@ fn sample(uv : vec2f) -> vec4f {
 
 // Viewport CSS px -> uv (the pointer's pos/follow).
 fn viewport_to_uv(p : vec2f) -> vec2f {
-  return p * fx.dpr / fx.viewport;
+  return page_to_uv(p + fx.page_scroll);
 }
 
 // Page (document) CSS px -> uv (pointer.page, clicks).
@@ -72,6 +75,14 @@ fn fx_vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 fn fx_fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
   let uv = (pos.xy + fx.dst_origin - fx.origin) / fx.viewport;
   return effect(uv, fx_src, fx_smp);
+}
+
+// A region pass's last stage, blended over the parent target with the
+// element's own opacity.
+@fragment
+fn fx_fs_over(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+  let uv = (pos.xy + fx.dst_origin - fx.origin) / fx.viewport;
+  return effect(uv, fx_src, fx_smp) * fx.alpha;
 }
 `
 

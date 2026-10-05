@@ -22,6 +22,9 @@ export interface StackingContext {
   /** The element's own opacity when < 1: the context is then an opacity
    * group (rendered offscreen, composited once). Absent/1 otherwise. */
   alpha?: number
+  /** Isolated for a region effect (gpu/graph.ts `isolate`): the context
+   * becomes a group even at alpha 1, composited by the region's handler. */
+  region?: number
 }
 
 /**
@@ -45,6 +48,9 @@ export interface OpacityGroup {
   vbounds: Rect | null
   /** 0 for a group not inside another group. */
   depth: number
+  /** Set when the group isolates an element for a region effect: the
+   * renderer composites it through that region's handler. */
+  region?: number
 }
 
 export type Item = SceneRecord | StackingContext
@@ -240,7 +246,7 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
 
   const visit = (ctx: StackingContext): void => {
     const alpha = ctx.alpha ?? 1
-    if (alpha < 1) {
+    if (alpha < 1 || ctx.region !== undefined) {
       const g: OpacityGroup = {
         first: counter,
         last: counter,
@@ -248,6 +254,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
         bounds: { x: 0, y: 0, width: 0, height: 0 },
         vbounds: null,
         depth: open.length
+      }
+      if (ctx.region !== undefined) {
+        g.region = ctx.region
       }
       groups.push(g)
       const e: Extents = { doc: emptyExtent(), vp: emptyExtent() }

@@ -1,8 +1,9 @@
 # `compositor-gpu/fx` — authoring contract
 
-The effects layer of `docs/EFFECTS.md`. M1 ships the runtime spine and
-fullscreen post: `createEffects`, Params, the pointer, `fx.pass`, and the
-`blur` / `displace` presets. Targets, Layers and Materials are M2/M3.
+The effects layer of `docs/EFFECTS.md`. Built: the runtime spine and
+fullscreen post (M1: `createEffects`, Params, the pointer, `fx.pass`) and
+geometry (M2: Targets, Layers, region passes), with the presets `blur`,
+`displace`, `cursorGlow` and `clickRipple`. Materials are M3.
 
 ```ts
 import { createCompositor } from 'compositor-gpu'
@@ -17,8 +18,9 @@ gsap.to(soft.params, { radius: 0, duration: 0.6 })
 
 Importing `/fx` does nothing (safe on a server). On an inert compositor
 (no WebGPU) `createEffects` returns an inert runtime: `fx.pass()` returns a
-working Pass (params proxy, `enabled`, `radius`), nothing renders, no
-listeners are attached, `fx.active` is false.
+working Pass (params proxy, `enabled`, `radius`), `fx.layer()` a Layer
+with its `data` array, `fx.target()` a Target that is never `found`;
+nothing renders, no listeners are attached, `fx.active` is false.
 
 ## Pass
 
@@ -29,8 +31,9 @@ fx.pass({
   params?: { ...schema },          // see Params
   radius?: number | (params) => number,  // CSS px sampled past the viewport
   enabled?: true,
-  continuous?: false
-}) -> Pass { name, params, enabled, continuous, radius, destroy() }
+  continuous?: false,
+  region?: target | element         // see Region passes
+}) -> Pass { name, params, enabled, continuous, radius, region, destroy() }
 ```
 
 - Passes run in creation order, each on the previous one's output. An
@@ -60,6 +63,26 @@ linear clamp sampler; their coordinates are **not** `uv` (the source is the
 whole-canvas scene or a ping-pong texture). Use `sample(uv)`, or
 `textureSampleLevel(src, smp, src_uv(uv), 0.0)`.
 
+### Region passes
+
+With `region`, the pass applies to one element and is not part of the
+fullscreen chain. While it is enabled the element is isolated: its
+subtree renders to its own texture (grown by the pass `radius` on every
+side, so a blur spreads past the element), then the pass's stages run on
+it and the last one is blended premultiplied-over onto what is under the
+element, times the element's own opacity. Same fragment signature:
+
+- `uv` spans the element's border box (its AABB under a transform) and
+  goes outside [0,1]² in the radius margin; `fx.viewport` is that box in
+  device px, `fx.scroll` its page position, so `page_to_uv` and
+  `viewport_to_uv` map onto it.
+- Isolation makes the element a stacking context (as `isolation:
+  isolate` would). For an element that already is one (positioned,
+  transformed, `opacity < 1`, ...) nothing changes; otherwise positioned
+  descendants that interleaved with content outside it now paint with it.
+- Toggling `enabled` isolates or releases the element, which schedules
+  a full read. One region pass per element.
+
 ### What the runtime puts in scope
 
 The module is `FRAME_WGSL` + the declarations below + the Params struct +
@@ -84,7 +107,10 @@ struct Effect {          // offset
   src_size   : vec2f,    // 56
   dst_origin : vec2f,    // 64
   src_texel  : vec2f,    // 72
-};                       // 80 bytes
+  page_scroll : vec2f,   // 80  the real document scroll
+  alpha      : f32,      // 88  region: the element's opacity
+  _pad2      : f32,      // 92
+};                       // 96 bytes
 
 @group(1) @binding(0) var fx_src : texture_2d<f32>;
 @group(1) @binding(1) var fx_smp : sampler;
@@ -94,7 +120,7 @@ struct Effect {          // offset
 
 fn sample(uv : vec2f) -> vec4f          // source at uv, premultiplied
 fn src_uv(uv : vec2f) -> vec2f          // uv -> source texture coords
-fn viewport_to_uv(p : vec2f) -> vec2f   // viewport CSS px -> uv
+fn viewport_to_uv(p : vec2f) -> vec2f   // viewport CSS px -> uv (via page)
 fn page_to_uv(p : vec2f) -> vec2f       // page CSS px -> uv
 ```
 
@@ -177,13 +203,97 @@ struct Pointer {           // offset
 
 Click age is `fx.time - pointer.clicks[i].z`.
 
+## Targets
+
+```ts
+const t = fx.target(el)              // cached per element
+const ts = fx.targets('section img') // under document, or a root
+t.found / t.rect / t.local / t.xform / t.space / t.radius / t.glyphs
+t.version                            // changes when it re-resolves
+```
+
+A Target is a handle on the mirror's geometry for one element, resolved
+lazily from the most recent read (again after every rebuild of the
+scene). `rect` is the border-box AABB in `space` (`'viewport'` inside a
+`position: fixed` subtree), `local`/`xform` the untransformed size and
+local → space affine, `radius` the corner radii of its own box (zeros
+when it paints none). `glyphs` = `{ count, rects (x, y, w, h per glyph,
+Float32Array), ids (font glyph ids), text (grapheme per glyph) }` for the
+subtree in DOM order, so index i is stable while the text is unchanged;
+glyphs in a different space than the element are left out. Reading a
+Target reads no DOM.
+
+## Layers
+
+```ts
+fx.layer({
+  name: 'dots',
+  count: 64, stride: 4,              // data is count × stride floats
+  data?: Float32Array,
+  space?: 'doc' | 'viewport',        // default 'doc' (page CSS px)
+  place?: 'above' | 'below' | { after: target | element },
+  vertex: wgsl, fragment: wgsl,
+  params?: { ...schema },
+  enabled?: true, continuous?: false,
+  update?: (layer, time, ctx) => void   // every frame while enabled
+}) -> Layer { name, params, data, count, stride, place, enabled,
+              continuous, markDirty(), destroy() }
+```
+
+Instanced quads in the scene's paint order. Write `layer.data` (it grows
+when `count` does) and call `markDirty()`; the used prefix is uploaded
+on the next frame. Inside `update` the frame is already running, so
+writes there request no further frame: keep a layer animating with
+`continuous` (set it from `update` if needed, as `clickRipple` does). Places:
+
+- `'above'`: over every mirrored record (and under any fullscreen pass,
+  which sees the layer).
+- `'below'`: over the page background (the own boxes of the mirrored
+  root, `<html>` and `<body>`), under all other content.
+- `{ after: target }`: right after the element and its subtree: over it,
+  under whatever paints after it. Inside an enclosing `opacity < 1`
+  element the layer draws into that group (with its opacity) and is
+  clipped to the group's bounds. A target with nothing in the mirror
+  draws nothing. Assigning `layer.place` re-places it.
+
+```wgsl
+struct Quad { pos : vec2f, uv : vec2f, color : vec4f, extra : vec4f };
+fn vertex(i : u32, corner : vec2f) -> Quad   // yours; corner in {0,1}²
+fn fragment(q : Quad, i : u32) -> vec4f      // yours; premultiplied
+```
+
+`vertex` returns one corner of quad `i`: `pos` in CSS px in the layer's
+space (the runtime maps it to clip space), the rest free; all four are
+interpolated into `fragment`. Blending is premultiplied over. In scope:
+
+```wgsl
+struct LayerFx {          // offset
+  time     : f32,         //  0  page clock, s
+  elapsed  : f32,         //  4  s since enabled
+  dpr      : f32,         //  8
+  count    : f32,         // 12
+  scroll   : vec2f,       // 16  real document scroll, CSS px
+  viewport : vec2f,       // 24  CSS px
+};
+@group(1) @binding(1) var<uniform> fx      : LayerFx;
+@group(1) @binding(2) var<uniform> params  : Params;
+@group(1) @binding(3) var<uniform> pointer : Pointer;
+fn data(i : u32, k : u32) -> f32     // also data2 / data4
+fn viewport_to_page(p : vec2f) -> vec2f
+fn page_to_viewport(p : vec2f) -> vec2f
+```
+
+plus `Frame`/`to_clip` from the core. Compile errors report under
+`fx:<name>`.
+
 ## Wake rules
 
 The compositor idles unless something asks for frames. `/fx` requests one
-on: a param write to an enabled pass; `enabled` toggling; `continuous`
-changing; pass creation (enabled) and destruction; a pointer event while
-any pass is enabled. It keeps the loop alive while any enabled pass is
-`continuous`, or while any pass is enabled and the pointer follower is
+on: a param write to an enabled pass or layer; `enabled` toggling;
+`continuous` changing; creation (enabled) and destruction; a layer's
+`markDirty()` or `count` change; a pointer event while any pass or layer
+is enabled. It keeps the loop alive while any enabled pass or layer is
+`continuous`, or while anything is enabled and the pointer follower is
 more than 0.1 px from the pointer (or velocity hasn't decayed below
 1 px/s). `displace` defaults to `continuous: true` (its noise drifts);
 `blur` is static.
@@ -209,24 +319,34 @@ in 0.12:
   which is logged as `fx:<name>: tgpu.resolve failed` and the stage passes
   the source through. With the plugin, they can't yet reach `sample`,
   `params`, `fx` or `pointer`: those are WGSL declarations, not TypeGPU
-  values. TODO: expose them as TypeGPU externals (a `d.struct` generated
-  from the Params schema, `tgpu.fn` wrappers for the helpers) so JS bodies
-  can call them.
+  values. Planned for M3: expose them as TypeGPU externals (a `d.struct`
+  generated from the Params schema, `tgpu.fn` wrappers for the helpers)
+  so JS bodies can call them.
 
 A signature mismatch is logged and the stage passes through.
 
 ## Presets
 
-- `blur(fx, { radius = 8 })`: separable Gaussian, two stages, param
-  `radius` (CSS px reach, σ = radius / 3, ≤ 32 taps per side, spread past
-  that); declares `radius` as its sampling radius.
+- `blur(fx, { radius = 8, region? })`: separable Gaussian, two stages,
+  param `radius` (CSS px reach, σ = radius / 3, ≤ 32 taps per side,
+  spread past that); declares `radius` as its sampling radius.
 - `displace(fx, { strength = 6, scale = 80, speed = 0.3, pointerStrength
-  = 0, pointerRadius = 160 })`: samples `strength` CSS px away along a
-  value-noise vector of feature size `scale`, drifting at `speed`; with
-  `pointerStrength > 0` it also magnifies the scene around
-  `pointer.follow` within `pointerRadius` (shift = distance × falloff ×
-  pointerStrength / pointerRadius, peaking near 0.26 × pointerStrength).
-  Declares `strength + pointerStrength` as its radius. `continuous` by default.
+  = 0, pointerRadius = 160, mode = 'lens', region? })`: samples
+  `strength` CSS px away along a value-noise vector of feature size
+  `scale`, drifting at `speed`; with `pointerStrength > 0` it also warps
+  the scene around `pointer.follow` within `pointerRadius`. Param `mode`
+  0 (`'lens'`) magnifies (shift = distance × falloff × pointerStrength /
+  pointerRadius, peaking near 0.26 × pointerStrength); 1 (`'push'`)
+  shoves content outward by pointerStrength × falloff, folding through
+  the centre. Declares `strength + pointerStrength` as its radius.
+  `continuous` by default.
+- `cursorGlow(fx, { radius = 160, intensity = 0.35, color = '#fff',
+  place = 'above' })`: one viewport-space quad on the eased follower, a
+  radial falloff; `place: 'below'` lights up behind content.
+- `clickRipple(fx, { radius = 80, width = 2, duration = 0.6, color =
+  '#fff', place = 'above' })`: a ring per entry of `pointer.clicks`
+  (document space, so it stays where clicked), ease-out growth, linear
+  fade; `continuous` only while the newest ripple runs.
 
 ## Testing hook
 

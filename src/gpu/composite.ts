@@ -199,6 +199,12 @@ export class GroupCompositor {
    * release the target for reuse by later (non-overlapping-in-time) groups.
    * Instance data is uploaded by flush(), before submit.
    */
+  /** Release `target` for reuse without compositing it (a region handler
+   * drew it instead). */
+  release(target: GroupTarget): void {
+    target.inUse = false
+  }
+
   draw(
     rp: GPURenderPassEncoder,
     target: GroupTarget,

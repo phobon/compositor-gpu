@@ -60,6 +60,15 @@
       #panel label { display: grid; grid-template-columns: 1fr 120px 40px; gap: 6px; align-items: center; }
       #panel output { text-align: right; color: #a0a0ac; }
       body.vr #panel { display: none; }
+      section.clear { background: transparent; }
+      .card {
+        width: 300px; padding: 20px; border-radius: 20px;
+        background: #26262c; border: 1px solid #44444f;
+      }
+      .card h3 { margin: 0 0 8px; font-size: 24px; }
+      .card p { font-size: 16px; margin: 0; }
+      .overlap { display: flex; gap: 0; margin-top: 24px; }
+      .overlap .box { margin-right: -40px; }
       #log { position: fixed; left: 8px; bottom: 8px; color: #f87171; font: 12px monospace; white-space: pre; }
     </style>
   </head>
@@ -114,6 +123,24 @@
         <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       </section>
 
+      <section data-vr="fx-geometry" class="clear">
+        <h2>Geometry</h2>
+        <p>Layers draw in paint order: a glow over the page background, a
+          ripple per click, a quad right after one element.</p>
+        <div class="row">
+          <div class="card" id="region-card">
+            <h3>Region pass</h3>
+            <p>Only this card is blurred; it composites over the section as
+              one group.</p>
+          </div>
+          <div class="overlap">
+            <div class="box b1" id="after-anchor"></div>
+            <div class="box b2"></div>
+            <div class="box b3"></div>
+          </div>
+        </div>
+      </section>
+
       <div id="panel" data-gpu-ignore>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
@@ -126,6 +153,24 @@
           <label>speed <input type="range" id="s-displace-speed" min="0" max="4" step="0.05" /><output></output></label>
           <label>pointer <input type="range" id="s-displace-pointerStrength" min="0" max="80" step="1" /><output></output></label>
           <label>p. radius <input type="range" id="s-displace-pointerRadius" min="8" max="600" step="1" /><output></output></label>
+          <label>mode <input type="range" id="s-displace-mode" min="0" max="1" step="1" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-glow" /> cursor glow</label></legend>
+          <label>radius <input type="range" id="s-glow-radius" min="8" max="800" step="1" /><output></output></label>
+          <label>intensity <input type="range" id="s-glow-intensity" min="0" max="1" step="0.01" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-ripple" /> click ripple</label></legend>
+          <label>radius <input type="range" id="s-ripple-radius" min="4" max="600" step="1" /><output></output></label>
+          <label>duration <input type="range" id="s-ripple-duration" min="0.05" max="5" step="0.05" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-region" /> region blur (card)</label></legend>
+          <label>radius <input type="range" id="s-region-radius" min="0" max="64" step="0.5" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-after" /> layer after blue box</label></legend>
         </fieldset>
       </div>
     </div>
