@@ -11,9 +11,9 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `dcf94b1 M2 effect presets` + the uncommitted M3a batch (open item 3) |
-| `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500) and `GpuStats.jsx` (readout line) |
-| `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `199a186 Set canvas z index` (≠ the committed pointer); `origin/main` is `16df20b` |
+| `~/code/compositor-gpu` | the library, source of truth | `5c90a6b Fixed focus rings, replace bugs` + the uncommitted `realContext` / partial-read fix (open item 2) |
+| `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
+| `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
 
 The site runs from the submodule (`compositor-gpu` → `compositor-gpu/src`
 alias in `gatsby-config.js` / `jsconfig.json`). Flow: edit + commit + push in
@@ -121,8 +121,8 @@ the compositor.
 
 ## Open items, first move for each
 
-1. **Commit.** compositor-gpu: M2 is `dcf94b1`; the M3a batch (item 3,
-   incl. the `continuous` default) and the mirror batch (item 5) are
+1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
+   `5c90a6b`; the `realContext` / partial-read fix (item 2) is
    uncommitted. MDS-home: bump the submodule to `origin/main` once
    that's pushed (`git -C compositor-gpu fetch origin && git -C
    compositor-gpu checkout origin/main`), then commit it with
@@ -131,13 +131,25 @@ the compositor.
    checked `/duo` on 2026-10-05: solid apart from item 2.
 2. **`/duo` findings (Ben, 2026-10-05).**
    - "The Bonobo Bundle →" / scroll-top drawn twice while scrolling (Arc,
-     Safari; Ben's screenshot 2026-10-05): the container's cutout. Holes
-     for fixed elements are placed at frame time, the canvas scrolls with
-     the page, so between frames the hole sits offset from the button.
-     Fixed 2026-10-05 (uncommitted, item 5): no hole for an ignored element
-     that paints above the canvas (z-index 999 > 500). On `/duo` that drops
-     the holes for the nav, scroll-top and the stats panel; the footer
-     keeps one. Reaches the site once the submodule is bumped.
+     Safari; Ben's screenshot 2026-10-05). Cause: through a cutout the
+     page's own paint under the canvas shows, and Arc/Safari leave a
+     stale copy of the fixed button in that layer while scrolling. The
+     copy is visible only through holes; after `5c90a6b` (no hole for
+     ignored elements above the canvas) the footer's was the last one.
+     Reproduced in the Claude browser pane: copy only inside the footer
+     hole, gone with the canvas hidden; the mirror never contains the
+     button. Fix (MDS-home `SharedLayout.jsx`, uncommitted): in GPU mode
+     the footer is wrapped in `position: relative; z-index: 501`, so it
+     paints above the canvas and gets no hole. Verified in the pane:
+     `/duo` cutouts down to the stats panel, no copy in three scroll
+     runs. Library side (uncommitted, needs the submodule bump):
+     `paintsAboveCanvas` now uses `ElNode.realContext`
+     (`createsRealStackingContext`: relative/absolute + `z-index: auto`
+     is not a context), so the stats panel's hole goes too; and
+     `partialRead` seeds `inIgnored` from the boundary's parent, so a
+     re-read child of an ignored `display: contents` wrapper stays a
+     hole. Gates on the cloud tree: typecheck, biome, `test:visual` 0.00
+     on all 25, `--with-fx` 0.00, `test:fx` all 26 OK.
    - Replace mode focus rings: fixed 2026-10-05 (item 5): `outline` is
      mirrored and focus changes re-read.
    - Drag-select doesn't show in replace mode (`::selection` not

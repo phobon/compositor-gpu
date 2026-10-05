@@ -111,6 +111,48 @@ export function createsStackingContext(
   return false
 }
 
+/**
+ * A stacking context in the CSS sense, without the simplification above:
+ * a relative/absolute element with `z-index: auto` is not one (fixed and
+ * sticky always are). Used where the real nesting matters (does an
+ * ignored element paint above the canvas?), not for paint order.
+ */
+export function createsRealStackingContext(
+  s: CSSStyleDeclaration,
+  transformable = true,
+  opacity = Number.parseFloat(s.opacity)
+): boolean {
+  if (s.position === 'static') {
+    return createsStackingContext(s, transformable, opacity)
+  }
+  if (
+    s.position === 'fixed' ||
+    s.position === 'sticky' ||
+    s.zIndex !== 'auto'
+  ) {
+    return true
+  }
+  return createsStackingContext(
+    { ...styleSubset(s), position: 'static' } as CSSStyleDeclaration,
+    transformable,
+    opacity
+  )
+}
+
+function styleSubset(s: CSSStyleDeclaration): Partial<CSSStyleDeclaration> {
+  return {
+    transform: s.transform,
+    translate: s.translate,
+    rotate: s.rotate,
+    scale: s.scale,
+    isolation: s.isolation,
+    mixBlendMode: s.mixBlendMode,
+    filter: s.filter,
+    willChange: s.willChange,
+    opacity: s.opacity
+  }
+}
+
 /** The declared z-index for a new context, per the simplification above. */
 export function contextZIndex(s: CSSStyleDeclaration): number {
   if (s.position === 'static' || s.zIndex === 'auto') {

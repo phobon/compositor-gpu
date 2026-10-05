@@ -12,6 +12,7 @@ import type { Scene } from '../scene/scene'
 import {
   assignPaintOrder,
   contextZIndex,
+  createsRealStackingContext,
   createsStackingContext,
   type OpacityGroup,
   type StackingContext
@@ -23,7 +24,7 @@ import {
   type Decoration,
   propagateDecorations
 } from './decorations'
-import { IGNORE_ATTR } from './observer'
+import { IGNORE_ATTR, isIgnored } from './observer'
 import {
   type GlyphRef,
   type OrdinalCache,
@@ -152,6 +153,9 @@ export interface ElNode {
   /** The element's own box and/or image record. */
   own: readonly OwnRecord[]
   isContext: boolean
+  /** A stacking context in the strict CSS sense (positioned + z-auto
+   * isn't one); see createsRealStackingContext. */
+  realContext: boolean
   /** Declared z-index of the context, when isContext. */
   ctxZ: number
   /** Clip applied to the element's content (children + text). */
@@ -494,6 +498,10 @@ export class SceneReader {
       // Drop the old subtree's entries: elements gone from it (removed,
       // display:none) must not resolve to stale nodes.
       this.forget(old)
+      // A boundary inside an ignored `display: contents` wrapper (a hole
+      // element: its own transition or attribute change made it a scope)
+      // must stay ignored: the attribute is on the wrapper, not on it.
+      this.inIgnored = b.parentElement !== null && isIgnored(b.parentElement)
       const fresh = this.readNode(
         b,
         p,
@@ -503,6 +511,7 @@ export class SceneReader {
         p ? p.decor : null,
         p ? p.cb : null
       )
+      this.inIgnored = false
       const trusted = paintOnly?.has(b) === true
       if (
         !fresh ||
@@ -642,6 +651,11 @@ export class SceneReader {
       !isRoot &&
       (region !== undefined ||
         createsStackingContext(s, transformable, ownAlpha))
+    // Without the positioned/z-auto simplification (paintsAboveCanvas).
+    const realContext =
+      isContext &&
+      (region !== undefined ||
+        createsRealStackingContext(s, transformable, ownAlpha))
     const alpha = isContext ? Math.max(0, ownAlpha) : 1
     const decor = layers.has('text')
       ? propagateDecorations(el, s, parentDecor)
@@ -662,6 +676,7 @@ export class SceneReader {
         lin,
         {
           isContext,
+          realContext,
           ctxZ: isContext ? contextZIndex(s) : 0,
           trapsFixed: parentTraps || trapsFixed(s, transformable),
           fragmented: display === 'inline' || display === 'contents',
@@ -782,6 +797,7 @@ export class SceneReader {
       trapsFixed: parentTraps || trapsFixed(s, transformable),
       own,
       isContext,
+      realContext,
       ctxZ: isContext ? contextZIndex(s) : 0,
       childClip,
       alpha,
@@ -890,14 +906,16 @@ export class SceneReader {
    */
   private paintsAboveCanvas(
     parent: ElNode | null,
-    ctx: Pick<ElNode, 'isContext' | 'ctxZ'>
+    ctx: Pick<ElNode, 'isContext' | 'ctxZ' | 'realContext'>
   ): boolean {
     if (!this.rootInRootContext || !Number.isFinite(this.canvasZ)) {
       return false
     }
-    let z: number | null = ctx.isContext ? ctx.ctxZ : null
+    // Real contexts only: a relative/absolute z-auto ancestor doesn't
+    // nest its descendants' z-indices.
+    let z: number | null = ctx.realContext ? ctx.ctxZ : null
     for (let p = parent; p?.parent; p = p.parent) {
-      if (p.isContext) {
+      if (p.realContext) {
         z = p.ctxZ
       }
     }
@@ -915,7 +933,13 @@ export class SceneReader {
     lin: Mat2 | null,
     ctx: Pick<
       ElNode,
-      'isContext' | 'ctxZ' | 'trapsFixed' | 'fragmented' | 'float' | 'cb'
+      | 'isContext'
+      | 'realContext'
+      | 'ctxZ'
+      | 'trapsFixed'
+      | 'fragmented'
+      | 'float'
+      | 'cb'
     >
   ): ElNode {
     let own = NO_RECORDS
@@ -1034,6 +1058,7 @@ export class SceneReader {
         trapsFixed: node.trapsFixed,
         own,
         isContext: true,
+        realContext: true,
         ctxZ: ctx.z,
         childClip: node.childClip,
         alpha: ctx.alpha,
