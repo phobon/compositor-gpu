@@ -61,6 +61,7 @@
         width: 110px; height: 70px; background: #2a2a35;
         padding: 8px; font-size: 13px; color: #d6d6e0;
       }
+      #focus-target:focus-visible { outline: 3px solid #38bdf8; outline-offset: 3px; }
       .bftile {
         width: 110px; height: 56px; background: #3b82f6;
         padding: 6px; font-size: 13px; color: #f2f2f2;
@@ -624,6 +625,21 @@
           <div class="bdtile" style="border-left: 4px solid #6a5cff;">callout</div>
           <div class="bdtile" style="border: 1px solid #94a3b8; border-top: 6px solid red; border-right: 2px solid lime; border-bottom: 10px solid #06b6d4; border-left: 3px solid #facc15; border-radius: 12px;">four sides</div>
           <div class="bdtile" style="border: 4px solid #f472b6; border-top-style: none; border-left-style: none; border-radius: 8px;">two none</div>
+        </div>
+      </section>
+
+      <section data-vr="outline" data-vr-focus="#focus-target">
+        <h2>Outlines</h2>
+        <div class="borderrow">
+          <div class="bftile" style="outline: 3px solid #f472b6;">solid</div>
+          <div class="bftile" style="outline: 2px dashed #facc15; outline-offset: 6px; border-radius: 12px;">dashed + offset</div>
+          <div class="bftile" style="outline: 4px double #60a5fa; outline-offset: -10px;">inset</div>
+          <div class="bftile" style="outline: 2px solid #34d399; outline-offset: 4px; border-radius: 50%;">round</div>
+          <div class="bftile" style="outline: 3px solid #fb923c; transform: rotate(8deg);">rotated</div>
+        </div>
+        <div class="borderrow">
+          <div class="bftile" style="overflow: hidden; outline: 3px solid #a78bfa;">clips its kids, not its outline</div>
+          <button type="button" id="focus-target" class="bftile" style="font: inherit; color: inherit;">focus me</button>
         </div>
       </section>
 

@@ -18,6 +18,12 @@ import {
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './imageAtlas'
+import {
+  concreteSize,
+  type SvgIntrinsic,
+  sizedMarkup,
+  svgIntrinsic
+} from './svgRaster'
 
 /** Rasterised-SVG canvases stay bounded: past this many entries the whole
  * cache is dropped rather than evicted one at a time (`ImagePass.svgCache`). */
@@ -278,7 +284,13 @@ export class ImagePass implements RenderPass {
    * cleared wholesale past `SVG_CACHE_LIMIT` entries. */
   private svgCache = new Map<
     string,
-    { source: OffscreenCanvas | HTMLCanvasElement; w: number; h: number }
+    {
+      source: OffscreenCanvas | HTMLCanvasElement
+      w: number
+      h: number
+      /** False while an async (re-sized markup) decode is pending. */
+      ready: boolean
+    }
   >()
   /** Aligned with scene.images: null (not ready), 'atlas' (shared bind
    * group), or a standalone per-instance bind group. */
@@ -505,17 +517,21 @@ export class ImagePass implements RenderPass {
     this.cache.set(img, { view: texture.createView(), texture, src: key, w, h })
   }
 
-  /** Rasterise an SVG `<img>` at display size `w`x`h` (device px) instead of
-   * uploading it at its natural size — the natural size of an SVG with
-   * explicit `width`/`height` attributes can be arbitrarily large (a
-   * transparent sizer image, a diagram meant to be shown tiny) and costs a
-   * full rasterisation + upload for pixels nothing ever samples. Cached by
-   * `currentSrc@WxH` so a later resize (different display size) rasterises
-   * again rather than stretching this one. */
+  /** Rasterise an SVG `<img>` at `w`x`h` device px (its concrete object
+   * size; see svgRaster.ts) instead of uploading it at its natural size —
+   * the natural size of an SVG with explicit `width`/`height` can be
+   * arbitrarily large (a transparent sizer, a diagram meant to be shown
+   * tiny) and costs a full rasterisation + upload for pixels nothing ever
+   * samples. A parsed (`data:`) SVG is re-serialised at that size and
+   * decoded asynchronously, so its own preserveAspectRatio places the
+   * content as the browser's does; null until then (onReady re-triggers a
+   * frame). Others are drawn from the element, scaled. Cached by
+   * `currentSrc@WxH`, so a resize rasterises again. */
   private rasterizeSvg(
     img: HTMLImageElement,
     w: number,
-    h: number
+    h: number,
+    intr: SvgIntrinsic
   ): {
     source: OffscreenCanvas | HTMLCanvasElement
     w: number
@@ -524,7 +540,7 @@ export class ImagePass implements RenderPass {
     const key = `${srcKey(img)}@${w}x${h}`
     const hit = this.svgCache.get(key)
     if (hit) {
-      return hit
+      return hit.ready ? hit : null
     }
     if (this.svgCache.size > SVG_CACHE_LIMIT) {
       this.svgCache.clear()
@@ -544,10 +560,31 @@ export class ImagePass implements RenderPass {
     if (!ctx) {
       return null
     }
-    ctx.drawImage(img, 0, 0, w, h)
-    const entry = { source: canvas, w, h }
+    const markup = sizedMarkup(intr, w, h)
+    const entry = { source: canvas, w, h, ready: markup === null }
     this.svgCache.set(key, entry)
-    return entry
+    if (markup === null) {
+      ctx.drawImage(img, 0, 0, w, h)
+      return entry
+    }
+    const sized = new Image()
+    sized.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`
+    sized
+      .decode()
+      .then(() => {
+        ctx.drawImage(sized, 0, 0, w, h)
+      })
+      .catch(() => {
+        // Unparseable at this size: fall back to the scaled element.
+        ctx.drawImage(img, 0, 0, w, h)
+      })
+      .finally(() => {
+        if (this.svgCache.get(key) === entry) {
+          entry.ready = true
+          this.onReady()
+        }
+      })
+    return null
   }
 
   upload(scene: Scene): void {
@@ -578,6 +615,10 @@ export class ImagePass implements RenderPass {
       let uploadSource: CanvasImageSource = rec.source
       let nw: number
       let nh: number
+      // The size fit() places by (CSS px for 'none'); the texture size
+      // otherwise. Differs for SVG sources, rasterised at device px.
+      let fitW: number | null = null
+      let fitH: number | null = null
       let atlasKey: string | undefined
       let spot: AtlasRect | null = null
       let cached: Cached | null = null
@@ -585,11 +626,19 @@ export class ImagePass implements RenderPass {
         rec.source instanceof HTMLImageElement &&
         isSvgSource(srcKey(rec.source))
       ) {
+        // Rasterised at its CSS concrete object size (object-fit / the
+        // background-size mapping against the intrinsic ratio), as the
+        // browser renders it — see svgRaster.ts.
         const dpr = this.shared.dpr || 1
         const area = areaOf(rec)
-        const w = clamp(Math.ceil(area.w * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
-        const h = clamp(Math.ceil(area.h * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
-        const raster = this.rasterizeSvg(rec.source, w, h)
+        const src = srcKey(rec.source)
+        const intr = svgIntrinsic(rec.source, src)
+        const size = concreteSize(rec.objectFit, area.w, area.h, intr)
+        const w = clamp(Math.ceil(size.w * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
+        const h = clamp(Math.ceil(size.h * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
+        fitW = size.w
+        fitH = size.h
+        const raster = this.rasterizeSvg(rec.source, w, h, intr)
         if (!raster) {
           d.fill(0, o, o + FLOATS_PER_IMAGE)
           this.draws.push(null)
@@ -668,7 +717,7 @@ export class ImagePass implements RenderPass {
         continue
       }
       const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
-      const f = fit(dst, nw, nh)
+      const f = fit(dst, fitW ?? nw, fitH ?? nh)
       d[o + 0] = f.rect.x
       d[o + 1] = f.rect.y
       d[o + 2] = f.rect.w

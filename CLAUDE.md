@@ -246,8 +246,12 @@ Conventions each pass must follow:
 - **Inline SVG and SVG images.** An inline `<svg>` root becomes one
   ImageRecord (`dom/svg.ts`: cloned, computed `color`/`fill`/`stroke` baked
   in, serialised to a `data:` URL, cached by FNV-1a hash of markup+size); its
-  subtree is never walked. SVG sources are rasterised at DISPLAY size, never
-  natural size (a 2560² gatsby sizer took seconds). Plain `<img>` sources go
+  subtree is never walked. SVG sources are rasterised at their CSS concrete
+  object size (object-fit against the intrinsic ratio), never natural size
+  (a 2560² gatsby sizer took seconds); a `data:` SVG is re-serialised at
+  that size and decoded async, so its preserveAspectRatio places the
+  content as the browser does (canvas drawImage would stretch Chrome's
+  default 300×150; `images/svgRaster.ts`). Plain `<img>` sources go
   through `createImageBitmap` because `naturalWidth` is density-corrected for
   `srcset` images while the decoded bitmap is not. Borders are per side
   (`border.widths`/`colors`, mitred in the shader).
@@ -273,7 +277,19 @@ Conventions each pass must follow:
   itself re-read its parent, so class/style toggles move the hole. Not
   covered: its CSS transitions/animations and size changes driven by its
   own content (a fixed element doesn't resize the root), until the next
-  read of its parent. Replace mode leaves ignored elements painting.
+  read of its parent. Replace mode leaves ignored elements painting. An
+  ignored element whose outermost stacking context has a z-index above
+  the canvas's (`CompositorOptions.zIndex`, `SceneReader.canvasZ`) gets no
+  hole: the page paints it over the canvas anyway, and a hole for a fixed
+  element trails it while scrolling (placed at frame time, the canvas
+  scrolls with the page). Only when no ancestor of the root makes a
+  stacking context (`rootInRootContext`).
+- **Outlines** (`readOutline` in `dom/styles.ts`): a border-only BoxRecord
+  grown by `outline-offset + outline-width` in local space, radii `r + e`
+  where r > 0, appended after the element's kids (over its content, under
+  later siblings), clipped by ancestors only. `auto` draws solid. Focus
+  changes no attribute, so `DomSync` re-reads the target's parent on
+  `focusin`/`focusout` (`:focus-visible` rings).
 - Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
   bind group; `writeBuffer` only the used prefix.
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is

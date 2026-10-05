@@ -115,6 +115,7 @@ export async function createCompositor(
   const reader = new SceneReader(root, scene, layers, (el) =>
     sync.invalidateScope(el)
   )
+  reader.canvasZ = options.zIndex ?? 2147483646
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
   let fps = 0

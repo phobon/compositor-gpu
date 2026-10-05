@@ -316,6 +316,86 @@ function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
   return paints ? { widths, colors, styles } : null
 }
 
+/**
+ * The element's `outline` as a border-only box around its border box,
+ * grown by `outline-offset` + `outline-width` on each side (in local
+ * space, so it follows a transform), or null when none paints. Corners
+ * follow `border-radius` as Chrome does (r + offset + width where r > 0).
+ * `auto` (the default focus ring) draws solid in the computed colour;
+ * dashed/dotted/double keep their style, groove/ridge/inset/outset draw
+ * solid like borders.
+ */
+export function readOutline(
+  s: CSSStyleDeclaration,
+  id: number,
+  place: Placement
+): BoxRecord | null {
+  const style = s.outlineStyle
+  if (s.visibility !== 'visible' || style === 'none' || style === 'hidden') {
+    return null
+  }
+  const w = px(s.outlineWidth)
+  const color = parseColor(s.outlineColor)
+  if (!(w > 0) || color.a <= 0.001) {
+    return null
+  }
+  const lw = place.local.w
+  const lh = place.local.h
+  const e = px(s.outlineOffset) + w
+  const ow = lw + 2 * e
+  const oh = lh + 2 * e
+  if (ow <= 0 || oh <= 0) {
+    return null
+  }
+  const [a, b, c, d, tx, ty] = place.xform
+  // Local origin moves to (-e, -e).
+  const xform: Placement['xform'] = [
+    a,
+    b,
+    c,
+    d,
+    tx - a * e - c * e,
+    ty - b * e - d * e
+  ]
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const [u, v] of [
+    [0, 0],
+    [ow, 0],
+    [0, oh],
+    [ow, oh]
+  ] as const) {
+    const x = a * u + c * v + xform[4]
+    const y = b * u + d * v + xform[5]
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  const r = readCorners(s, { x: 0, y: 0, width: lw, height: lh })
+  const radius = r.map((v) => (v > 0 ? Math.max(0, v + e) : 0)) as Corners
+  const code = BORDER_STYLE_CODE[style] ?? 0
+  return {
+    kind: 'box',
+    id,
+    rect: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+    xform,
+    local: { w: ow, h: oh },
+    radius,
+    fill: { r: 0, g: 0, b: 0, a: 0 },
+    gradient: null,
+    border: {
+      widths: [w, w, w, w],
+      colors: [color, color, color, color],
+      styles: [code, code, code, code]
+    },
+    opacity: 1,
+    z: 0
+  }
+}
+
 const CLIP_OVERFLOW = new Set(['hidden', 'scroll', 'auto', 'clip'])
 
 /**

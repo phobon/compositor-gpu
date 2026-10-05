@@ -121,30 +121,25 @@ the compositor.
 
 ## Open items, first move for each
 
-1. **Commit.** compositor-gpu: M2 is `dcf94b1`; the M3a batch (item 3)
-   is uncommitted. MDS-home: bump the submodule to `origin/main` once
+1. **Commit.** compositor-gpu: M2 is `dcf94b1`; the M3a batch (item 3,
+   incl. the `continuous` default) and the mirror batch (item 5) are
+   uncommitted. MDS-home: bump the submodule to `origin/main` once
    that's pushed (`git -C compositor-gpu fetch origin && git -C
    compositor-gpu checkout origin/main`), then commit it with
    `GpuCompositor.jsx` (`zIndex`) and `GpuStats.jsx` (readout line
    `cutouts / anchorY / reanchors`; the readout never showed them). Ben
    checked `/duo` on 2026-10-05: solid apart from item 2.
 2. **`/duo` findings (Ben, 2026-10-05).**
-   - "The Bonobo Bundle →" and the scroll-top button render twice in Arc
-     and Safari. Not reproduced in Claude's browser pane (Chromium, 607
-     and 1280 px wide, overlay): `cutouts` 3, canvas `zIndex` 500, and
-     with the DOM copy at opacity 0 nothing is drawn under it. Both live
-     in `ScrollTop`'s fixed container (z 999, `transform` transition)
-     under `SharedLayout`'s `GpuIgnore` (`display: contents`), so the
-     mirror only cuts a hole there. First move: a screenshot from Arc
-     with `&stats=1`, then `__gpu.stats()` and the container's rect vs
-     the hole (`__gpu.scene.cutouts`) at the moment it doubles; check
-     whether the doubling is the slide-in transition (holes don't follow
-     transitions on an ignored element).
-   - Replace mode: hover works; focus rings and keyboard focus show only
-     on DOM (ignored) chrome. `outline` is not mirrored at all, and focus
-     changes trigger no read: mirror `outline`/`outline-offset` as a box
-     outside the border box, and re-read the element on
-     `focusin`/`focusout` (`:focus-visible` changes no attribute).
+   - "The Bonobo Bundle →" / scroll-top drawn twice while scrolling (Arc,
+     Safari; Ben's screenshot 2026-10-05): the container's cutout. Holes
+     for fixed elements are placed at frame time, the canvas scrolls with
+     the page, so between frames the hole sits offset from the button.
+     Fixed 2026-10-05 (uncommitted, item 5): no hole for an ignored element
+     that paints above the canvas (z-index 999 > 500). On `/duo` that drops
+     the holes for the nav, scroll-top and the stats panel; the footer
+     keeps one. Reaches the site once the submodule is bumped.
+   - Replace mode focus rings: fixed 2026-10-05 (item 5): `outline` is
+     mirrored and focus changes re-read.
    - Drag-select doesn't show in replace mode (`::selection` not
      mirrored). Ben: expected; no decision yet on mirroring it.
 3. **Effects.** M2 (Target, Layer, region Pass, `cursorGlow`,
@@ -183,13 +178,18 @@ the compositor.
    0 paints), text under CSS transforms still reads per grapheme, a `layers`
    opt-out for cutouts, readout `fps` as a windowed count instead of an EMA,
    stacked `repeating-linear-gradient` backgrounds not drawn (found while
-   building `fx.html`), and SVG `<img>` ignores `object-fit` (the playground
-   `svg, contain` tile draws stretched to 150×100; most of `images`' 4.75 %
-   parity, present since `4386398`): `ImagePass.upload` rasterises the SVG at
-   the box size and passes that as the natural size, so `fit()` sees the
-   box's aspect. Rasterise at the SVG's intrinsic aspect (scaled to cover
-   the fitted rect at device px) instead. Plus `outline` / focus (item 2).
-5. **Upstream** the gvar issue (`docs/UPSTREAM-gvar.md`).
+   building `fx.html`), `border-radius: 50%` on a non-square box draws a
+   pill, not an ellipse (circular corners only; the outline follows), and
+   `::selection` (not mirrored). The SVG `object-fit` bug is fixed (item
+   5); URL (non-`data:`) SVGs without width/height still use the browser's
+   300×150 natural size when drawn with `object-fit: fill`.
+5. **Mirror batch 2026-10-05, uncommitted:** `outline` mirrored
+   (`readOutline`), focus re-read (`DomSync.onFocus`), SVG sources
+   rasterised at their concrete object size (`images/svgRaster.ts`;
+   `images` parity 4.75 → 2.90 %), no cutout for ignored elements above
+   the canvas. New visual shots `outline` and `outline-focus`
+   (`data-vr-focus`).
+6. **Upstream** the gvar issue (`docs/UPSTREAM-gvar.md`).
 
 ## Gotchas
 

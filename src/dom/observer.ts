@@ -355,6 +355,19 @@ export class DomSync {
   private onResize = (): void => this.mark(Dirty.LAYOUT)
   private onFontsLoaded = (): void => this.mark(Dirty.CONTENT)
 
+  // Focus changes no attribute, but `:focus` / `:focus-visible` styles
+  // (the focus ring is an outline) do: re-read the element's parent, as
+  // for an attribute change on it.
+  private onFocus = (e: Event): void => {
+    const t = e.target
+    if (!(t instanceof Element) || !this.root.contains(t) || isIgnored(t)) {
+      return
+    }
+    const p = t.parentElement
+    this.scopes.add(p && this.root.contains(p) ? p : t)
+    this.mark(Dirty.MUTATION)
+  }
+
   private onLoad = (e: Event): void => {
     const t = e.target
     if (t instanceof HTMLImageElement) {
@@ -495,6 +508,8 @@ export class DomSync {
     window.addEventListener('resize', this.onResize, { passive: true })
     // <img> load doesn't bubble; capture it to mirror images once decoded.
     this.root.addEventListener('load', this.onLoad, true)
+    this.root.addEventListener('focusin', this.onFocus, true)
+    this.root.addEventListener('focusout', this.onFocus, true)
     document.fonts?.ready.then(() => this.mark(Dirty.CONTENT))
     // Each later font load reflows text and invalidates atlas glyphs drawn
     // with a fallback face: full re-read.
@@ -513,6 +528,8 @@ export class DomSync {
     window.removeEventListener('resize', this.onResize)
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
     this.root.removeEventListener('load', this.onLoad, true)
+    this.root.removeEventListener('focusin', this.onFocus, true)
+    this.root.removeEventListener('focusout', this.onFocus, true)
     for (const type of ANIM_START) {
       this.root.removeEventListener(type, this.onAnimStart, true)
     }

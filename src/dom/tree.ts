@@ -41,6 +41,7 @@ import {
   readCorners,
   readImageRecord,
   readOpacity,
+  readOutline,
   readShadows,
   setReadSpace,
   toDocRect
@@ -398,6 +399,12 @@ export class SceneReader {
   readonly stickies = new Set<Element>()
   /** An ancestor of the root traps fixed descendants (see trapsFixed). */
   private rootTrapsFixed = false
+  /** The canvas's z-index (set by the compositor). An ignored element that
+   * paints above it needs no hole. */
+  canvasZ = Number.POSITIVE_INFINITY
+  /** No ancestor of the root creates a stacking context, so the root's
+   * top-level contexts share the root stacking context with the canvas. */
+  private rootInRootContext = false
 
   constructor(
     private readonly root: Element,
@@ -408,13 +415,13 @@ export class SceneReader {
     private readonly onAsset: (el: Element) => void
   ) {}
 
-  /** Re-read the whole root subtree and rebuild the scene. */
   /** The element's node from the most recent read (undefined when it is
    * outside the mirrored root, display:none, or not read yet). */
   nodeOf(el: Element): ElNode | undefined {
     return this.nodes.get(el)
   }
 
+  /** Re-read the whole root subtree and rebuild the scene. */
   fullRead(): void {
     beginRead()
     beginTextRead()
@@ -568,6 +575,7 @@ export class SceneReader {
     this.nodes = new WeakMap()
     this.stickies.clear()
     this.rootTrapsFixed = ancestorsTrapFixed(this.root)
+    this.rootInRootContext = !ancestorsMakeContext(this.root)
     this.tree = this.readNode(this.root, null, null, true, null, null, null)
     this.rebuildScene()
   }
@@ -846,6 +854,17 @@ export class SceneReader {
         this.readPseudos(node, s, place, display)
       }
     }
+    // The outline paints over the element's content (CSS paints outlines
+    // in a last phase per stacking context; here it goes after the
+    // element's own subtree, under later siblings). Clipped by the
+    // ancestors only: an element's own overflow doesn't clip its outline.
+    if (layers.has('boxes')) {
+      const outline = readOutline(s, scene.allocId(), place)
+      if (outline) {
+        outline.clip = clip
+        node.kids.push(outline)
+      }
+    }
     if (space === 'viewport') {
       tagViewport(node)
     }
@@ -860,6 +879,31 @@ export class SceneReader {
    * but never an opacity group: a hole inside a group target would only
    * clear the group, not the canvas.
    */
+  /**
+   * Does an ignored element paint above the canvas? True when its
+   * outermost stacking context below the root (itself or an ancestor) has
+   * a z-index above the canvas's, and that context sits in the root
+   * stacking context with the canvas (the canvas is a child of <html>).
+   * Such an element needs no hole: the page paints it over the canvas
+   * anyway, and a hole for a fixed element would trail it while scrolling
+   * (it is placed at frame time; the canvas scrolls with the page).
+   */
+  private paintsAboveCanvas(
+    parent: ElNode | null,
+    ctx: Pick<ElNode, 'isContext' | 'ctxZ'>
+  ): boolean {
+    if (!this.rootInRootContext || !Number.isFinite(this.canvasZ)) {
+      return false
+    }
+    let z: number | null = ctx.isContext ? ctx.ctxZ : null
+    for (let p = parent; p?.parent; p = p.parent) {
+      if (p.isContext) {
+        z = p.ctxZ
+      }
+    }
+    return z !== null && z > this.canvasZ
+  }
+
   private cutoutNode(
     el: Element,
     s: CSSStyleDeclaration,
@@ -877,6 +921,7 @@ export class SceneReader {
     let own = NO_RECORDS
     if (
       this.layers.has('cutouts') &&
+      !this.paintsAboveCanvas(parent, ctx) &&
       s.visibility === 'visible' &&
       rect.width > 0 &&
       rect.height > 0
@@ -1063,6 +1108,18 @@ function trapsFixed(s: CSSStyleDeclaration, transformable: boolean): boolean {
 }
 
 /** Whether any ancestor of `root` traps fixed descendants. */
+function ancestorsMakeContext(root: Element): boolean {
+  const html = root.ownerDocument.documentElement
+  // The root itself too: the reader never treats it as a context.
+  for (let p: Element | null = root; p && p !== html; p = p.parentElement) {
+    const s = getComputedStyle(p)
+    if (createsStackingContext(s, isTransformable(p, s.display))) {
+      return true
+    }
+  }
+  return false
+}
+
 function ancestorsTrapFixed(root: Element): boolean {
   for (let p = root.parentElement; p; p = p.parentElement) {
     if (trapsFixed(getComputedStyle(p), true)) {

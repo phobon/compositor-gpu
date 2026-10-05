@@ -21,6 +21,8 @@
 //                           further N px before capturing
 //   data-vr-scroll2="M"     also capture after M more px, as `<name>-sM`
 //   data-vr-capture="viewport"  capture the whole viewport, not the section
+//   data-vr-focus="#id"     also capture with that element focused (as by
+//                           keyboard: focus-visible), as `<name>-focus`
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +47,7 @@ const SECTIONS = [
   'texttransform',
   'emoji',
   'boxes',
+  'outline',
   'borderfill',
   'shadows',
   'images',
@@ -233,7 +236,8 @@ async function main(): Promise<void> {
         bodyClass: el.getAttribute('data-vr-body-class'),
         scroll: Number(el.getAttribute('data-vr-scroll') ?? 0),
         scroll2: Number(el.getAttribute('data-vr-scroll2') ?? 0),
-        viewport: el.getAttribute('data-vr-capture') === 'viewport'
+        viewport: el.getAttribute('data-vr-capture') === 'viewport',
+        focus: el.getAttribute('data-vr-focus')
       }))
       if (opts.bodyClass) {
         await page.evaluate((c) => {
@@ -274,6 +278,33 @@ async function main(): Promise<void> {
             hadFailure = true
           }
           results.push(res)
+        }
+        if (opts.focus) {
+          // Focus changes no attribute: the compositor re-reads on focusin.
+          await page.evaluate((sel) => {
+            const el = document.querySelector(sel)
+            if (el instanceof HTMLElement) {
+              el.focus({ focusVisible: true } as FocusOptions)
+            }
+          }, opts.focus)
+          await raf2(page)
+          await raf2(page)
+          const shot = `${name}-focus`
+          const r = await captureSection(page, handle, shot, opts.viewport)
+          await page.evaluate(() => {
+            const a = document.activeElement
+            if (a instanceof HTMLElement) {
+              a.blur()
+            }
+          })
+          await raf2(page)
+          if (r) {
+            const res = judge(shot, r.domPath, r.gpuPath, args)
+            if (res.status === 'fail') {
+              hadFailure = true
+            }
+            results.push(res)
+          }
         }
       } finally {
         if (opts.bodyClass) {
