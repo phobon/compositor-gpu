@@ -159,6 +159,10 @@ function carriesStylesheet(n: Node): boolean {
  * canvas; an attribute change on the element itself still re-reads its
  * parent, so the hole follows class/style toggles. */
 export const IGNORE_ATTR = 'data-gpu-ignore'
+
+/** Selected text parents a selection change re-reads before it falls back
+ * to a full read. */
+const SELECTION_MAX = 256
 /** Set by replace mode on the elements whose paint it hides with
  * `opacity: 0`; the value is the element's computed opacity before that,
  * which the reader uses instead of the hidden one. */
@@ -203,6 +207,55 @@ const isIgnoreRoot = (r: MutationRecord): boolean => {
     getComputedStyle(t).display === 'contents' &&
     (t.parentElement === null || !isIgnored(t.parentElement))
   )
+}
+
+/** Text-node parents the selection touches (under `root`), or null when
+ * there are more than `max` of them. */
+export function selectedParents(
+  root: Element,
+  max: number
+): Set<Element> | null {
+  const out = new Set<Element>()
+  const sel = document.getSelection()
+  if (!sel || sel.isCollapsed) {
+    return out
+  }
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const r = sel.getRangeAt(i)
+    const common = r.commonAncestorContainer
+    if (common.nodeType === Node.TEXT_NODE) {
+      const p = common.parentElement
+      if (p && root.contains(p)) {
+        out.add(p)
+      }
+      continue
+    }
+    if (!root.contains(common) && !common.contains(root)) {
+      continue
+    }
+    // Walk from the range's start to its end only (selectionchange fires
+    // on every pointer move of a drag).
+    const walker = document.createTreeWalker(common, NodeFilter.SHOW_TEXT)
+    const sc = r.startContainer
+    walker.currentNode = sc
+    let n: Node | null = sc.nodeType === Node.TEXT_NODE ? sc : walker.nextNode()
+    for (; n; n = walker.nextNode()) {
+      if (r.comparePoint(n, 0) > 0) {
+        break
+      }
+      if (!r.intersectsNode(n)) {
+        continue
+      }
+      const p = n.parentElement
+      if (p && root.contains(p)) {
+        out.add(p)
+        if (out.size > max) {
+          return null
+        }
+      }
+    }
+  }
+  return out
 }
 
 /** Why the mirror was invalidated, cumulative since start(), plus the last
@@ -368,6 +421,39 @@ export class DomSync {
     this.mark(Dirty.MUTATION)
   }
 
+  /** Text-node parents the selection touched at the last change. */
+  private selected = new Set<Element>()
+  /** The last change re-read everything (more than SELECTION_MAX): the
+   * next one must too, to clear what it highlighted. */
+  private selectedAll = false
+
+  // The selection highlight is read with the text: re-read the elements
+  // whose text was or is selected (a full read past SELECTION_MAX).
+  private onSelection = (): void => {
+    const next = selectedParents(this.root, SELECTION_MAX)
+    if (next === null || this.selectedAll) {
+      this.selected = next ?? new Set()
+      this.selectedAll = next === null
+      this.mark(Dirty.STYLE)
+      return
+    }
+    if (next.size === 0 && this.selected.size === 0) {
+      return
+    }
+    for (const el of this.selected) {
+      if (el.isConnected && !isIgnored(el)) {
+        this.scopes.add(el)
+      }
+    }
+    for (const el of next) {
+      if (!isIgnored(el)) {
+        this.scopes.add(el)
+      }
+    }
+    this.selected = next
+    this.mark(Dirty.MUTATION)
+  }
+
   private onLoad = (e: Event): void => {
     const t = e.target
     if (t instanceof HTMLImageElement) {
@@ -510,6 +596,7 @@ export class DomSync {
     this.root.addEventListener('load', this.onLoad, true)
     this.root.addEventListener('focusin', this.onFocus, true)
     this.root.addEventListener('focusout', this.onFocus, true)
+    document.addEventListener('selectionchange', this.onSelection)
     document.fonts?.ready.then(() => this.mark(Dirty.CONTENT))
     // Each later font load reflows text and invalidates atlas glyphs drawn
     // with a fallback face: full re-read.
@@ -530,6 +617,7 @@ export class DomSync {
     this.root.removeEventListener('load', this.onLoad, true)
     this.root.removeEventListener('focusin', this.onFocus, true)
     this.root.removeEventListener('focusout', this.onFocus, true)
+    document.removeEventListener('selectionchange', this.onSelection)
     for (const type of ANIM_START) {
       this.root.removeEventListener(type, this.onAnimStart, true)
     }

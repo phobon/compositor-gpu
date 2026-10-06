@@ -23,6 +23,8 @@
 //   data-vr-capture="viewport"  capture the whole viewport, not the section
 //   data-vr-focus="#id"     also capture with that element focused (as by
 //                           keyboard: focus-visible), as `<name>-focus`
+//   data-vr-select="#id"    also capture with that element's text selected,
+//                           as `<name>-select`
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -52,6 +54,7 @@ const SECTIONS = [
   'shadows',
   'images',
   'gradients',
+  'bglayers',
   'overflow',
   'stacking',
   'fixed',
@@ -237,7 +240,8 @@ async function main(): Promise<void> {
         scroll: Number(el.getAttribute('data-vr-scroll') ?? 0),
         scroll2: Number(el.getAttribute('data-vr-scroll2') ?? 0),
         viewport: el.getAttribute('data-vr-capture') === 'viewport',
-        focus: el.getAttribute('data-vr-focus')
+        focus: el.getAttribute('data-vr-focus'),
+        select: el.getAttribute('data-vr-select')
       }))
       if (opts.bodyClass) {
         await page.evaluate((c) => {
@@ -297,6 +301,33 @@ async function main(): Promise<void> {
               a.blur()
             }
           })
+          await raf2(page)
+          if (r) {
+            const res = judge(shot, r.domPath, r.gpuPath, args)
+            if (res.status === 'fail') {
+              hadFailure = true
+            }
+            results.push(res)
+          }
+        }
+        if (opts.select) {
+          // The compositor re-reads the selected text on selectionchange.
+          await page.evaluate((sel) => {
+            const el = document.querySelector(sel)
+            const s = document.getSelection()
+            if (el && s) {
+              const r = document.createRange()
+              r.selectNodeContents(el)
+              s.removeAllRanges()
+              s.addRange(r)
+            }
+          }, opts.select)
+          await raf2(page)
+          await raf2(page)
+          const shot = `${name}-select`
+          const r = await captureSection(page, handle, shot, opts.viewport)
+          await page.evaluate(() => document.getSelection()?.removeAllRanges())
+          await raf2(page)
           await raf2(page)
           if (r) {
             const res = judge(shot, r.domPath, r.gpuPath, args)

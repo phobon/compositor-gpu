@@ -1,8 +1,9 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
+import { SD_BOX_WGSL } from '../gpu/sdf'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_CUT = 20 // 5 * vec4f
+const FLOATS_PER_CUT = 24 // 6 * vec4f
 const BYTES_PER_CUT = FLOATS_PER_CUT * 4
 
 const SHADER = /* wgsl */ `
@@ -14,6 +15,7 @@ struct Cut {
   radius : vec4f,   // tl, tr, br, bl
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   params : vec4f,   // space, 0, 0, 0
+  ry     : vec4f,   // vertical radii (= radius: circular)
 };
 @group(1) @binding(0) var<storage, read> cuts : array<Cut>;
 
@@ -47,6 +49,8 @@ fn vs(@builtin(vertex_index) vi : u32,
 
 // Same SDF and edge ramp as the box pass, so a hole lines up with a box
 // of the same geometry.
+${SD_BOX_WGSL}
+
 fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   let top = select(r4.x, r4.y, p.x > 0.0);
   let bot = select(r4.w, r4.z, p.x > 0.0);
@@ -69,7 +73,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let cl = c.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
-  let d = sd_round_box(in.local, in.half, c.radius);
+  let d = sd_box(in.local, in.half, c.radius, c.ry);
   return vec4f(0.0, 0.0, 0.0, edge_cov(d, apx));
 }
 `
@@ -190,6 +194,9 @@ export class CutoutPass implements RenderPass {
       d[o++] = 0
       d[o++] = 0
       d[o++] = 0
+      for (let k = 0; k < 4; k++) {
+        d[o++] = (c.radiusY ?? c.radius)[k] ?? 0
+      }
     }
     this.shared.device.queue.writeBuffer(
       this.buffer as GPUBuffer,

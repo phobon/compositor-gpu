@@ -11,7 +11,7 @@ import type {
 
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
-import { firstBackgroundLayer, parseGradient } from './gradient'
+import { backgroundLayers, parseGradient } from './gradient'
 import { HIDDEN_ATTR } from './observer'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
@@ -57,30 +57,36 @@ export function px(v: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** One `border-*-radius` longhand -> its horizontal (first) value in px.
- * The computed value can be two lengths (`10px 20px`, an elliptical
- * corner) — only the first (horizontal) one is used, an approximation.
- * `%` resolves against `min(rect.width, rect.height)`, also an
- * approximation of the per-axis CSS rule (horizontal % of width, vertical
- * % of height). */
-function cornerRadius(value: string, rect: Rect): number {
-  const first = value.trim().split(/\s+/)[0] ?? ''
-  if (first.endsWith('%')) {
-    const n = Number.parseFloat(first)
-    return Number.isFinite(n)
-      ? (n / 100) * Math.min(rect.width, rect.height)
-      : 0
+/** One `border-*-radius` longhand -> [horizontal, vertical] px. The
+ * computed value is one length or two (`10px 20px`, an elliptical
+ * corner); `%` resolves against the width (horizontal) and the height
+ * (vertical). */
+function cornerRadius(value: string, rect: Rect): [number, number] {
+  const parts = value.trim().split(/\s+/)
+  const h = parts[0] ?? ''
+  const v = parts[1] ?? h
+  const len = (tok: string, dim: number): number => {
+    if (tok.endsWith('%')) {
+      const n = Number.parseFloat(tok)
+      return Number.isFinite(n) ? (n / 100) * dim : 0
+    }
+    return px(tok)
   }
-  return px(first)
+  return [len(h, rect.width), len(v, rect.height)]
 }
 
 /**
- * Border radii for `rect`, CSS-clamped so adjacent corners never overlap:
- * scale all four by `f = min(1, w/(tl+tr), w/(bl+br), h/(tl+bl), h/(tr+br))`.
- * Without this an oversized radius (e.g. a `999px` pill) makes every
- * fragment fail the rounded-box SDF and the box vanishes entirely.
+ * Horizontal and vertical border radii for `rect`, CSS-clamped so
+ * adjacent corners never overlap: both scaled by `f = min(1, w/(tl+tr),
+ * w/(bl+br), h/(tl+bl), h/(tr+br))`, horizontal radii against the width
+ * and vertical ones against the height. Without this an oversized radius
+ * (e.g. a `999px` pill) makes every fragment fail the rounded-box SDF and
+ * the box vanishes entirely.
  */
-export function readCorners(s: CSSStyleDeclaration, rect: Rect): Corners {
+export function readCornerRadii(
+  s: CSSStyleDeclaration,
+  rect: Rect
+): { x: Corners; y: Corners } {
   const tl = cornerRadius(s.borderTopLeftRadius, rect)
   const tr = cornerRadius(s.borderTopRightRadius, rect)
   const br = cornerRadius(s.borderBottomRightRadius, rect)
@@ -89,12 +95,41 @@ export function readCorners(s: CSSStyleDeclaration, rect: Rect): Corners {
   const ratio = (sum: number, dim: number) => (sum > 0 ? dim / sum : 1)
   const f = Math.min(
     1,
-    ratio(tl + tr, w),
-    ratio(bl + br, w),
-    ratio(tl + bl, h),
-    ratio(tr + br, h)
+    ratio(tl[0] + tr[0], w),
+    ratio(bl[0] + br[0], w),
+    ratio(tl[1] + bl[1], h),
+    ratio(tr[1] + br[1], h)
   )
-  return [tl * f, tr * f, br * f, bl * f]
+  return {
+    x: [tl[0] * f, tr[0] * f, br[0] * f, bl[0] * f],
+    y: [tl[1] * f, tr[1] * f, br[1] * f, bl[1] * f]
+  }
+}
+
+/**
+ * Circular border radii for `rect`: per corner the smaller of its two
+ * clamped radii (an elliptical corner drawn circular). For the records
+ * that carry no `radiusY` (shadows, outlines, background images).
+ */
+export function readCorners(s: CSSStyleDeclaration, rect: Rect): Corners {
+  const { x, y } = readCornerRadii(s, rect)
+  return [
+    Math.min(x[0], y[0]),
+    Math.min(x[1], y[1]),
+    Math.min(x[2], y[2]),
+    Math.min(x[3], y[3])
+  ]
+}
+
+/** `radius` + `radiusY` for a record: `radiusY` only when elliptical. */
+export function recordRadii(
+  s: CSSStyleDeclaration,
+  rect: Rect
+): { radius: Corners; radiusY?: Corners } {
+  const { x, y } = readCornerRadii(s, rect)
+  return x.every((v, i) => v === y[i])
+    ? { radius: x }
+    : { radius: x, radiusY: y }
 }
 
 /** One `object-position` / `background-position` component -> a 0..1
@@ -174,31 +209,17 @@ export function readBox(
     return null
   }
 
-  // First background-image layer, when it is a gradient (url() layers are
-  // image records, handled elsewhere). Resolved against the padding box
-  // (background-origin: padding-box), inset per side by the border widths
-  // the shader uses, so the two agree.
+  // The bottom background-image layer, when it is a gradient, paints in
+  // this record over the colour; the layers above it are records of their
+  // own (backgroundLayerRecords in tree.ts).
   const lw = place.local.w
   const lh = place.local.h
   const localRect = { x: 0, y: 0, width: lw, height: lh }
-  let gradient: Gradient | null = null
-  const bgi = s.backgroundImage
-  if (bgi && bgi !== 'none') {
-    const layer = firstBackgroundLayer(bgi)
-    if (layer && !layer.startsWith('url(')) {
-      const [bt, br, bb, bl] = border ? border.widths : [0, 0, 0, 0]
-      gradient = parseGradient(layer, {
-        x: bl,
-        y: bt,
-        width: Math.max(0, lw - bl - br),
-        height: Math.max(0, lh - bt - bb)
-      })
-      if (gradient) {
-        const rep = splitTopLevel(s.backgroundRepeat, ',')[0] ?? ''
-        gradient.repeat = rep.trim() !== 'no-repeat'
-      }
-    }
-  }
+  const layers = backgroundLayers(s.backgroundImage)
+  const gradient =
+    layers.length > 0
+      ? layerGradient(s, layers, layers.length - 1, border, lw, lh)
+      : null
   if (!hasFill && !border && !gradient) {
     return null
   }
@@ -210,7 +231,7 @@ export function readBox(
     rect,
     xform: place.xform,
     local: place.local,
-    radius: readCorners(s, localRect),
+    ...recordRadii(s, localRect),
     fill,
     gradient,
     ...(bgInset ? { bgInset } : {}),
@@ -221,6 +242,55 @@ export function readBox(
 }
 
 /**
+ * Background layer `i` (of `layers`, top-most first) as a gradient, or
+ * null when it is a url() or unsupported. Resolved against the padding
+ * box (background-origin: padding-box), inset per side by the border
+ * widths the shader uses, so the two agree; `repeat` from the layer's
+ * background-repeat.
+ */
+export function layerGradient(
+  s: CSSStyleDeclaration,
+  layers: readonly string[],
+  i: number,
+  border: BoxRecord['border'],
+  lw: number,
+  lh: number
+): Gradient | null {
+  const layer = layers[i]
+  if (!layer || layer === 'none' || layer.startsWith('url(')) {
+    return null
+  }
+  const [bt, br, bb, bl] = border ? border.widths : [0, 0, 0, 0]
+  const gradient = parseGradient(layer, {
+    x: bl,
+    y: bt,
+    width: Math.max(0, lw - bl - br),
+    height: Math.max(0, lh - bt - bb)
+  })
+  if (gradient) {
+    const reps = splitTopLevel(s.backgroundRepeat, ',')
+    const rep = reps.length ? (reps[i % reps.length] ?? '') : ''
+    gradient.repeat = rep.trim() !== 'no-repeat'
+  }
+  return gradient
+}
+
+/**
+ * Background-clip of layer `i` as insets from the border box, or null for
+ * border-box (and `text`).
+ */
+export function layerClipInset(
+  s: CSSStyleDeclaration,
+  i: number
+): [number, number, number, number] | null {
+  const clips = splitTopLevel(s.backgroundClip || 'border-box', ',')
+  const clip = (clips[i % Math.max(1, clips.length)] ?? '').trim()
+  return clip === 'padding-box' || clip === 'content-box'
+    ? boxInset(s, clip)
+    : null
+}
+
+/**
  * background-clip of the bottom layer (it clips background-color) as
  * insets from the border box, or null for border-box. `text` is treated as
  * border-box.
@@ -228,11 +298,9 @@ export function readBox(
 function readBgInset(
   s: CSSStyleDeclaration
 ): [number, number, number, number] | null {
-  const layers = splitTopLevel(s.backgroundClip || 'border-box', ',')
-  const clip = (layers[layers.length - 1] ?? '').trim()
-  return clip === 'padding-box' || clip === 'content-box'
-    ? boxInset(s, clip)
-    : null
+  // The bottom layer's entry (the list repeats or is cut to the layers).
+  const n = Math.max(1, backgroundLayers(s.backgroundImage).length)
+  return layerClipInset(s, n - 1)
 }
 
 /**
@@ -374,8 +442,10 @@ export function readOutline(
     maxX = Math.max(maxX, x)
     maxY = Math.max(maxY, y)
   }
-  const r = readCorners(s, { x: 0, y: 0, width: lw, height: lh })
-  const radius = r.map((v) => (v > 0 ? Math.max(0, v + e) : 0)) as Corners
+  const rr = recordRadii(s, { x: 0, y: 0, width: lw, height: lh })
+  const grow = (r: Corners): Corners =>
+    r.map((v) => (v > 0 ? Math.max(0, v + e) : 0)) as Corners
+  const radius = grow(rr.radius)
   const code = BORDER_STYLE_CODE[style] ?? 0
   return {
     kind: 'box',
@@ -384,6 +454,7 @@ export function readOutline(
     xform,
     local: { w: ow, h: oh },
     radius,
+    ...(rr.radiusY ? { radiusY: grow(rr.radiusY) } : {}),
     fill: { r: 0, g: 0, b: 0, a: 0 },
     gradient: null,
     border: {
@@ -504,7 +575,7 @@ export function readImageRecord(
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
     position: mapBackgroundPosition(s.objectPosition || '50% 50%', [0.5, 0.5]),
     repeat: false,
-    radius: readCorners(s, {
+    ...recordRadii(s, {
       x: 0,
       y: 0,
       width: place.local.w,

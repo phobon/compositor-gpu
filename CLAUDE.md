@@ -205,7 +205,22 @@ forced-reflow hazard.
 
 Backgrounds (gradients and images) are read in `dom/gradient.ts` and
 `dom/backgrounds.ts`; they resolve colours and image URLs from the computed
-style and paint as part of the box pass.
+style and paint as part of the box pass. Every `background-image` layer
+paints (`backgroundLayerRecords`): the bottom layer's gradient rides in
+the element's own box record over the colour; the layers above are their
+own records, bottom to top (gradients as border-less boxes that keep the
+border widths, url() layers as ImageRecords with `bgSize` for explicit
+`background-size` lengths), and the border moves to a record on top when
+one of them reaches the border area. `repeating-*-gradient` is gradient
+kind + 2 in the box shader. Radii are per axis (`readCornerRadii`):
+records carry `radius` (horizontal) and `radiusY` only when elliptical;
+the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
+`sd_round_box` exactly when circular. Shadows stay circular, so an
+element with `box-shadow` keeps its own records circular (the smaller
+radius per corner). The selection highlight (`dom/selection.ts`) is read
+with the text: boxes at the front of `run.decorations`, re-read on
+`selectionchange` for the text parents the old and new selections touch
+(`selectedParents`; a full read past 256).
 
 Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
 `upload()` runs only when its layer is dirty. `onGlyph` dirties the text layer

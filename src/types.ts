@@ -72,8 +72,12 @@ export interface CompositorOptions {
   /** 'overlay' paints over the page; 'replace' hides DOM paint, keeps a11y. */
   mode?: Mode
   /** Which layers to render. Defaults to all. 'cutouts' (the holes left
-   * by `data-gpu-ignore` elements) is added whenever any other layer is. */
+   * by `data-gpu-ignore` elements) is added whenever any other layer is,
+   * unless `cutouts` is false. */
   layers?: Layer[]
+  /** False: no holes for `data-gpu-ignore` elements (they are skipped,
+   * and mirrored content under them paints over them). Default true. */
+  cutouts?: boolean
   /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
   hideSource?: boolean
   /** Faces whose bytes the Slug text backend fetches: 'auto' (default)

@@ -26,7 +26,9 @@
 // absolute one.
 import type { BoxRecord, Glyph, GlyphRun, Rect } from '../scene/records'
 import { contextZIndex, createsStackingContext } from '../scene/stacking'
+import type { Layer } from '../types'
 import { parseColor } from '../util/color'
+import { backgroundLayerRecords } from './backgrounds'
 import { px, readBox, readOpacity, readShadows } from './styles'
 import {
   type FontStyleLike,
@@ -457,11 +459,29 @@ function boxRecords(
   if (box) {
     out.push(box)
   }
+  // Gradient layers above the bottom one (url layers aren't mirrored for
+  // pseudo-elements).
+  for (const r of backgroundLayerRecords(
+    box ?? undefined,
+    s,
+    place,
+    rect,
+    clip,
+    alloc,
+    PSEUDO_LAYERS,
+    () => null
+  )) {
+    if (r.kind === 'box') {
+      out.push(r)
+    }
+  }
   for (const r of out) {
     r.clip = clip
   }
   return out
 }
+
+const PSEUDO_LAYERS: ReadonlySet<Layer> = new Set(['boxes'])
 
 // ---- ::marker --------------------------------------------------------
 

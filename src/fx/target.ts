@@ -32,9 +32,11 @@ export interface Target {
   readonly xform: Affine
   /** 'viewport' inside a `position: fixed` subtree, else 'doc'. */
   readonly space: 'doc' | 'viewport'
-  /** Border radii (tl, tr, br, bl), CSS px, from the element's own box;
-   * zeros when it paints none. */
+  /** Border radii (tl, tr, br, bl), horizontal, CSS px, from the
+   * element's own box; zeros when it paints none. */
   readonly radius: Corners
+  /** Vertical radii (= `radius` unless the corners are elliptical). */
+  readonly radiusY: Corners
   /** Glyphs in the element's subtree that share its space. */
   readonly glyphs: TargetGlyphs
   /** The element's own image record (an `<img>`, canvas, video or first
@@ -141,6 +143,11 @@ export function createTarget(el: Element, graph: RenderGraph | null): Target {
       const n = resolve()
       const box = n ? ownBox(n) : undefined
       return box && box.kind === 'box' ? box.radius : NO_RADIUS
+    },
+    get radiusY() {
+      const n = resolve()
+      const box = n ? ownBox(n) : undefined
+      return box && box.kind === 'box' ? (box.radiusY ?? box.radius) : NO_RADIUS
     },
     get glyphs() {
       const n = resolve()

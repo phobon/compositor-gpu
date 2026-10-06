@@ -1,5 +1,5 @@
 import type { ImageRecord, Rect } from '../scene/records'
-import { readCorners } from './styles'
+import { recordRadii } from './styles'
 import type { Placement } from './transform'
 
 // Inline <svg> icons (a chevron in a round button, logos) are otherwise
@@ -193,7 +193,7 @@ export function readSvgRecord(
     objectFit: 'fill',
     position: [0, 0],
     repeat: false,
-    radius: readCorners(s, {
+    ...recordRadii(s, {
       x: 0,
       y: 0,
       width: place.local.w,

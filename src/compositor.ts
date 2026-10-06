@@ -39,9 +39,12 @@ export async function createCompositor(
 ): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
   const root = options.root ?? document.body
   const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
-  // Holes for data-gpu-ignore elements go with any painted layer.
-  if (layers.size > 0) {
+  // Holes for data-gpu-ignore elements go with any painted layer, unless
+  // opted out.
+  if (layers.size > 0 && options.cutouts !== false) {
     layers.add('cutouts')
+  } else if (options.cutouts === false) {
+    layers.delete('cutouts')
   }
   const fallback = options.fallback ?? 'passthrough'
   const mode = options.mode ?? 'overlay'
@@ -118,7 +121,8 @@ export async function createCompositor(
   reader.canvasZ = options.zIndex ?? 2147483646
   let pendingReadFlags = Dirty.ALL
   const animating = Boolean(options.onGlyph || options.onFrame)
-  let fps = 0
+  /** Render times in the last second (stats().fps counts them). */
+  const frameTimes: number[] = []
   let frameMs = 0
   let maxDtMs = 0
   let maxDtWindow = 0
@@ -322,8 +326,9 @@ export async function createCompositor(
       return
     }
 
-    if (dt > 0) {
-      fps = fps ? fps * 0.9 + 0.1 / dt : 1 / dt
+    frameTimes.push(time)
+    while ((frameTimes[0] ?? time) <= time - 1000) {
+      frameTimes.shift()
     }
     renderer.render(scene, ctx, dpr)
     frameMs = performance.now() - t0
@@ -712,7 +717,8 @@ export async function createCompositor(
       readMs,
       uploadMs: renderer.lastUploadMs,
       encodeMs: renderer.lastEncodeMs,
-      fps,
+      // Frames rendered in the last second (0 while idle).
+      fps: frameTimes.filter((t) => t > performance.now() - 1000).length,
       frameMs,
       maxDtMs,
       scrolling: isScrolling(),

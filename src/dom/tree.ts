@@ -18,7 +18,11 @@ import {
   type StackingContext
 } from '../scene/stacking'
 import type { Layer } from '../types'
-import { disposeBackgrounds, readBackgroundImage } from './backgrounds'
+import {
+  backgroundLayerRecords,
+  disposeBackgrounds,
+  readBackgroundImage
+} from './backgrounds'
 import {
   buildDecorationBoxes,
   type Decoration,
@@ -34,16 +38,16 @@ import {
   readBeforeAfter,
   readMarker
 } from './pseudo'
+import { beginSelectionRead, selectionBoxes } from './selection'
 import {
   beginRead,
-  boxInset,
   clipRectFor,
   readBox,
-  readCorners,
   readImageRecord,
   readOpacity,
   readOutline,
   readShadows,
+  recordRadii,
   setReadSpace,
   toDocRect
 } from './styles'
@@ -100,38 +104,6 @@ const RECT_EPSILON = 0.01
 
 type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
 
-/**
- * The records to append after the box for a background image. An image
- * whose painting area reaches into the border (background-clip:
- * border-box) paints under the border, so the box's border moves to a
- * second, border-only box drawn after the image; the first box (mutated
- * here) keeps the fill.
- */
-function underBorder(
-  own: readonly OwnRecord[],
-  bg: ImageRecord,
-  s: CSSStyleDeclaration,
-  place: Placement,
-  alloc: () => number
-): OwnRecord[] {
-  const box = own.find((r): r is BoxRecord => r.kind === 'box' && !r.shadow)
-  const pad = boxInset(s, 'padding-box')
-  const reaches =
-    bg.local.w > place.local.w - pad[1] - pad[3] + 0.01 ||
-    bg.local.h > place.local.h - pad[0] - pad[2] + 0.01
-  if (!box?.border || !reaches) {
-    return [bg]
-  }
-  const border: BoxRecord = {
-    ...box,
-    id: alloc(),
-    fill: { r: 0, g: 0, b: 0, a: 0 },
-    gradient: null
-  }
-  delete border.bgInset
-  box.border = null
-  return [bg, border]
-}
 const NO_RECORDS: readonly OwnRecord[] = []
 
 export interface ElNode {
@@ -429,6 +401,7 @@ export class SceneReader {
   fullRead(): void {
     beginRead()
     beginTextRead()
+    beginSelectionRead()
     this.readElements = 0
     this.ordinals.clear()
     this.readAll()
@@ -461,6 +434,7 @@ export class SceneReader {
   ): void {
     beginRead()
     beginTextRead()
+    beginSelectionRead()
     this.readElements = 0
     this.ordinals.clear()
     const tree = this.tree
@@ -725,6 +699,33 @@ export class SceneReader {
         own = shadows
       }
     }
+    if (s.backgroundImage !== 'none') {
+      const box = own.find((r): r is BoxRecord => r.kind === 'box' && !r.shadow)
+      const bg = backgroundLayerRecords(
+        box,
+        s,
+        place,
+        rect,
+        clip,
+        () => scene.allocId(),
+        layers,
+        (bgLayers, i) =>
+          readBackgroundImage(
+            el,
+            s,
+            scene.allocId(),
+            clip,
+            this,
+            () => this.onAsset(el),
+            place,
+            bgLayers,
+            i
+          )
+      )
+      if (bg.length) {
+        own = [...own, ...bg]
+      }
+    }
     if (
       layers.has('images') &&
       (el.tagName === 'IMG' ||
@@ -751,20 +752,6 @@ export class SceneReader {
         own = own.length ? [...own, rec] : [rec]
       }
     }
-    if (layers.has('images') && s.backgroundImage !== 'none') {
-      const bg = readBackgroundImage(
-        el,
-        s,
-        scene.allocId(),
-        clip,
-        this,
-        () => this.onAsset(el),
-        place
-      )
-      if (bg) {
-        own = [...own, ...underBorder(own, bg, s, place, () => scene.allocId())]
-      }
-    }
     if (layers.has('boxes') && s.boxShadow.includes('inset')) {
       // Inset shadows paint above the backgrounds, below the content.
       const inset = readShadows(s, rect, place, () => scene.allocId(), true)
@@ -773,6 +760,19 @@ export class SceneReader {
       }
       if (inset.length) {
         own = [...own, ...inset]
+      }
+    }
+    if (s.boxShadow !== 'none') {
+      // Shadows draw circular corners only: keep the element's own
+      // records circular too, so box, images and shadow line up.
+      for (const r of own) {
+        if ((r.kind === 'box' || r.kind === 'image') && r.radiusY) {
+          const y = r.radiusY
+          r.radius = r.radius.map((v, i) =>
+            Math.min(v, y[i] ?? v)
+          ) as typeof r.radius
+          delete r.radiusY
+        }
       }
     }
 
@@ -861,6 +861,14 @@ export class SceneReader {
               if (d.over.length) {
                 run.decorationsOver = d.over
               }
+            }
+            // The selection highlight paints first, under the
+            // decorations and glyphs; it rides in `decorations`.
+            const hi = layers.has('boxes')
+              ? selectionBoxes(child as Text, childClip, () => scene.allocId())
+              : null
+            if (hi) {
+              run.decorations = [...hi, ...(run.decorations ?? [])]
             }
             node.kids.push(run)
           }
@@ -957,7 +965,7 @@ export class SceneReader {
         rect,
         local: place.local,
         xform: place.xform,
-        radius: readCorners(s, {
+        ...recordRadii(s, {
           x: 0,
           y: 0,
           width: place.local.w,

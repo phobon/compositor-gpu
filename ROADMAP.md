@@ -82,7 +82,7 @@ nothing invalidating the mirror at idle. **Safari**: read 2 ms, frame 1 ms.
    above the canvas instead (`zIndex` option; mds-home passes 500): its
    hole would trail it by a frame while scrolling. Still to check
    interactively: hover/focus/selection,
-   links, the nav popup; `::selection` is not mirrored.
+   links, the nav popup.
 4. **Remaining `/duo` gaps.** Border fill/snapping and `text-transform` /
    `letter-spacing`, dash phase and `url()` background clip/snapping are
    done (Phase 1/2/3). Open: `capitalize` context across text nodes and
@@ -229,8 +229,16 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Images: background-image url() (size/position/repeat, rounded clip, async load → scoped re-read), linear/radial gradients in the box pass, mipmaps for static textures
 - [x] Images: shared mipmapped texture atlas (`images/imageAtlas.ts`; static
       images ≤1024px; consecutive atlas instances draw as one call; `draws` stat)
-- [ ] Atlas eviction + edge-filled gutters; repeating/conic gradients; gradient
-      background-size/position
+- [x] Every background layer paints (gradients and url() layers in
+      order, border on top), `repeating-linear/radial-gradient`, url()
+      `background-size` lengths; elliptical radii (`radiusY`, `sd_box`) for
+      boxes, images, cutouts, outlines; `::selection` highlight boxes
+      (selected text keeps its colour); doubled AA on square-cornered
+      round-dot corners; `cutouts: false`; windowed `fps`; URL SVGs sized
+      from their fetched markup (same-origin, no fragment).
+- [ ] Atlas eviction + edge-filled gutters; conic gradients; gradient
+      background-size/position; elliptical shadows; text under a
+      transform read per grapheme
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
 - [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)

@@ -17,7 +17,8 @@ export interface SvgIntrinsic {
   h: number | null
   /** Intrinsic aspect ratio (w / h), from width/height or the viewBox. */
   ratio: number | null
-  /** Parsed root (data: URIs only), for re-serialising at a size. */
+  /** Parsed root (data: URIs, and URL sources once their markup is
+   * fetched), for re-serialising at a size. */
   root: SVGSVGElement | null
   /** The root sets both width and height (its natural size is real). */
   explicit: boolean
@@ -25,6 +26,58 @@ export interface SvgIntrinsic {
 
 const CACHE_LIMIT = 64
 const cache = new Map<string, SvgIntrinsic>()
+/** URL (non-`data:`) sources' markup, fetched once: the text, null when
+ * the fetch failed (CORS, network), 'pending' while it runs. */
+const fetched = new Map<string, string | null | 'pending'>()
+
+/**
+ * Fetch the markup of a URL SVG source once, so svgIntrinsic can parse it
+ * like a `data:` one (its natural size otherwise defaults to 300×150).
+ * `onDone` runs when markup arrives (not on failure).
+ */
+export function requestSvgMarkup(src: string, onDone: () => void): void {
+  if (src.startsWith('data:')) {
+    return
+  }
+  if (fetched.has(src)) {
+    const w = waiting.get(src)
+    w?.add(onDone)
+    return
+  }
+  // Same-origin only (a cross-origin fetch without CORS, or one a CSP
+  // blocks, logs an error the page can't catch), and not a fragment
+  // (`sprite.svg#icon`: fetch drops it and would raster the whole file).
+  let url: URL
+  try {
+    url = new URL(src, location.href)
+  } catch {
+    fetched.set(src, null)
+    return
+  }
+  if (url.origin !== location.origin || url.hash) {
+    fetched.set(src, null)
+    return
+  }
+  fetched.set(src, 'pending')
+  waiting.set(src, new Set([onDone]))
+  fetch(url)
+    .then((r) => (r.ok ? r.text() : null))
+    .catch(() => null)
+    .then((text) => {
+      fetched.set(src, text)
+      const w = waiting.get(src)
+      waiting.delete(src)
+      if (text) {
+        cache.delete(src)
+        for (const cb of w ?? []) {
+          cb()
+        }
+      }
+    })
+}
+
+/** Callbacks for a markup fetch still running. */
+const waiting = new Map<string, Set<() => void>>()
 
 function absLength(v: string | null): number | null {
   if (!v) {
@@ -65,8 +118,10 @@ export function svgIntrinsic(img: HTMLImageElement, src: string): SvgIntrinsic {
     root: null,
     explicit: true
   }
-  if (src.startsWith('data:')) {
-    const text = decodeDataUri(src)
+  const got = fetched.get(src)
+  const remote = typeof got === 'string' && got !== 'pending' ? got : null
+  if (src.startsWith('data:') || remote) {
+    const text = remote ?? decodeDataUri(src)
     const doc = text
       ? new DOMParser().parseFromString(text, 'image/svg+xml')
       : null

@@ -11,7 +11,7 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `a36d65b Dom stacking fixes` (the `realContext` / partial-read fix, open item 2) + uncommitted M3b (open item 3) |
+| `~/code/compositor-gpu` | the library, source of truth | `0487c51 Remove staging artefacts` (M3b `7a9f504`) + the uncommitted mirror leftovers batch (open item 4) |
 | `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
 | `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
 
@@ -122,8 +122,8 @@ the compositor.
 ## Open items, first move for each
 
 1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
-   `5c90a6b`, `realContext` / partial-read fix `a36d65b`; M3b (item 3)
-   is uncommitted. M3b adds the dev dependency
+   `5c90a6b`, `realContext` / partial-read fix `a36d65b`, M3b `7a9f504`;
+   the mirror leftovers batch (item 4) is uncommitted. M3b added the dev dependency
    `unplugin-typegpu@0.12.3` (`package.json`, `pnpm-lock.yaml`): run
    `pnpm install` before `npm run dev` or the harnesses, since
    `vite.config.ts` imports it. MDS-home: bump the submodule to `origin/main` once
@@ -186,7 +186,7 @@ the compositor.
    compositor), and the hooks' local frame differed between vertex and
    fragment for glyphs and box shadows. Try `/fx.html`: the materials
    section has ripple (click the image), wave, bend and stripes toggles.
-   **M3b — built 2026-10-05, uncommitted:**
+   **M3b — built 2026-10-05, committed (`7a9f504`):**
    - Layer `simulate`: a compute hook with GPU-resident state,
      `set_data*`, `markDirty(first, n)`, `fx.dt` / `fx.steps`, and
      `Layer.steps`.
@@ -219,16 +219,38 @@ the compositor.
    'use gpu' grey pass.
    Next: Passes taking `image`, and per-letter staggers through the
    glyph material contract (docs/EFFECTS.md "Material").
-4. **Mirror leftovers**, one quiet batch: doubled AA on corner dots (Chrome
-   paints each corner dot twice), multi-layer `url()` backgrounds (only layer
-   0 paints), text under CSS transforms still reads per grapheme, a `layers`
-   opt-out for cutouts, readout `fps` as a windowed count instead of an EMA,
-   stacked `repeating-linear-gradient` backgrounds not drawn (found while
-   building `fx.html`), `border-radius: 50%` on a non-square box draws a
-   pill, not an ellipse (circular corners only; the outline follows), and
-   `::selection` (not mirrored). The SVG `object-fit` bug is fixed (item
-   5); URL (non-`data:`) SVGs without width/height still use the browser's
-   300×150 natural size when drawn with `object-fit: fill`.
+4. **Mirror leftovers — built 2026-10-05, uncommitted:**
+   - Every `background-image` layer paints, in order, with the border on
+     top (`backgroundLayerRecords`, now in `dom/backgrounds.ts`; also for
+     pseudo-elements' gradient layers). `repeating-*-gradient` works, and
+     url() layers take `background-size` lengths (`bgSize`).
+   - Elliptical radii: `border-radius: 50%` on a non-square box,
+     `60px / 24px`; `radiusY` on box / image / cutout records, `sd_box`
+     in `gpu/sdf.ts`. Shadows stay circular, so an element with a
+     `box-shadow` keeps circular corners throughout.
+   - `::selection` highlight boxes (Ben chose highlight only: selected
+     text keeps its colour), re-read on `selectionchange`.
+   - Square-cornered round-dot borders double the corner dots' AA as
+     Chrome does (`outline` parity 1.31 → 0.53 %).
+   - `cutouts: false` option; readout `fps` is the frames rendered in
+     the last second; URL SVGs are sized from their fetched markup
+     (same-origin, no `#fragment`).
+   Not done: text under a CSS transform still reads per grapheme (the
+   fast path needs local-space line rects, which the browser only gives
+   as AABBs under a transform).
+   New visual shots `bglayers` and `bglayers-select` (`data-vr-select`);
+   goldens for `outline`, `outline-focus`, `borderfill` updated (the
+   corner dots and the 50% outline ellipse).
+   Verified in the sandbox: typecheck, biome, build; `test:visual` 0.00
+   on all 27 (new goldens reproduced), `--with-fx` 0.00; `test:fx` all
+   36 OK; `test:perf` A/B: full read 472 vs 529 ms (noise), 123 draws
+   both. An opus review found seven defects, all fixed: shadows and
+   background images disagreeing with an elliptical box, a stale
+   highlight after a select-all, the bottom gradient misplaced when the
+   border split off, upper gradient layers ignoring `visibility`,
+   pseudo-elements losing their top layers, the selection walk visiting
+   the whole document on every drag step, and the SVG markup fetch
+   logging cross-origin errors (now same-origin only, no fragments).
 5. **Mirror batch 2026-10-05, uncommitted:** `outline` mirrored
    (`readOutline`), focus re-read (`DomSync.onFocus`), SVG sources
    rasterised at their concrete object size (`images/svgRaster.ts`;

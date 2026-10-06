@@ -8,6 +8,7 @@ import {
   PREMUL_BLEND
 } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
+import { SD_BOX_WGSL } from '../gpu/sdf'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
@@ -20,6 +21,7 @@ import {
 } from './imageAtlas'
 import {
   concreteSize,
+  requestSvgMarkup,
   type SvgIntrinsic,
   sizedMarkup,
   svgIntrinsic
@@ -58,8 +60,8 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 // rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
-// xf1(4) + atlas(4)
-const FLOATS_PER_IMAGE = 36
+// xf1(4) + atlas(4) + ry(4)
+const FLOATS_PER_IMAGE = 40
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
 /** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
@@ -99,6 +101,7 @@ struct Img {
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space), local box w, h
   atlas  : vec4f,   // u0,v0,u1,v1 of the entry in atlas uv space (FLAG_ATLAS)
+  ry     : vec4f,   // vertical radii (= radius: circular)
 };
 @group(1) @binding(0) var<storage, read> imgs : array<Img>;
 @group(1) @binding(1) var tex  : texture_2d<f32>;
@@ -132,6 +135,8 @@ fn vs(@builtin(vertex_index) vi : u32,
 }
 
 // Signed distance to a rounded box with per-corner radius.
+${SD_BOX_WGSL}
+
 fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   let top = select(r4.x, r4.y, p.x > 0.0);      // tl / tr
   let bot = select(r4.w, r4.z, p.x > 0.0);      // bl / br
@@ -177,7 +182,7 @@ fn base_fs(in : VOut) -> vec4f {
   // can shrink the quad inside it, but the radius still applies to the
   // element. Local space, so it rotates/scales with the element.
   let half = im.xf1.zw * 0.5;
-  let d = sd_round_box(in.lp - half, half, im.radius);
+  let d = sd_box(in.lp - half, half, im.radius, im.ry);
   let aa = max(fwidth(d), 1e-4);
   let cov = 1.0 - smoothstep(-aa, aa, d);
 
@@ -231,7 +236,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let im = imgs[in.idx];
   let size = im.xf1.zw;
   let half = size * 0.5;
-  let d = sd_round_box(in.lp - half, half, im.radius);
+  let d = sd_box(in.lp - half, half, im.radius, im.ry);
   let aa = max(fwidth(d), 1e-4);
   let cov = (1.0 - smoothstep(-aa, aa, d)) * im.params.x;
   return mat_fragment(MatIn(c, in.lp, size,
@@ -298,6 +303,7 @@ export class ImagePass implements RenderPass {
       source: OffscreenCanvas | HTMLCanvasElement
       w: number
       h: number
+      key: string
       /** False while an async (re-sized markup) decode is pending. */
       ready: boolean
     }
@@ -548,11 +554,21 @@ export class ImagePass implements RenderPass {
     source: OffscreenCanvas | HTMLCanvasElement
     w: number
     h: number
+    /** Cache and atlas key of the raster returned. */
+    key: string
   } | null {
-    const key = `${srcKey(img)}@${w}x${h}`
+    // `|m`: rasterised from parsed markup. A fetched URL source's first
+    // raster (element-scaled) keeps its own key and is drawn until the
+    // markup raster decodes, so the image doesn't blink.
+    const plain = `${srcKey(img)}@${w}x${h}`
+    const key = intr.root ? `${plain}|m` : plain
     const hit = this.svgCache.get(key)
     if (hit) {
-      return hit.ready ? hit : null
+      if (hit.ready) {
+        return hit
+      }
+      const old = key === plain ? undefined : this.svgCache.get(plain)
+      return old?.ready ? old : null
     }
     if (this.svgCache.size > SVG_CACHE_LIMIT) {
       this.svgCache.clear()
@@ -573,7 +589,7 @@ export class ImagePass implements RenderPass {
       return null
     }
     const markup = sizedMarkup(intr, w, h)
-    const entry = { source: canvas, w, h, ready: markup === null }
+    const entry = { source: canvas, w, h, key, ready: markup === null }
     this.svgCache.set(key, entry)
     if (markup === null) {
       ctx.drawImage(img, 0, 0, w, h)
@@ -596,7 +612,8 @@ export class ImagePass implements RenderPass {
           this.onReady()
         }
       })
-    return null
+    const old = key === plain ? undefined : this.svgCache.get(plain)
+    return old?.ready ? old : null
   }
 
   upload(scene: Scene): void {
@@ -645,8 +662,15 @@ export class ImagePass implements RenderPass {
         const dpr = this.shared.dpr || 1
         const area = areaOf(rec)
         const src = srcKey(rec.source)
+        // Re-rasterised from the markup once it arrives (its own cache
+        // and atlas keys, `|m`).
+        requestSvgMarkup(src, this.onReady)
         const intr = svgIntrinsic(rec.source, src)
-        const size = concreteSize(rec.objectFit, area.w, area.h, intr)
+        let size = concreteSize(rec.objectFit, area.w, area.h, intr)
+        if (rec.bgSize) {
+          const [tw, th] = tileSize(rec, size.w, size.h)
+          size = { w: tw, h: th }
+        }
         const w = clamp(Math.ceil(size.w * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
         const h = clamp(Math.ceil(size.h * dpr), SVG_RASTER_MIN, SVG_RASTER_MAX)
         fitW = size.w
@@ -660,7 +684,9 @@ export class ImagePass implements RenderPass {
         uploadSource = raster.source
         nw = raster.w
         nh = raster.h
-        atlasKey = `${srcKey(rec.source)}@${w}x${h}`
+        // `|m`: rasterised from parsed markup (a fetched URL source's
+        // differs from its first, element-scaled raster).
+        atlasKey = raster.key
       } else if (rec.source instanceof HTMLImageElement) {
         // Plain (non-SVG) <img>: naturalWidth/Height can be density-
         // corrected relative to the decoded bitmap (a responsive srcset
@@ -764,6 +790,11 @@ export class ImagePass implements RenderPass {
       d[o + 29] = xf[5]
       d[o + 30] = dst.local.w
       d[o + 31] = dst.local.h
+      const ry = rec.radiusY ?? rec.radius
+      d[o + 36] = ry[0]
+      d[o + 37] = ry[1]
+      d[o + 38] = ry[2]
+      d[o + 39] = ry[3]
 
       if (spot) {
         const s = this.atlas.size
@@ -945,6 +976,27 @@ const FULL_UV = { u0: 0, v0: 0, u1: 1, v1: 1 }
 const NO_TILE = { x: 0, y: 0, w: 0, h: 0 }
 
 /** The positioning area (background-origin) in the record's local space. */
+/** The tile size for fit 'none': `bgSize` (an auto side by the natural
+ * ratio), else the natural size. */
+function tileSize(
+  rec: ImageRecord,
+  natW: number,
+  natH: number
+): [number, number] {
+  const s = rec.bgSize
+  if (!s || natW <= 0 || natH <= 0) {
+    return [natW, natH]
+  }
+  const [w, h] = s
+  if (w !== null && h !== null) {
+    return [w, h]
+  }
+  if (w !== null) {
+    return [w, natH * (w / natW)]
+  }
+  return [natW * ((h ?? natH) / natH), h ?? natH]
+}
+
 function areaOf(rec: ImageRecord): {
   x: number
   y: number
@@ -1033,11 +1085,12 @@ function fit(rec: ImageRecord, natW: number, natH: number): Fit {
     const rect = rec.originInset
       ? { x: 0, y: 0, w: rec.local.w, h: rec.local.h }
       : box
+    const [tw, th] = tileSize(rec, natW, natH)
     const tile = {
-      x: x + (w - natW) * px,
-      y: y + (h - natH) * py,
-      w: natW,
-      h: natH
+      x: x + (w - tw) * px,
+      y: y + (h - th) * py,
+      w: tw,
+      h: th
     }
     const flags = FLAG_UV_FROM_TILE | (rec.repeat ? FLAG_REPEAT : 0)
     return { rect, uv: FULL_UV, tile, flags }

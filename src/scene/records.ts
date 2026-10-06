@@ -49,6 +49,9 @@ export interface Gradient {
   /** radial: radii in px. */
   radii: [number, number]
   stops: GradientStop[]
+  /** `repeating-*-gradient`: the stop pattern repeats past the last stop
+   * (period = last pos - first pos). */
+  repeating?: boolean
   /** background-repeat is not `no-repeat`: the padding-box tile repeats
    * into the border area when background-clip reaches it. */
   repeat?: boolean
@@ -76,6 +79,9 @@ export interface BoxRecord {
   /** Untransformed size; equals the rect size when untransformed. */
   local: LocalSize
   radius: Corners
+  /** Vertical radii when they differ from `radius` (horizontal):
+   * elliptical corners. */
+  radiusY?: Corners
   fill: RGBA
   /** First background-image layer when it is a gradient; drawn over fill. */
   gradient?: Gradient | null
@@ -158,6 +164,9 @@ export interface ImageRecord {
   repeat: boolean
   /** Border radii of the owning element, used to clip the quad. */
   radius: Corners
+  /** Vertical radii when they differ from `radius` (horizontal):
+   * elliptical corners. */
+  radiusY?: Corners
   /**
    * Background positioning area (background-origin) as per-side insets
    * [top, right, bottom, left] from the record's local box (the painted
@@ -165,6 +174,10 @@ export interface ImageRecord {
    * Absent: the positioning area is the local box.
    */
   originInset?: [number, number, number, number]
+  /** Explicit `background-size` lengths, CSS px ([w, h], null = auto),
+   * with objectFit 'none': the tile is that size instead of the
+   * natural one (an auto side keeps the image's ratio). */
+  bgSize?: [number | null, number | null]
   /** Multiplier applied by the pass. The reader writes 1: an element's
    * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number
@@ -288,6 +301,9 @@ export interface CutoutRecord {
   space?: Space
   /** The element's border radii. */
   radius: Corners
+  /** Vertical radii when they differ from `radius` (horizontal):
+   * elliptical corners. */
+  radiusY?: Corners
   /** Clip rect from a clipping ancestor (overflow != visible). */
   clip?: Rect | null
 }

@@ -9,6 +9,19 @@ export type ColorParser = (css: string) => RGBA
 export const MAX_STOPS = 8
 
 /**
+ * The layers of a computed `background-image` list, top-most first
+ * (verbatim; `url(...)`, gradients, or `none` for an empty layer). Empty
+ * for `none`.
+ */
+export function backgroundLayers(backgroundImage: string): string[] {
+  const bgi = backgroundImage.trim()
+  if (bgi === '' || bgi === 'none') {
+    return []
+  }
+  return splitTopLevel(bgi, ',').map((l) => l.trim())
+}
+
+/**
  * First layer of a computed `background-image` list, or null for `none` /
  * empty. The layer is returned verbatim (may be a `url(...)`).
  */
@@ -465,7 +478,8 @@ function parseRadial(
 /**
  * Parse one computed `background-image` layer into a Gradient resolved
  * against `rect` (the gradient box), or null when it isn't a supported
- * gradient (url(), repeating-*, conic-*, malformed, < 2 stops). A
+ * gradient (url(), conic-*, malformed, < 2 stops). `repeating-*` set
+ * `repeating`: the stops repeat beyond the last one. A
  * colour-interpolation clause (`in oklab`) is accepted but ignored: stops
  * are interpolated in sRGB, an approximation.
  */
@@ -478,13 +492,20 @@ export function parseGradient(
   if (!m) {
     return null
   }
-  const fn = (m[1] ?? '').toLowerCase()
+  let fn = (m[1] ?? '').toLowerCase()
+  const repeating = fn.startsWith('repeating-')
+  if (repeating) {
+    fn = fn.slice('repeating-'.length)
+  }
   const args = splitTopLevel(m[2] ?? '', ',')
-  if (fn === 'linear-gradient') {
-    return parseLinear(args, rect, parse)
+  const g =
+    fn === 'linear-gradient'
+      ? parseLinear(args, rect, parse)
+      : fn === 'radial-gradient'
+        ? parseRadial(args, rect, parse)
+        : null
+  if (g && repeating) {
+    g.repeating = true
   }
-  if (fn === 'radial-gradient') {
-    return parseRadial(args, rect, parse)
-  }
-  return null
+  return g
 }

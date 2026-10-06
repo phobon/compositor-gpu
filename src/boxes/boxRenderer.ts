@@ -8,10 +8,11 @@ import {
   MaterialPipelines,
   PREMUL_BLEND
 } from '../gpu/material'
+import { SD_BOX_WGSL } from '../gpu/sdf'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 64 // 16 * vec4f
+const FLOATS_PER_BOX = 68 // 17 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
@@ -37,7 +38,8 @@ struct Box {
   bc0    : vec4f,   // top border colour, sRGB rgba
   params : vec4f,   // border styles (base-4 t,r,b,l), opacity, z, space
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial), angle, start, count
+  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial; +2 repeating),
+                    // angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
   sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset;
                     // plain box: w = gradient tile repeats
@@ -50,6 +52,7 @@ struct Box {
   bc1    : vec4f,   // right border colour
   bc2    : vec4f,   // bottom border colour
   bc3    : vec4f,   // left border colour
+  ry     : vec4f,   // vertical radii tl, tr, br, bl (= radius: circular)
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 // Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
@@ -98,6 +101,8 @@ fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
   let q = abs(p) - b + vec2f(r);
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
 }
+
+${SD_BOX_WGSL}
 
 // Coverage of a pixel by the inside (d < 0) of an edge; fw = pixel size.
 fn edge_cov(d : f32, fw : f32) -> f32 {
@@ -177,6 +182,15 @@ fn gradient_at(t : f32, start : u32, count : u32) -> vec4f {
     p0 = p1;
   }
   return c0;
+}
+
+// A repeating gradient's t wrapped into [first stop, last stop).
+fn repeat_t(t : f32, start : u32, count : u32) -> f32 {
+  let p0 = stops[start * 2u + 1u].x;
+  let period = stops[(start + count - 1u) * 2u + 1u].x - p0;
+  if (period <= 1e-6) { return t; }
+  let u = t - p0;
+  return p0 + u - floor(u / period) * period;
 }
 
 // Blink's SelectBestDashGap (platform/graphics/styled_stroke_data.cc): the
@@ -317,7 +331,16 @@ fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
     // Round dots: the line is pulled in by w/2 at each end, the spacing
     // still fitted to the full length.
     let s = select(x, x - wr * 0.5, style == 2u);
-    return dash_cov(style, s, len, false, wr, depth, wr * 0.5, a);
+    let c = dash_cov(style, s, len, false, wr, depth, wr * 0.5, a);
+    if (style == 2u && len >= 2.0 * wr) {
+      // Chrome paints each side's end dots, so a corner dot's coverage
+      // mask is applied twice: its anti-aliased edge darkens to
+      // 1 - (1 - c)^2 (a translucent colour's interior keeps its alpha).
+      let period = best_dash_gap(len, wr, wr, false) + wr - 0.01;
+      let corner = s < period * 0.5 || s > len - wr - period * 0.5;
+      return select(c, 1.0 - (1.0 - c) * (1.0 - c), corner);
+    }
+    return c;
   }
   let ins = floor(bw * 0.5); // t, r, b, l
   let rc = max(r - vec4f(ins.w + ins.x, ins.x + ins.y, ins.y + ins.z,
@@ -368,7 +391,8 @@ fn base_fs(in : VOut) -> vec4f {
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   // Shadow records' quads are padded by sh0.y; pad = 0 for plain boxes.
-  let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
+  let d = sd_box(in.local, in.half - vec2f(b.sh0.y), b.radius, b.ry);
+  let circular = all(b.radius == b.ry);
   let aa = max(fwidth(d), 1e-4);
   // Pixel size in local units, for the edge ramps: fwidth(d) doubles where
   // a pixel quad straddles a square corner's two SDF branches and blurs it.
@@ -413,11 +437,17 @@ fn base_fs(in : VOut) -> vec4f {
   let ih = max(half - vec2f(bw.w + bw.y, bw.x + bw.z) * 0.5, vec2f(0.0));
   // Inner radii (CSS: r minus the adjacent widths, a circular
   // approximation of the elliptical inner corner).
-  let ir = max(b.radius - vec4f(max(bw.x, bw.w), max(bw.x, bw.y),
+  var ir = max(b.radius - vec4f(max(bw.x, bw.w), max(bw.x, bw.y),
                                 max(bw.z, bw.y), max(bw.z, bw.w)), vec4f(0.0));
+  var iry = ir;
+  if (!circular) {
+    // Elliptical: each axis inset by its own side's width.
+    ir = max(b.radius - bw.wyyw, vec4f(0.0));
+    iry = max(b.ry - bw.xxzz, vec4f(0.0));
+  }
   // Uniform widths: the outer SDF offset inward, as the ring always was.
-  let uniform = all(bw.xxx == bw.yzw);
-  let dIn = select(sd_round_box(in.local - ic, ih, ir), d + bw.x, uniform);
+  let uniform = all(bw.xxx == bw.yzw) && circular;
+  let dIn = select(sd_box(in.local - ic, ih, ir, iry), d + bw.x, uniform);
   // Box-filter coverage (one pixel wide ramp): a snapped 1px ring covers
   // exactly one pixel row, as in Chrome.
   let outerCov = edge_cov(d, apx);
@@ -430,9 +460,14 @@ fn base_fs(in : VOut) -> vec4f {
   let ci = b.sh1;
   let fc = vec2f(ci.w - ci.y, ci.x - ci.z) * 0.5;
   let fh = max(half - vec2f(ci.w + ci.y, ci.x + ci.z) * 0.5, vec2f(0.0));
-  let fr = max(b.radius - vec4f(max(ci.x, ci.w), max(ci.x, ci.y),
+  var fr = max(b.radius - vec4f(max(ci.x, ci.w), max(ci.x, ci.y),
                                 max(ci.z, ci.y), max(ci.z, ci.w)), vec4f(0.0));
-  var dF = sd_round_box(in.local - fc, fh, fr);
+  var fry = fr;
+  if (!circular) {
+    fr = max(b.radius - ci.wyyw, vec4f(0.0));
+    fry = max(b.ry - ci.xxzz, vec4f(0.0));
+  }
+  var dF = sd_box(in.local - fc, fh, fr, fry);
   dF = select(dF, dIn, all(ci == bw));
   dF = select(dF, d, all(ci == vec4f(0.0)));
   let fillCov = edge_cov(dF, apx);
@@ -480,7 +515,9 @@ fn base_fs(in : VOut) -> vec4f {
       gm = clamp(min(e.x, e.y) / aa + 0.5, 0.0, 1.0);
     }
     var t = 0.0;
-    if (b.grad.x < 1.5) {
+    let repeating = b.grad.x > 2.5;
+    let kind = select(b.grad.x, b.grad.x - 2.0, repeating);
+    if (kind < 1.5) {
       let ang = b.grad.y;
       let dir = vec2f(sin(ang), -cos(ang));
       let len = abs(size.x * sin(ang)) + abs(size.y * cos(ang));
@@ -488,6 +525,9 @@ fn base_fs(in : VOut) -> vec4f {
     } else {
       let c = (b.gradc.xy - vec2f(0.5)) * size;
       t = length((gp - c) / max(b.gradc.zw, vec2f(1e-4)));
+    }
+    if (repeating) {
+      t = repeat_t(t, u32(b.grad.z), u32(b.grad.w));
     }
     var g = gradient_at(t, u32(b.grad.z), u32(b.grad.w));
     g.a = g.a * gm;
@@ -520,7 +560,7 @@ fn mat_sample(delta : vec2f) -> vec4f {
 fn fs(in : VOut) -> @location(0) vec4f {
   let c = base_fs(in);
   let b = boxes[in.idx];
-  let d = sd_round_box(in.local, in.half - vec2f(b.sh0.y), b.radius);
+  let d = sd_box(in.local, in.half - vec2f(b.sh0.y), b.radius, b.ry);
   let apx = max(length(vec2f(length(dpdx(in.local)),
                              length(dpdy(in.local)))) * 0.70710678, 1e-4);
   // The element's box (a shadow's quad is padded by sh0.y).
@@ -770,7 +810,7 @@ export class BoxPass implements RenderPass {
       d[o++] = c ? c.y + c.height : 1e9
       const g = b.gradient
       if (g && g.stops.length >= 2) {
-        d[o++] = g.kind === 'linear' ? 1 : 2
+        d[o++] = (g.kind === 'linear' ? 1 : 2) + (g.repeating ? 2 : 0)
         d[o++] = g.angle
         d[o++] = so / FLOATS_PER_STOP
         d[o++] = g.stops.length
@@ -837,6 +877,10 @@ export class BoxPass implements RenderPass {
         d[o++] = c?.g ?? 0
         d[o++] = c?.b ?? 0
         d[o++] = c?.a ?? 0
+      }
+      const ry = sh ? undefined : b.radiusY
+      for (let k = 0; k < 4; k++) {
+        d[o++] = ry ? (ry[k] ?? 0) : (b.radius[k] ?? 0)
       }
     }
     this.shared.device.queue.writeBuffer(
