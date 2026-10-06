@@ -69,6 +69,8 @@
       .card p { font-size: 16px; margin: 0; }
       .overlap { display: flex; gap: 0; margin-top: 24px; }
       .overlap .box { margin-right: -40px; }
+      .orbit { position: relative; height: 330px; margin-top: 16px; }
+      .orbit img { position: absolute; width: 140px; height: 100px; object-fit: cover; border-radius: 12px; }
       #log { position: fixed; left: 8px; bottom: 8px; color: #f87171; font: 12px monospace; white-space: pre; }
     </style>
   </head>
@@ -166,6 +168,21 @@
         <h2 id="stg-heading">Letters arrive one by one</h2>
         <p>A glyph material reads each letter's index in its target, so a
           stagger needs no per-letter data from the page.</p>
+      </section>
+
+      <section data-vr="fx-progressive" class="clear">
+        <h2>Progressive blur</h2>
+        <p>A region pass whose radius ramps from nothing at the front of
+          the arc to full strength at its far ends.</p>
+        <div class="orbit" id="orbit">
+          <img src="./test.png" alt="" style="left:50px;top:20px;transform:rotate(22.5deg)" />
+          <img src="./test.png" alt="" style="left:110px;top:115px;transform:rotate(15.0deg)" />
+          <img src="./test.png" alt="" style="left:275px;top:185px;transform:rotate(7.5deg)" />
+          <img src="./test.png" alt="" style="left:500px;top:210px;transform:rotate(0.0deg)" />
+          <img src="./test.png" alt="" style="left:725px;top:185px;transform:rotate(-7.5deg)" />
+          <img src="./test.png" alt="" style="left:890px;top:115px;transform:rotate(-15.0deg)" />
+          <img src="./test.png" alt="" style="left:950px;top:20px;transform:rotate(-22.5deg)" />
+        </div>
       </section>
 
       <div id="panel" data-gpu-ignore>

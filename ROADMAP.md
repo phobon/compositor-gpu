@@ -136,6 +136,15 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       `default_vs`/`default_fs`); TypeGPU externals (`gpu`, `MatIn`,
       `Quad`) and tgpu.fn hooks for layers and materials; fx.html M3b
       section + 9 shots. Deviations in `docs/EFFECTS.md`.
+- [x] `progressiveBlur` preset: Gaussian whose radius ramps from `start`
+      to `end` (uv), region or fullscreen; shot `fx-progressive`. Used by
+      the `/duo` orbit hero (MDS-home `Duo/Orbit.jsx`, GSAP-driven).
+- [ ] `/duo` scroll layouts from Ben's sketches: orbit (built), side
+      loop, vertical flow (cards scale through blurred bands), curve.
+- [ ] 16-bit PNGs crash the tab under SwiftShader on upload
+      (Chrome decodes them to a half-float bitmap; `copyExternalImage`
+      into `rgba8unorm`). Untested on hardware. Fix candidates: detect
+      via the IHDR bit depth when fetching, or redraw through a 2D canvas.
 
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are

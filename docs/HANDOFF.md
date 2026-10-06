@@ -290,6 +290,18 @@ the compositor.
    paints nothing, curve budget, `pow(0)` guard) are in. Perf: frame
    time +3 % under SwiftShader vs ffd452c (a CPU proxy; GPU time on real
    hardware not measured).
+8. **`/duo` orbit, 2026-10-06, uncommitted.** Library: `progressiveBlur`
+   preset (`src/fx/presets/progressiveBlur.ts`, shot `fx-progressive`).
+   MDS-home: `Duo/Orbit.jsx` (`OrbitHero`: the hero plus a GSAP
+   ScrollTrigger ring of screenshots under its image, scrubbed by
+   scroll; progressive blur toward the image's bottom corners: the
+   preset as a region pass on the ring when the compositor is active, a
+   per-card CSS blur otherwise); `GpuCompositor` gained `onReady`;
+   `index.jsx` renders `OrbitHero` in place of `Hero`. The site needs the
+   submodule bumped to a compositor-gpu commit with the preset. Checked
+   in a vanilla port on a playground page under SwiftShader (not in
+   Gatsby). Placeholders are 8-bit PNGs: the 16-bit ones crash
+   SwiftShader (ROADMAP).
 
 ## Gotchas
 

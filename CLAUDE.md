@@ -67,7 +67,8 @@ until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 (on the fx-off section), `fx-m3b-all`, `fx-m3b-then-off` (must equal
 `fx-m3b` exactly), and `fx-follow`, `fx-mat-stagger` (a `mat_index`
 stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
-`fx-pass-image` (a pass with `image`, on the fx-off section). Material pipelines compile asynchronously:
+`fx-pass-image` (a pass with `image`, on the fx-off section),
+`fx-progressive` (progressiveBlur as a region pass on an arc of images). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -120,8 +121,8 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 `graph.glyphTable`), `fx.material` (with `raw` programs, `rawProgram` in
 `gpu/material.ts`), the TypeGPU externals `gpu`/`MatIn`/`Quad`
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
-'random'`), presets `blur`/`displace`/`cursorGlow`/`clickRipple`/
-`ripple`. The playground's dev server runs `unplugin-typegpu` (dev
+'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
+`clickRipple`/`ripple`. The playground's dev server runs `unplugin-typegpu` (dev
 dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),

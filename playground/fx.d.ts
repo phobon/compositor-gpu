@@ -14,6 +14,8 @@ declare global {
       ripple: Layer
       /** blur on #region-card only. */
       region: Pass
+      /** progressiveBlur on #orbit. */
+      progressive: Pass
       /** A quad drawn right after #after-anchor. */
       after: Layer
       /** Pin two clicks around the viewport centre (fx.__override). */

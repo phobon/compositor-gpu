@@ -23,6 +23,7 @@
 //   fx-region         blur as a region pass on the card only
 //   fx-region-then-off  region on, then off: equal to fx-geometry exactly
 //                     (isolation torn down)
+//   fx-progressive    progressiveBlur as a region pass on an arc of images
 //   fx-materials      the materials section, nothing enabled
 //   fx-mat-ripple     ripple (image material) with two pinned clicks
 //   fx-mat-wave       glyph vertex + fragment hooks on the heading
@@ -74,6 +75,7 @@ type Effect =
   | 'ripple'
   | 'after'
   | 'region'
+  | 'progressive'
   | 'mripple'
   | 'wave'
   | 'bend'
@@ -148,6 +150,7 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.ripple.enabled = e === 'ripple'
     h.after.enabled = e === 'after'
     h.region.enabled = e === 'region'
+    h.progressive.enabled = e === 'progressive'
     h.mripple.enabled = e === 'mripple' || e === 'materials'
     h.wave.enabled = e === 'wave' || e === 'materials'
     h.bend.enabled = e === 'bend' || e === 'materials'
@@ -400,6 +403,9 @@ async function main(): Promise<void> {
           note: `${n} px differ`
         })
       }
+    }
+    if (want('fx-progressive')) {
+      await capture('fx-progressive', 'fx-progressive', 'progressive')
     }
     const pinPlain = (): Promise<void> =>
       page.evaluate(() =>

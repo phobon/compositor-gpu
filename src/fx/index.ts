@@ -54,6 +54,11 @@ export {
   displace
 } from './presets/displace'
 export {
+  type ProgressiveBlurOptions,
+  type ProgressiveBlurSchema,
+  progressiveBlur
+} from './presets/progressiveBlur'
+export {
   type RippleOptions,
   type RippleSchema,
   ripple

@@ -15,6 +15,7 @@ import {
   MatIn,
   type Material,
   type Pass,
+  progressiveBlur,
   ripple as imageRipple
 } from '@/fx'
 import { createCompositor } from '@/index'
@@ -123,6 +124,13 @@ async function boot(): Promise<void> {
     enabled: false,
     radius: 6,
     region: $('region-card')
+  })
+  const progressive = progressiveBlur(fx, {
+    enabled: false,
+    radius: 14,
+    start: [0.5, 0.75],
+    end: [0.5, 0.05],
+    region: $('orbit')
   })
   // A quad straddling the first three boxes, drawn right after the blue
   // one: over it, under the two that follow.
@@ -485,6 +493,7 @@ async function boot(): Promise<void> {
     glow,
     ripple,
     region,
+    progressive,
     after,
     mripple,
     wave,
