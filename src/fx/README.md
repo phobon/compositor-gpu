@@ -531,12 +531,13 @@ layer draws nothing).
 - `blur(fx, { radius = 8, region? })`: separable Gaussian, two stages,
   param `radius` (CSS px reach, σ = radius / 3, ≤ 32 taps per side,
   spread past that); declares `radius` as its sampling radius.
-- `progressiveBlur(fx, { radius = 16, start = [0.5, 1], end = [0.5, 0],
-  curve = 1.5, region? })`: the same Gaussian with a radius that varies
-  by position: `radius × t^curve`, t the projection of uv onto `start`
-  → `end` clamped to [0, 1] (uv over the region's border box, or the
-  viewport). ≤ 24 taps per side. Each axis uses the radius at the pixel
-  it writes.
+- `progressiveBlur(fx, { radius = 16, edges = [0, 1, 1, 1], width =
+  [0.25, 0.4], corners = 1, curve = 1.5, region? })`: the same Gaussian
+  with a radius that grows toward the weighted edges (top, right,
+  bottom, left) over `width` (uv fraction, x then y). `corners` blends
+  the union of the side and top/bottom ramps (0: bands) toward their
+  product (1: corners only). Amount^`curve` × `radius`; ≤ 24 taps per
+  side; each axis uses the radius at the pixel it writes.
 - `displace(fx, { strength = 6, scale = 80, speed = 0.3, pointerStrength
   = 0, pointerRadius = 160, mode = 'lens', region? })`: samples
   `strength` CSS px away along a value-noise vector of feature size

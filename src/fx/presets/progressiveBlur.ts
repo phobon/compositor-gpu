@@ -1,18 +1,25 @@
 import type { Effects, Pass } from '../effects'
 import type { Target } from '../target'
 
-// Progressive blur: a separable Gaussian whose radius varies with
-// position. The amount ramps from 0 at `start` to 1 at `end` (uv over the
-// region's border box, or the viewport for a fullscreen pass), shaped by
-// `curve`, and scales `radius` (CSS px). Each axis uses the radius at the
-// pixel it writes, the usual approximation for a variable blur.
+// Progressive blur: a separable Gaussian whose radius grows toward chosen
+// edges of the viewport (or a region's border box). Each edge with a
+// weight ramps from 0 at `width` (a uv fraction) inside it to 1 at the
+// edge; `corners` blends the union of the x and y ramps (0, bands along
+// the edges) toward their product (1, only where an x edge meets a y
+// edge). The amount, shaped by `curve`, scales `radius` (CSS px). Each
+// axis uses the radius at the pixel it writes, the usual approximation
+// for a variable blur.
 
 const MAX_TAPS = 24
 
 const AMOUNT = /* wgsl */ `
 fn pb_amount(uv : vec2f) -> f32 {
-  let d = params.end - params.start;
-  let t = clamp(dot(uv - params.start, d) / max(dot(d, d), 1e-6), 0.0, 1.0);
+  let w = max(params.width, vec2f(1e-4));
+  let near = clamp(1.0 - vec4f(uv.y, 1.0 - uv.x, 1.0 - uv.y, uv.x) / w.yxyx,
+    vec4f(0.0), vec4f(1.0)) * params.edges;
+  let x = max(near.y, near.w);
+  let y = max(near.x, near.z);
+  let t = mix(max(x, y), x * y, clamp(params.corners, 0.0, 1.0));
   return pow(t, max(params.curve, 0.01));
 }
 `
@@ -42,8 +49,9 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 
 const schema = {
   radius: { type: 'f32', default: 16, min: 0, max: 64 },
-  start: { type: 'vec2', default: [0.5, 1] },
-  end: { type: 'vec2', default: [0.5, 0] },
+  edges: { type: 'vec4', default: [0, 1, 1, 1] },
+  width: { type: 'vec2', default: [0.25, 0.4] },
+  corners: { type: 'f32', default: 1, min: 0, max: 1 },
   curve: { type: 'f32', default: 1.5, min: 0.25, max: 4 }
 } as const
 
@@ -52,10 +60,15 @@ export type ProgressiveBlurSchema = typeof schema
 export interface ProgressiveBlurOptions {
   /** CSS px at full strength. Default 16. */
   radius?: number
-  /** uv where the blur starts (0). Default [0.5, 1], the bottom edge. */
-  start?: [number, number]
-  /** uv where it reaches `radius`. Default [0.5, 0], the top edge. */
-  end?: [number, number]
+  /** Weight per edge: top, right, bottom, left. Default [0, 1, 1, 1]. */
+  edges?: [number, number, number, number]
+  /** Ramp width as a uv fraction for the left/right and top/bottom
+   * edges. Default [0.25, 0.4]. */
+  width?: [number, number]
+  /** 0: bands along each weighted edge; 1: only where a side edge meets
+   * the top/bottom one. Default 1 (with the default edges: the bottom
+   * corners). */
+  corners?: number
   /** Exponent on the ramp; > 1 keeps the start sharp longer. Default 1.5. */
   curve?: number
   enabled?: boolean
@@ -80,11 +93,14 @@ export function progressiveBlur(
   if (opts.radius !== undefined) {
     p.radius = opts.radius
   }
-  if (opts.start) {
-    p.start = [...opts.start]
+  if (opts.edges) {
+    p.edges = [...opts.edges]
   }
-  if (opts.end) {
-    p.end = [...opts.end]
+  if (opts.width) {
+    p.width = [...opts.width]
+  }
+  if (opts.corners !== undefined) {
+    p.corners = opts.corners
   }
   if (opts.curve !== undefined) {
     p.curve = opts.curve

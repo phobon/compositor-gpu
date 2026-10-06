@@ -68,7 +68,8 @@ until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 `fx-m3b` exactly), and `fx-follow`, `fx-mat-stagger` (a `mat_index`
 stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
-`fx-progressive` (progressiveBlur as a region pass on an arc of images). Material pipelines compile asynchronously:
+`fx-progressive` (progressiveBlur toward the bottom corners, as a region
+pass on an arc of images). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match

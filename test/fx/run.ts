@@ -23,7 +23,8 @@
 //   fx-region         blur as a region pass on the card only
 //   fx-region-then-off  region on, then off: equal to fx-geometry exactly
 //                     (isolation torn down)
-//   fx-progressive    progressiveBlur as a region pass on an arc of images
+//   fx-progressive    progressiveBlur (bottom corners) as a region pass on
+//                     an arc of images
 //   fx-materials      the materials section, nothing enabled
 //   fx-mat-ripple     ripple (image material) with two pinned clicks
 //   fx-mat-wave       glyph vertex + fragment hooks on the heading

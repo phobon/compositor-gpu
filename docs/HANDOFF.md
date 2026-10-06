@@ -290,18 +290,23 @@ the compositor.
    paints nothing, curve budget, `pow(0)` guard) are in. Perf: frame
    time +3 % under SwiftShader vs ffd452c (a CPU proxy; GPU time on real
    hardware not measured).
-8. **`/duo` orbit, 2026-10-06, uncommitted.** Library: `progressiveBlur`
-   preset (`src/fx/presets/progressiveBlur.ts`, shot `fx-progressive`).
-   MDS-home: `Duo/Orbit.jsx` (`OrbitHero`: the hero plus a GSAP
-   ScrollTrigger ring of screenshots under its image, scrubbed by
-   scroll; progressive blur toward the image's bottom corners: the
-   preset as a region pass on the ring when the compositor is active, a
-   per-card CSS blur otherwise); `GpuCompositor` gained `onReady`;
-   `index.jsx` renders `OrbitHero` in place of `Hero`. The site needs the
-   submodule bumped to a compositor-gpu commit with the preset. Checked
-   in a vanilla port on a playground page under SwiftShader (not in
-   Gatsby). Placeholders are 8-bit PNGs: the 16-bit ones crash
-   SwiftShader (ROADMAP).
+8. **`/duo` app wheel, 2026-10-06.** Library: `progressiveBlur`
+   (`8113ebf`, then reworked uncommitted: edges/width/corners masks
+   instead of a start→end ramp). MDS-home, uncommitted:
+   `Duo/AppWheel.jsx`: once the first app section reaches the top, the
+   stage pins and scrolling turns a wheel centred below the viewport,
+   one viewport height per section with snapping; the next section
+   enters from the bottom-right, the current leaves past the
+   bottom-left, and the bottom corners blur (`progressiveBlur`
+   fullscreen pass while pinned with the compositor; masked
+   `backdrop-filter` corners otherwise). Stacked sections below 1024 ×
+   640, with reduced motion, or when a section is taller than the
+   viewport. In-page links and a hash on load to `#timepage` etc. scroll
+   to that section's turn. `AppSections` renders the intro, then each
+   section in its own `LayoutGrid` inside `AppWheel`; `GpuCompositor`
+   gained `onReady`, which `index.jsx` stores and passes down. Checked
+   in a vanilla port under SwiftShader, not in Gatsby. The earlier
+   orbit-under-the-hero attempt was removed (`Duo/Orbit.jsx`).
 
 ## Gotchas
 

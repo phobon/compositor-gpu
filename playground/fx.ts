@@ -128,8 +128,9 @@ async function boot(): Promise<void> {
   const progressive = progressiveBlur(fx, {
     enabled: false,
     radius: 14,
-    start: [0.5, 0.75],
-    end: [0.5, 0.05],
+    edges: [0, 1, 1, 1],
+    width: [0.3, 0.7],
+    corners: 1,
     region: $('orbit')
   })
   // A quad straddling the first three boxes, drawn right after the blue

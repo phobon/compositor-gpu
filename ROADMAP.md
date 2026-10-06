@@ -136,11 +136,14 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       `default_vs`/`default_fs`); TypeGPU externals (`gpu`, `MatIn`,
       `Quad`) and tgpu.fn hooks for layers and materials; fx.html M3b
       section + 9 shots. Deviations in `docs/EFFECTS.md`.
-- [x] `progressiveBlur` preset: Gaussian whose radius ramps from `start`
-      to `end` (uv), region or fullscreen; shot `fx-progressive`. Used by
-      the `/duo` orbit hero (MDS-home `Duo/Orbit.jsx`, GSAP-driven).
-- [ ] `/duo` scroll layouts from Ben's sketches: orbit (built), side
-      loop, vertical flow (cards scale through blurred bands), curve.
+- [x] `progressiveBlur` preset: Gaussian whose radius grows toward
+      weighted viewport (or region) edges, bands or corners; shot
+      `fx-progressive`. Used by the `/duo` app wheel (MDS-home
+      `Duo/AppWheel.jsx`).
+- [ ] `/duo` scroll layouts from Ben's sketches (the frame is the
+      viewport, the cards are the app sections): wheel below the
+      viewport (built), wheel off the right side, vertical flow through
+      blurred top/bottom bands, diagonal curve.
 - [ ] 16-bit PNGs crash the tab under SwiftShader on upload
       (Chrome decodes them to a half-float bitmap; `copyExternalImage`
       into `rgba8unorm`). Untested on hardware. Fix candidates: detect
