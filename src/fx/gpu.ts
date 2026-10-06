@@ -102,6 +102,22 @@ export const gpu = {
       d.vec2f,
       'p',
       'return page_to_uv(p);'
+    ),
+    /** With `image`. */
+    image: call('fx_pass_image', [d.vec2f], d.vec4f, 'uv', 'return image(uv);'),
+    imageLevel: call(
+      'fx_pass_image_level',
+      [d.vec2f, d.f32],
+      d.vec4f,
+      'uv, lod',
+      'return image_level(uv, lod);'
+    ),
+    imageSize: call(
+      'fx_pass_image_size',
+      [],
+      d.vec2f,
+      '',
+      'return image_size();'
     )
   },
   layer: {
@@ -183,7 +199,18 @@ export const gpu = {
       d.vec4f,
       'delta',
       'return mat_sample(delta);'
-    )
+    ),
+    /** Glyphs: the index in the target's glyphs (stable); boxes and
+     * images: the instance index. */
+    index: call(
+      'fx_mat_index',
+      [d.u32],
+      d.u32,
+      'record',
+      'return mat_index(record);'
+    ),
+    /** Glyphs in the target (glyph materials; 0 otherwise). */
+    glyphs: snippet('fx.glyphs', d.f32)
   }
 }
 

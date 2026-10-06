@@ -421,3 +421,23 @@ glyphs and sampling its image, `raw` materials, TypeGPU externals.
   server now runs it (dev dependency `unplugin-typegpu@0.12.3`, matching
   `typegpu` 0.12.5). `continuous` defaults from the resolved WGSL for
   layer and material hooks.
+
+## Deviations (M3c, follow-ons)
+
+Built 2026-10-06.
+
+- **Pass `image`.** `fx.pass({ image: target })` gives every stage
+  `image(uv)` / `image_level(uv, lod)` / `image_size()` through bind
+  group 3 (texture, sampler, an `FxImage` uniform with the texel rect),
+  resolved with `graph.imageOf` when the stage draws. Fullscreen and
+  region passes alike; passes without `image` keep the three-group
+  layout.
+- **Per-letter staggers.** Not a separate glyph contract: `mat_index(
+  record)` in both hooks returns a glyph's index in the material's
+  target, written into the Slug instance (`gref.z`) from
+  `GlyphRun.glyphBase`, which material tagging sets (DOM order over the
+  target's subtree) and which re-uploads the text when it moves.
+  `MaterialFx._pad` became `glyphs` (how many glyphs the tagging
+  numbered, `MaterialEntry.glyphs`). Overlapping glyph materials: the
+  later one's numbering wins, as it wins the runs. Boxes and images
+  return the instance index.

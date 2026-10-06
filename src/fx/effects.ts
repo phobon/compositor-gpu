@@ -38,6 +38,7 @@ import {
   EFFECT_BYTES,
   effectSource,
   type Fragment,
+  FX_IMAGE_BYTES,
   readsTime,
   stageSource
 } from './shader'
@@ -63,6 +64,9 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
    * subtree renders to its own texture and the pass composites it, `uv`
    * spanning the element's border box. Not part of the fullscreen chain. */
   region?: Target | Element
+  /** Sample this element's image record in the fragment: `image(uv)`,
+   * `image_level(uv, lod)` (premultiplied), `image_size()`. */
+  image?: Target | Element
 }
 
 export interface Pass<S extends ParamSchema = ParamSchema> {
@@ -118,6 +122,8 @@ interface Stage {
   over: GPURenderPipeline | null
   effect: GPUBuffer
   bindGroup: GPUBindGroup
+  /** Binds group 3 (the pass's `image`), when it has one. */
+  bindImage: ((rp: GPURenderPassEncoder) => void) | null
 }
 
 /** A stage's input: its view, where its texel (0,0) sits in canvas device
@@ -145,6 +151,11 @@ interface PassState {
   /** Region passes: the element, and its ping-pong pair (multi-stage). */
   region: Target | null
   ping: GPUTexture[]
+  /** The `image` binding's group-3 binder (one per pass). */
+  image: {
+    bind: (rp: GPURenderPassEncoder) => void
+    destroy: () => void
+  } | null
 }
 
 /** A Pass object over `s` (shared by the inert and GPU paths).
@@ -243,7 +254,8 @@ function inertEffects(): Effects {
         paramsBuf: null,
         stages: [],
         region: opts.region ? targetOf(opts.region, cache, null) : null,
-        ping: []
+        ping: [],
+        image: null
       }
       return passHandle<S>(
         s,
@@ -314,6 +326,77 @@ export function createEffects(compositor: Compositor): Effects {
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectLayout]
   })
+  const imageLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      uniform(2)
+    ]
+  })
+  const imagePipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [frameLayout, srcLayout, effectLayout, imageLayout]
+  })
+  const imageSampler = device.createSampler({
+    magFilter: 'linear',
+    minFilter: 'linear',
+    mipmapFilter: 'linear'
+  })
+  let noImage: GPUTexture | null = null
+  let noImageView: GPUTextureView | null = null
+  /**
+   * Group 3 for a pass sampling `el`'s image record: resolved when the
+   * stage draws (after the frame's uploads), rebuilt when the view
+   * changes (an atlas grow), transparent until the image decodes.
+   */
+  const imageBinder = (
+    el: Element,
+    label: string
+  ): { bind: (rp: GPURenderPassEncoder) => void; destroy: () => void } => {
+    const info = device.createBuffer({
+      label: `${label}:image`,
+      size: FX_IMAGE_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    })
+    const data = new Float32Array(FX_IMAGE_BYTES / 4)
+    let view: GPUTextureView | null = null
+    let group: GPUBindGroup | null = null
+    return {
+      bind(rp) {
+        const r = graph.imageOf(el)
+        noImage ??= device.createTexture({
+          label: 'fx:no-image',
+          size: [1, 1],
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING
+        })
+        noImageView ??= noImage.createView()
+        const v = r?.view ?? noImageView
+        data.fill(0)
+        if (r) {
+          data.set(r.uv, 0)
+          data[4] = r.width
+          data[5] = r.height
+        }
+        device.queue.writeBuffer(info, 0, data)
+        if (!group || (r && v !== view) || (!r && view !== null)) {
+          view = r ? v : null
+          group = device.createBindGroup({
+            label: `${label}:image`,
+            layout: imageLayout,
+            entries: [
+              { binding: 0, resource: v },
+              { binding: 1, resource: imageSampler },
+              { binding: 2, resource: { buffer: info } }
+            ]
+          })
+        }
+        rp.setBindGroup(3, group)
+      },
+      destroy() {
+        info.destroy()
+      }
+    }
+  }
   const sampler = device.createSampler({
     magFilter: 'linear',
     minFilter: 'linear',
@@ -524,6 +607,7 @@ export function createEffects(compositor: Compositor): Effects {
     rp.setPipeline(stage.pipeline)
     rp.setBindGroup(1, srcGroup(src))
     rp.setBindGroup(2, stage.bindGroup)
+    stage.bindImage?.(rp)
     rp.draw(3)
   }
 
@@ -586,15 +670,21 @@ export function createEffects(compositor: Compositor): Effects {
     block: ParamBlock<ParamSchema>,
     paramsBuf: GPUBuffer,
     index: number,
-    over: boolean
+    over: boolean,
+    bindImage: ((rp: GPURenderPassEncoder) => void) | null
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
-    const code = stageSource(effectSource(fragment, name), block.wgsl)
+    const code = stageSource(
+      effectSource(fragment, name),
+      block.wgsl,
+      bindImage !== null
+    )
+    const layout = bindImage ? imagePipelineLayout : pipelineLayout
     const module = device.createShaderModule({ label, code })
     reportShaderErrors(module, label)
     const pipeline = device.createRenderPipeline({
       label,
-      layout: pipelineLayout,
+      layout,
       vertex: { module, entryPoint: 'fx_vs' },
       fragment: { module, entryPoint: 'fx_fs', targets: [{ format }] },
       primitive: { topology: 'triangle-list' }
@@ -607,7 +697,7 @@ export function createEffects(compositor: Compositor): Effects {
     const overPipeline = over
       ? device.createRenderPipeline({
           label: `${label}:over`,
-          layout: pipelineLayout,
+          layout,
           vertex: { module, entryPoint: 'fx_vs' },
           fragment: {
             module,
@@ -630,7 +720,7 @@ export function createEffects(compositor: Compositor): Effects {
         { binding: 2, resource: { buffer: pointerBuf } }
       ]
     })
-    return { pipeline, over: overPipeline, effect, bindGroup }
+    return { pipeline, over: overPipeline, effect, bindGroup, bindImage }
   }
 
   const freePing = (s: PassState): void => {
@@ -645,6 +735,8 @@ export function createEffects(compositor: Compositor): Effects {
       st.effect.destroy()
     }
     s.stages = []
+    s.image?.destroy()
+    s.image = null
     s.paramsBuf?.destroy()
     s.paramsBuf = null
   }
@@ -808,6 +900,7 @@ export function createEffects(compositor: Compositor): Effects {
         rp.setPipeline(stage.pipeline)
         rp.setBindGroup(1, regionSrcGroup(src.view))
         rp.setBindGroup(2, stage.bindGroup)
+        stage.bindImage?.(rp)
         rp.draw(3)
         rp.end()
       }
@@ -823,6 +916,7 @@ export function createEffects(compositor: Compositor): Effects {
       rp.setPipeline(stage.over)
       rp.setBindGroup(1, regionSrcGroup(src.view))
       rp.setBindGroup(2, stage.bindGroup)
+      stage.bindImage?.(rp)
       rp.draw(3)
     }
   })
@@ -866,7 +960,8 @@ export function createEffects(compositor: Compositor): Effects {
         paramsBuf: null,
         stages: [],
         region: opts.region ? targetOf(opts.region, targetCache, graph) : null,
-        ping: []
+        ping: [],
+        image: null
       }
       const handler = state.region ? regionHandler(state) : null
       const isolate = (): void => {
@@ -886,6 +981,13 @@ export function createEffects(compositor: Compositor): Effects {
         const frags = Array.isArray(opts.fragment)
           ? (opts.fragment as readonly Fragment[])
           : [opts.fragment as Fragment]
+        if (opts.image) {
+          state.image = imageBinder(
+            targetOf(opts.image, targetCache, graph).el,
+            `fx:${opts.name}`
+          )
+        }
+        const bind = state.image?.bind ?? null
         state.stages = frags.map((f, i) =>
           buildStage(
             opts.name,
@@ -893,7 +995,8 @@ export function createEffects(compositor: Compositor): Effects {
             generic,
             paramsBuf,
             i,
-            handler !== null && i === frags.length - 1
+            handler !== null && i === frags.length - 1,
+            bind
           )
         )
         passes.push(state)
@@ -982,6 +1085,7 @@ export function createEffects(compositor: Compositor): Effects {
       materials.length = 0
       releaseTargets()
       pointerBuf.destroy()
+      noImage?.destroy()
     },
     __override(o) {
       override = o

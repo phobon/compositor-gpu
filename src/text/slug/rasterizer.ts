@@ -885,7 +885,8 @@ export class SlugText implements TextBackend {
           f[base + 11] = g.color.a * alpha
           u[base + 12] = slot >= 0 ? slot * BAND_COUNT : 0
           u[base + 13] = slot >= 0 ? BAND_COUNT : 0
-          u[base + 14] = 0
+          // The glyph's index in its material's target (mat_index).
+          u[base + 14] = (run.glyphBase ?? 0) + j
           u[base + 15] = 0
           f[base + 16] = clip[0]
           f[base + 17] = clip[1]

@@ -111,6 +111,8 @@ export interface MaterialEntry extends MaterialBinding {
   readonly target: Element
   /** False: the records draw with the default pipeline this frame. */
   active(): boolean
+  /** Glyphs numbered by the last batch build (mat_index's range). */
+  glyphs?: number
 }
 
 /** Per-frame participant registered through RenderGraph.addHook. */

@@ -65,7 +65,9 @@ equal `fx-materials` exactly), and on the M3b section `fx-m3b`,
 `fx-layer-glyphs`, `fx-layer-image`, `fx-sim` (fixed `dt` override, run
 until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 (on the fx-off section), `fx-m3b-all`, `fx-m3b-then-off` (must equal
-`fx-m3b` exactly). Material pipelines compile asynchronously:
+`fx-m3b` exactly), and `fx-follow`, `fx-mat-stagger` (a `mat_index`
+stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
+`fx-pass-image` (a pass with `image`, on the fx-off section). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match

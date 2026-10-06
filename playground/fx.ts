@@ -384,6 +384,47 @@ async function boot(): Promise<void> {
     params: tgjsSchema,
     enabled: false
   })
+  // Per-letter stagger: mat_index is the glyph's index in the heading.
+  const stagger = fx.material({
+    name: 'stagger',
+    target: $('stg-heading'),
+    kinds: ['glyph'],
+    enabled: false,
+    params: { delay: { type: 'f32', default: 0.06, min: 0, max: 0.3 } },
+    vertex: /* wgsl */ `
+      fn arrive(record : u32) -> f32 {
+        let k = f32(mat_index(record));
+        return clamp(fx.elapsed * 1.2 - k * params.delay, 0.0, 1.0);
+      }
+      fn vertex(local : vec2f, size : vec2f, uv : vec2f, record : u32)
+          -> vec2f {
+        let t = arrive(record);
+        return local + vec2f(0.0, (1.0 - t) * (1.0 - t) * -28.0);
+      }`,
+    fragment: /* wgsl */ `
+      fn fragment(m : MatIn) -> vec4f {
+        return m.color * arrive(m.record);
+      }`
+  })
+  // A fullscreen pass with the materials image inset top right.
+  const pimage = fx.pass({
+    name: 'pass-image',
+    image: $('mat-img'),
+    enabled: false,
+    fragment: /* wgsl */ `
+      fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
+        let r = vec4f(0.72, 0.06, 0.22, 0.3);
+        let q = (uv - r.xy) / r.zw;
+        let c = sample(uv);
+        if (any(q < vec2f(0.0)) || any(q > vec2f(1.0))) {
+          return c;
+        }
+        let i = image(q);
+        return i + c * (1.0 - i.a);
+      }`
+  })
+  bindPanel('stagger', stagger)
+  bindPanel('pimage', pimage)
   bindPanel('lglyphs', lglyphs)
   bindPanel('limage', limage)
   bindPanel('sim', sim)
@@ -451,6 +492,8 @@ async function boot(): Promise<void> {
     tint,
     lglyphs,
     limage,
+    stagger,
+    pimage,
     sim,
     raw,
     tgbox,

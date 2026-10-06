@@ -162,6 +162,12 @@
         </div>
       </section>
 
+      <section data-vr="fx-follow">
+        <h2 id="stg-heading">Letters arrive one by one</h2>
+        <p>A glyph material reads each letter's index in its target, so a
+          stagger needs no per-letter data from the page.</p>
+      </section>
+
       <div id="panel" data-gpu-ignore>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
@@ -225,6 +231,13 @@
         </fieldset>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-tgbox" /> 'use gpu' material (blue box)</label></legend>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-stagger" /> stagger (letters)</label></legend>
+          <label>delay <input type="range" id="s-stagger-delay" min="0" max="0.3" step="0.01" /><output></output></label>
+        </fieldset>
+        <fieldset>
+          <legend><label style="display:inline"><input type="checkbox" id="c-pimage" /> pass sampling the image</label></legend>
         </fieldset>
         <fieldset>
           <legend><label style="display:inline"><input type="checkbox" id="c-tgjs" /> 'use gpu' pass</label></legend>

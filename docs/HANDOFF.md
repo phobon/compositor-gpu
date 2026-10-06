@@ -11,7 +11,7 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `0487c51 Remove staging artefacts` (M3b `7a9f504`) + the uncommitted mirror leftovers batch (open item 4) |
+| `~/code/compositor-gpu` | the library, source of truth | `718df5d` (leftovers, open item 4; M3b `7a9f504`) + uncommitted M3c (open item 3) |
 | `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
 | `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
 
@@ -123,7 +123,7 @@ the compositor.
 
 1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
    `5c90a6b`, `realContext` / partial-read fix `a36d65b`, M3b `7a9f504`;
-   the mirror leftovers batch (item 4) is uncommitted. M3b added the dev dependency
+   leftovers `718df5d`; M3c (item 3) is uncommitted. M3b added the dev dependency
    `unplugin-typegpu@0.12.3` (`package.json`, `pnpm-lock.yaml`): run
    `pnpm install` before `npm run dev` or the harnesses, since
    `vite.config.ts` imports it. MDS-home: bump the submodule to `origin/main` once
@@ -217,9 +217,23 @@ the compositor.
    Try `/fx.html`: the M3b section has toggles for heading glyphs, image
    tiles, simulated dots, a raw box, a 'use gpu' box material and a
    'use gpu' grey pass.
-   Next: Passes taking `image`, and per-letter staggers through the
-   glyph material contract (docs/EFFECTS.md "Material").
-4. **Mirror leftovers — built 2026-10-05, uncommitted:**
+   **M3c follow-ons — built 2026-10-06, uncommitted:** passes take
+   `image: target` (`image(uv)` / `image_level` / `image_size()`, bind
+   group 3); glyph materials get `mat_index(record)`, the glyph's stable
+   index in the target (written into the Slug instance from
+   `GlyphRun.glyphBase`, set by material tagging), and `fx.glyphs`.
+   Contract: `src/fx/README.md`; deviations: `docs/EFFECTS.md`
+   "Deviations (M3c)". New fx shots `fx-follow`, `fx-mat-stagger`,
+   `fx-follow-then-off` (exact invariant), `fx-pass-image`. Verified:
+   typecheck, biome, build; `test:fx` 41 OK; `test:visual` 0.00 on all
+   27, `--with-fx` 0.00. An opus review found no correctness bugs; its
+   three fixes are in (`fx.glyphs` now from the tagging count instead of
+   rebuilding `target.glyphs` every frame, one text re-upload per
+   rebatch with nested glyph materials instead of every one, `gpu.pass`
+   image externals). Try `/fx.html`: "stagger (letters)" and "pass
+   sampling the image". Perf not re-run: the text pass only gained one
+   u32 write per glyph.
+4. **Mirror leftovers — built 2026-10-05, committed (`718df5d`):**
    - Every `background-image` layer paints, in order, with the border on
      top (`backgroundLayerRecords`, now in `dom/backgrounds.ts`; also for
      pseudo-elements' gradient layers). `repeating-*-gradient` works, and

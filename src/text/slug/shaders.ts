@@ -30,7 +30,7 @@ struct Glyph {
   rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
   offset : vec4f,   // xy displacement, space (1 = viewport), _
   color  : vec4f,
-  gref   : vec4u,   // bandStart, bandCount, _, _
+  gref   : vec4u,   // bandStart, bandCount, index in material target, _
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space), _, _
@@ -213,6 +213,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
 const MATERIAL_FS = /* wgsl */ `
 fn mat_sample(delta : vec2f) -> vec4f {
   return vec4f(0.0);
+}
+// The glyph's index in the material target's glyphs (target.glyphs).
+fn mat_index(record : u32) -> u32 {
+  return glyphs[record].gref.z;
 }
 
 @fragment

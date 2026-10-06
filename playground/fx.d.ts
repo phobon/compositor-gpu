@@ -22,6 +22,10 @@ declare global {
       wave: Material
       bend: Material
       tint: Material
+      /** A per-letter stagger (mat_index) on #stg-heading. */
+      stagger: Material
+      /** A fullscreen pass sampling #mat-img (`image`). */
+      pimage: Pass
       /** M3b: the heading's glyphs drawn by a Layer. */
       lglyphs: Layer
       /** An image Target sampled by a Layer. */

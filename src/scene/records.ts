@@ -254,6 +254,10 @@ export interface GlyphRun {
   ligatures: boolean
   color: RGBA
   glyphs: Glyph[]
+  /** Index of the first glyph within the subtree of the material that
+   * re-shades this run (its target's glyph order); set when batches are
+   * built (Scene.assign), `mat_index` in the hooks. */
+  glyphBase?: number
   /** Multiplier applied by the pass. The reader writes 1: an element's
    * opacity is applied once by its opacity group (see stacking.ts). */
   opacity: number

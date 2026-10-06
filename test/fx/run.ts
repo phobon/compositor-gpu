@@ -39,6 +39,10 @@
 //   fx-mat-tgpu       a 'use gpu' material fragment
 //   fx-tgpu-js        the fx-off section through a 'use gpu' pass
 //   fx-m3b-then-off   the M3b effects on, then off: equal to fx-m3b exactly
+//   fx-follow         the stagger section, nothing enabled
+//   fx-mat-stagger    a glyph material staggered by mat_index
+//   fx-follow-then-off  stagger on, then off: equal to fx-follow exactly
+//   fx-pass-image     the fx-off section through a pass sampling #mat-img
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -82,6 +86,8 @@ type Effect =
   | 'tgbox'
   | 'tgjs'
   | 'm3b'
+  | 'stagger'
+  | 'pimage'
 
 interface Result {
   name: string
@@ -151,6 +157,8 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.raw.enabled = e === 'raw' || e === 'm3b'
     h.tgbox.enabled = e === 'tgbox' || e === 'm3b'
     h.tgjs.enabled = e === 'tgjs'
+    h.stagger.enabled = e === 'stagger'
+    h.pimage.enabled = e === 'pimage'
     const sim = e === 'sim' || e === 'm3b'
     if (sim) {
       // A fixed step, so the eased dots converge the same way every run.
@@ -494,6 +502,34 @@ async function main(): Promise<void> {
           note: `${n} px differ`
         })
       }
+    }
+    const fol = 'fx-follow'
+    let folPre: PNG | null = null
+    if (want(fol) || want('fx-follow-then-off')) {
+      folPre = await capture(fol, fol, 'none')
+    }
+    if (want('fx-mat-stagger') || want('fx-follow-then-off')) {
+      await capture(fol, 'fx-mat-stagger', 'stagger')
+    }
+    if (want('fx-follow-then-off')) {
+      const post = await capture(fol, 'fx-follow-then-off', 'none')
+      if (folPre && post) {
+        const n = exactDiff(folPre, post)
+        const pct = diffPng(
+          folPre,
+          post,
+          resolve(outDir, 'fx-follow-then-off-invariant.png')
+        )
+        results.push({
+          name: 'fx-follow-then-off (= fol)',
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    if (want('fx-pass-image')) {
+      await capture('fx-off', 'fx-pass-image', 'pimage')
     }
     await pinPlain()
     await setEffect(page, 'none')

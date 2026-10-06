@@ -134,6 +134,19 @@ pixel is `fx.texel * fx.dpr`.
 Compile errors are reported by `reportShaderErrors` under `fx:<name>`
 (`fx:<name>#<i>` for stage i > 0).
 
+With `image: target`, every stage of the pass can sample that element's
+image record (bind group 3):
+
+```wgsl
+fn image(uv : vec2f) -> vec4f               // premultiplied, uv 0..1, y down
+fn image_level(uv : vec2f, lod : f32) -> vec4f  // lod > 0 can bleed
+fn image_size() -> vec2f                    // texels; 0 until decoded
+```
+
+The whole image (not the `object-fit` crop), transparent until it
+decodes; it is resolved when the stage draws, so atlas changes are
+followed.
+
 ## Params
 
 ```ts
@@ -385,19 +398,32 @@ struct MatIn {
   coverage : f32,    // edge coverage (glyph outline, box edge, image clip)
   dist     : f32,    // box/image: rounded-box SDF, CSS px, < 0 inside
   record   : u32,    // instance index: varies per record, not stable
+                     // (mat_index(record) for a stable glyph index)
   kind     : u32,    // 0 box, 1 image, 2 glyph
 };
 fn mat_sample(delta : vec2f) -> vec4f  // images: the source delta CSS px
                                        // away (premultiplied, unclipped);
                                        // zero for boxes and glyphs
+fn mat_index(record : u32) -> u32      // glyphs: the glyph's index in the
+                                       // target (target.glyphs order);
+                                       // boxes, images: record
 ```
+
+`mat_index` makes per-letter staggers possible: it is stable across
+re-reads while the text is unchanged, counts the target's glyphs in DOM
+order (a ligature takes its first component's index; a fixed
+descendant's glyphs are counted too, which `target.glyphs` leaves out,
+so past one the two indices differ) and
+works in both hooks; `fx.glyphs` is the count (`mat_index` runs from 0
+to `fx.glyphs - 1`). Turning a glyph material
+on or off re-uploads the text once.
 
 `vertex` returns the displaced position of a corner in the same local
 box; `local`/`uv` in `fragment` stay undisplaced, so the content moves
 with the quad. With `subdivisions: n` the quad is n × n cells, which a
 vertex hook can bend. Also in scope: `fx : MaterialFx` (time, elapsed,
-dpr, scroll, viewport in CSS px; same layout as `LayerFx` without
-`count`), `params`, `pointer`.
+dpr, glyphs (the glyphs `mat_index` numbers), scroll,
+viewport in CSS px), `params`, `pointer`.
 
 The pipeline compiles asynchronously the first time the records are
 drawn; until then (and for good if the WGSL fails, with the error in the
@@ -484,12 +510,13 @@ const p = gpu.params(schema)     // p.strength.$ : typed, per schema
 gpu.time.$ / gpu.elapsed.$ / gpu.dpr.$
 gpu.pointer.pos.$ / .page / .vel / .follow / .followVel / .down /
   .seen / .clicksN, gpu.pointer.click(k)
-gpu.pass.sample(uv) / viewportToUv(p) / pageToUv(p)
+gpu.pass.sample(uv) / viewportToUv(p) / pageToUv(p) / image(uv) /
+  imageLevel(uv, lod) / imageSize() (with `image`)
 gpu.layer.data(i, k) / data2 / data4 / setData / setData2 / setData4
   (simulate) / image(uv) / glyphCount() / glyphPoint(k, uv) /
   glyphSize(k) / glyphColor(k) / glyphClip(k) / glyphCoverage(k, uv) /
   count.$ / dt.$ / steps.$ / scroll.$ / viewport.$
-gpu.material.sample(delta)
+gpu.material.sample(delta) / index(record) / glyphs.$
 ```
 
 Each stands for a declaration that only exists in that kind of shader

@@ -26,7 +26,7 @@ struct MaterialFx {
   time     : f32,    // page clock, s
   elapsed  : f32,    // s since this material was last enabled
   dpr      : f32,
-  _pad     : f32,
+  glyphs   : f32,    // glyphs mat_index numbers (glyph materials)
   scroll   : vec2f,  // the real document scroll, CSS px
   viewport : vec2f,  // visible viewport, CSS px
 };
@@ -302,7 +302,7 @@ export function createMaterial<S extends ParamSchema>(
       f[0] = time
       f[1] = deps.elapsedOverride() ?? (ctx.time - enabledAt) / 1000
       f[2] = graph.shared.dpr
-      f[3] = 0
+      f[3] = entry.glyphs ?? 0
       f[4] = ctx.scrollX
       f[5] = ctx.scrollY
       f[6] = ctx.width

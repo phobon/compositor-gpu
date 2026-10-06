@@ -202,6 +202,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
 `
 
 const MATERIAL_FS = /* wgsl */ `
+// Boxes and images: the instance index (glyphs: the index in the target).
+fn mat_index(record : u32) -> u32 {
+  return record;
+}
 // The source image \`delta\` CSS px away from this fragment (in the
 // image's local axes), premultiplied, without the rounded clip.
 fn mat_sample(delta : vec2f) -> vec4f {

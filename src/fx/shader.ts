@@ -86,6 +86,36 @@ fn fx_fs_over(@builtin(position) pos : vec4f) -> @location(0) vec4f {
 }
 `
 
+// With `image`: the target's pixels (bind group 3).
+const IMAGE_WGSL = /* wgsl */ `
+struct FxImage {
+  uv   : vec4f,   // runtime: the image's texels in fx_image
+  size : vec2f,   // texel size (0 until decoded)
+  _pad : vec2f,
+};
+@group(3) @binding(0) var fx_image : texture_2d<f32>;
+@group(3) @binding(1) var fx_image_smp : sampler;
+@group(3) @binding(2) var<uniform> fx_image_info : FxImage;
+
+// The image at uv (0..1 over it, y down), premultiplied, at mip level
+// lod (> 0 can bleed across atlas neighbours). Transparent until decoded.
+fn image_level(uv : vec2f, lod : f32) -> vec4f {
+  let t = mix(fx_image_info.uv.xy, fx_image_info.uv.zw,
+              clamp(uv, vec2f(0.0), vec2f(1.0)));
+  let c = textureSampleLevel(fx_image, fx_image_smp, t, lod);
+  return vec4f(c.rgb * c.a, c.a);
+}
+fn image(uv : vec2f) -> vec4f {
+  return image_level(uv, 0.0);
+}
+fn image_size() -> vec2f {
+  return fx_image_info.size;
+}
+`
+
+/** Bytes in the FxImage uniform. */
+export const FX_IMAGE_BYTES = 32
+
 const PASSTHROUGH = /* wgsl */ `
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
   return sample(uv);
@@ -157,13 +187,18 @@ export function effectSource(fragment: Fragment, name: string): string | null {
 }
 
 /** The complete module source for one stage. */
-export function stageSource(effect: string | null, paramsWgsl: string): string {
+export function stageSource(
+  effect: string | null,
+  paramsWgsl: string,
+  image = false
+): string {
   return [
     FRAME_WGSL,
     EFFECT_WGSL,
     paramsWgsl,
     POINTER_WGSL,
     BINDINGS_WGSL,
+    image ? IMAGE_WGSL : '',
     effect ?? PASSTHROUGH,
     ENTRY_WGSL
   ].join('\n')

@@ -15,6 +15,7 @@ import { materialPipelinesPending } from './gpu/material'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
 import type { Anchor } from './scene/batches'
+import type { GlyphRun } from './scene/records'
 import { Scene } from './scene/scene'
 import { SlugText } from './text/slug/rasterizer'
 import type {
@@ -484,7 +485,14 @@ export async function createCompositor(
   // the previous build are cleared first; records rebuilt by a read have
   // none.
   let tagged: { material?: number }[] = []
-  const tagSubtree = (node: ElNode, m: MaterialEntry): void => {
+  /** Glyph runs' bases from this build (a later material overwrites an
+   * earlier one's, as it wins the run). */
+  const bases = new Map<GlyphRun, number>()
+  const tagSubtree = (
+    node: ElNode,
+    m: MaterialEntry,
+    glyphs: { n: number }
+  ): void => {
     const tag = (r: { material?: number }): void => {
       r.material = m.id
       tagged.push(r)
@@ -499,7 +507,7 @@ export async function createCompositor(
     }
     for (const kid of node.kids) {
       if (kid.kind === 'element') {
-        tagSubtree(kid, m)
+        tagSubtree(kid, m, glyphs)
       } else if (kid.kind === 'box') {
         if (m.kinds.has('box')) {
           tag(kid)
@@ -507,6 +515,8 @@ export async function createCompositor(
       } else {
         if (m.kinds.has('glyph')) {
           tag(kid)
+          bases.set(kid, glyphs.n)
+          glyphs.n += kid.glyphs.length
         }
         if (m.kinds.has('box')) {
           for (const d of kid.decorations ?? []) {
@@ -527,8 +537,22 @@ export async function createCompositor(
     for (const m of renderer.materials.values()) {
       const node = m.active() ? reader.nodeOf(m.target) : undefined
       if (node) {
-        tagSubtree(node, m)
+        const glyphs = { n: 0 }
+        tagSubtree(node, m, glyphs)
+        m.glyphs = glyphs.n
       }
+    }
+    // A moved base re-uploads the text (mat_index reads gref.z).
+    let moved = false
+    for (const [run, base] of bases) {
+      if (run.glyphBase !== base) {
+        run.glyphBase = base
+        moved = true
+      }
+    }
+    bases.clear()
+    if (moved) {
+      scene.markDirty('text')
     }
   }
   scene.anchors = () => {

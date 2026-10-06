@@ -552,6 +552,10 @@ fn fs(in : VOut) -> @location(0) vec4f {
 `
 
 const MATERIAL_FS = /* wgsl */ `
+// Boxes and images: the instance index (glyphs: the index in the target).
+fn mat_index(record : u32) -> u32 {
+  return record;
+}
 fn mat_sample(delta : vec2f) -> vec4f {
   return vec4f(0.0);
 }
