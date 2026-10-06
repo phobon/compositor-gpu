@@ -197,17 +197,24 @@ fn vs(@builtin(vertex_index) vi : u32,
       @builtin(instance_index) ii : u32) -> VOut {
   let g = glyphs[ii];
   let corner = mat_corner(vi, MAT_SUBDIV);
-  let lp0 = g.rect.xy + corner * g.rect.zw;
+  let m = g.xf0;
+  // The quad is the ink box grown by a device pixel per side, so the
+  // anti-aliased fringe outside the outline (a stem at the box's edge,
+  // as in l or i) is drawn rather than clipped. Local units per device
+  // px along each axis, from the transform's column lengths.
+  let sc = vec2f(length(m.xy), length(m.zw)) * frame.dpr;
+  let pad = 1.0 / max(sc, vec2f(1e-3));
+  let lp0 = g.rect.xy - pad + corner * (g.rect.zw + 2.0 * pad);
   // Hooks see the ink box (origin at its top-left), as MatIn.local does.
   // As a delta, so identity hooks leave lp0 bit-exact.
   let q = lp0 - g.rect.xy;
   let lp = lp0 + (mat_vertex(q, g.rect.zw, corner, ii) - q);
-  let m = g.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) +
     g.xf1.xy + g.offset.xy;
   var out : VOut;
   out.pos = to_clip(p, g.offset.z);
-  out.em = vec2f(corner.x, 1.0 - corner.y);
+  let e = q / max(g.rect.zw, vec2f(1e-5));
+  out.em = vec2f(e.x, 1.0 - e.y);
   out.idx = ii;
   out.docp = p;
   out.lp = lp0;

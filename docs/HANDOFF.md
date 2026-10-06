@@ -281,7 +281,8 @@ the compositor.
    - `FAST_TEXT_READ` under a transform (`frameOf`/`pushPlaced`):
      perGrapheme 10.8k -> 2.7k, Range queries 15k -> 7.8k, 400-card page.
    - Text AA: Slug's dual rays (row + column bands), two rays per
-     direction, `SLUG_GAMMA` 0.87. Text parity 0.95 -> 0.63 %, every
+     direction, `SLUG_GAMMA` 0.87, glyph quad grown a device pixel (thin
+     `l`/`i` stems were clipped). Text parity 0.95 -> 0.36 %, every
      text-bearing shot improved; the `y` tail streak is gone.
    New visual shot `shapes` (incl. repeat-x and content-box origin); all
    visual and fx goldens re-taken (text). Opus review: no serious

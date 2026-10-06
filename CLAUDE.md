@@ -365,6 +365,9 @@ provenance. Pipeline:
    per font and one 16-float instance per on-screen glyph. The instance quad is
    the glyph's **ink box**, derived from ascender/descender metrics and the
    grapheme's line box — not the line box itself — so outlines aren't stretched.
+   The vertex shader grows the quad by a device pixel per side (em extends
+   past [0,1]) so the AA fringe outside the outline isn't clipped; without
+   it, stems at the ink box's edge (l, i) render thin.
 4. `shaders.ts` (`slug_coverage`, shared with `/fx` Layers) casts Slug's
    two rays, horizontal through the row band and vertical through the
    column band, each as two rays a quarter pixel either side of the centre,

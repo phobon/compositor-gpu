@@ -162,7 +162,8 @@ perspective transforms · culling · WebGL2 backend.
 ## Phase 1 — text that renders
 - [x] Validate the Slug shader in-browser; fix winding sign + band selection
 - [x] Analytic anti-aliasing: Slug's dual rays (row + column bands), two
-      rays per direction, coverage gamma 0.87 (text parity 0.95% -> 0.63%)
+      rays per direction, coverage gamma 0.87, quad grown a device pixel
+      so edge stems keep their AA fringe (text parity 0.95% -> 0.36%)
 - [x] Resolve FontFace → bytes at runtime in `prepare()`
 - [x] Ligatures via GSUB `liga`/`clig` matching (fi/fl/ffi/ffl); honours
       `font-variant-ligatures` / `"liga" 0`
