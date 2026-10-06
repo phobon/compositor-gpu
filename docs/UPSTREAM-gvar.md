@@ -2,8 +2,9 @@
 
 Status check (2026-09-30): no existing issue or PR found with this diagnosis.
 Searches only turned up #754 (variable fonts rendering wrongly in 2.0.0), which
-has no diagnosis and may or may not share this cause. The repro below has not
-been run against the live Inter download.
+has no diagnosis and may or may not share this cause. The repro below was run
+(2026-10-06) against the InterVariable.ttf in playground/; raw gvar flags were
+read separately to confirm which tuples have private points.
 
 Below the rule is the issue text.
 ---
@@ -39,7 +40,7 @@ It only shows when a glyph has a non-empty shared point list and a tuple with
 private points and count 0. Glyphs without a shared list work.
 
 ## Symptom
-Inter Variable (https://rsms.me/inter/): D, R and similar glyphs are mangled at
+Inter Variable (https://rsms.me/inter/): D and similar glyphs are mangled at
 any non-default weight. Some points get other points' deltas, the rest do not
 move. The default instance and other glyphs are fine.
 
@@ -58,9 +59,10 @@ for (const h of store.headers) {
   console.log(h.privatePoints.length, store.sharedPoints.length,
     h.deltas.length, g.points.length + 4)
 }
-// Rows with privatePoints.length 0 and sharedPoints.length > 0 print
-// deltas.length === sharedPoints.length instead of g.points.length + 4.
-// Drawing D and R after font.variation.set({ wght: 700 }) shows broken outlines.
+// Prints "0 15 15 30" for all five tuples. In the font, D has a shared list
+// of 15 points; tuples 0 and 3 use it, tuples 1, 2 and 4 have private point
+// numbers with count 0 (all points). Those three need 30 deltas, get 15.
+// Drawing D after font.variation.set({ wght: 700 }) shows a broken outline.
 ```
 
 ## Fix

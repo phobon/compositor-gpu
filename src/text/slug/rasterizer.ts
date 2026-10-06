@@ -40,15 +40,19 @@ export interface GlyphTable {
 const LIGATURE_GAP = 1.5
 /** tan(14°): the browser's synthetic-oblique shear. */
 const OBLIQUE = Math.tan((14 * Math.PI) / 180)
-const BAND_COUNT = 16 // bands per glyph — must match font.ts bucketing
+const BAND_COUNT = 16 // bands per direction — must match font.ts
+/** Row bands then column bands per resident glyph. */
+const BANDS_PER_SLOT = 2 * BAND_COUNT
 const CURVE_FLOATS = 8 // vec4 p + vec4 c
 
 // Resident-glyph cache geometry. Each glyph occupies one fixed-size slot: 16
-// bands + up to MAX_CURVES banded curves. Fixed stride means O(1) eviction and
-// no fragmentation, at the cost of space for simple glyphs and a curve budget
-// that skips pathologically complex glyphs. All three are safe to tune.
+// row + 16 column bands and up to MAX_CURVES banded curves (both directions,
+// so about twice the outline's). Fixed stride means O(1) eviction and no
+// fragmentation, at the cost of space for simple glyphs (32 MB of curves)
+// and a curve budget that skips pathologically complex glyphs. All three are
+// safe to tune.
 const SLOT_COUNT = 1024
-const MAX_CURVES = 512
+const MAX_CURVES = 1024
 
 type BBox = { x1: number; y1: number; x2: number; y2: number }
 
@@ -160,7 +164,7 @@ export class SlugText implements TextBackend {
   private warnedBudget = false
   /** Glyph keys refused for exceeding MAX_CURVES (drawn via the atlas). */
   private readonly refused = new Set<number>()
-  private readonly bandScratch = new Float32Array(BAND_COUNT * 4)
+  private readonly bandScratch = new Float32Array(BANDS_PER_SLOT * 4)
   private readonly curveScratch = new Float32Array(MAX_CURVES * CURVE_FLOATS)
 
   constructor(private readonly shared: Shared) {
@@ -246,7 +250,7 @@ export class SlugText implements TextBackend {
     })
 
     this.bandBuf = device.createBuffer({
-      size: SLOT_COUNT * BAND_COUNT * 16,
+      size: SLOT_COUNT * BANDS_PER_SLOT * 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
     this.curveBuf = device.createBuffer({
@@ -541,8 +545,8 @@ export class SlugText implements TextBackend {
   private writeSlot(slot: number, gb: GlyphBands): void {
     const curveBase = slot * MAX_CURVES
     const b = this.bandScratch
-    for (let i = 0; i < BAND_COUNT; i++) {
-      const band = gb.bands[i]
+    for (let i = 0; i < BANDS_PER_SLOT; i++) {
+      const band = i < BAND_COUNT ? gb.bands[i] : gb.vbands[i - BAND_COUNT]
       const o = i * 4
       if (band) {
         b[o] = band.yMin
@@ -558,10 +562,10 @@ export class SlugText implements TextBackend {
     }
     this.shared.device.queue.writeBuffer(
       this.bandBuf,
-      slot * BAND_COUNT * 16,
+      slot * BANDS_PER_SLOT * 16,
       b.buffer,
       0,
-      BAND_COUNT * 16
+      BANDS_PER_SLOT * 16
     )
     const c = this.curveScratch
     for (let j = 0; j < gb.curves.length; j++) {
@@ -883,7 +887,7 @@ export class SlugText implements TextBackend {
           f[base + 9] = g.color.g
           f[base + 10] = g.color.b
           f[base + 11] = g.color.a * alpha
-          u[base + 12] = slot >= 0 ? slot * BAND_COUNT : 0
+          u[base + 12] = slot >= 0 ? slot * BANDS_PER_SLOT : 0
           u[base + 13] = slot >= 0 ? BAND_COUNT : 0
           // The glyph's index in its material's target (mat_index).
           u[base + 14] = (run.glyphBase ?? 0) + j

@@ -243,10 +243,10 @@ export function readBox(
 
 /**
  * Background layer `i` (of `layers`, top-most first) as a gradient, or
- * null when it is a url() or unsupported. Resolved against the padding
- * box (background-origin: padding-box), inset per side by the border
- * widths the shader uses, so the two agree; `repeat` from the layer's
- * background-repeat.
+ * null when it is a url(), unsupported or sized to nothing. Positioned in
+ * the `background-origin` box, placed from the padding box (inset per
+ * side by the border widths the shader uses, so the two agree); `repeat`
+ * per axis from the layer's background-repeat.
  */
 export function layerGradient(
   s: CSSStyleDeclaration,
@@ -261,18 +261,128 @@ export function layerGradient(
     return null
   }
   const [bt, br, bb, bl] = border ? border.widths : [0, 0, 0, 0]
-  const gradient = parseGradient(layer, {
-    x: bl,
-    y: bt,
-    width: Math.max(0, lw - bl - br),
-    height: Math.max(0, lh - bt - bb)
-  })
+  const pw = Math.max(0, lw - bl - br)
+  const ph = Math.max(0, lh - bt - bb)
+  const pick = (list: string, fallback: string): string => {
+    const parts = splitTopLevel(list, ',')
+    return (parts[i % Math.max(1, parts.length)] ?? '').trim() || fallback
+  }
+  // The origin box relative to the padding box.
+  const oi = boxInset(s, pick(s.backgroundOrigin, 'padding-box'))
+  const pi = boxInset(s, 'padding-box')
+  const ox = oi[3] - pi[3]
+  const oy = oi[0] - pi[0]
+  const ow = Math.max(0, pw - ox - (oi[1] - pi[1]))
+  const oh = Math.max(0, ph - oy - (oi[2] - pi[2]))
+  // background-size / -position: a gradient has no intrinsic size, so
+  // auto, cover and contain fill the area (the origin box).
+  const size = backgroundSize(pick(s.backgroundSize, 'auto'), ow, oh)
+  const tw = size?.[0] ?? ow
+  const th = size?.[1] ?? oh
+  if (tw <= 0 || th <= 0) {
+    return null
+  }
+  const [px0, py0] = positionPx(
+    pick(s.backgroundPosition, '0% 0%'),
+    ow - tw,
+    oh - th
+  )
+  const tx = ox + px0
+  const ty = oy + py0
+  const tiled = tw !== pw || th !== ph || tx !== 0 || ty !== 0
+  const gradient = parseGradient(
+    layer,
+    tiled
+      ? { x: 0, y: 0, width: tw, height: th }
+      : { x: bl, y: bt, width: pw, height: ph }
+  )
+  if (gradient && tiled) {
+    gradient.tile = [tx, ty, tw, th]
+  }
   if (gradient) {
-    const reps = splitTopLevel(s.backgroundRepeat, ',')
-    const rep = reps.length ? (reps[i % reps.length] ?? '') : ''
-    gradient.repeat = rep.trim() !== 'no-repeat'
+    gradient.repeat = repeatAxes(pick(s.backgroundRepeat, 'repeat'))
   }
   return gradient
+}
+
+/** background-repeat -> whether the tile repeats along x and y. */
+function repeatAxes(rep: string): [boolean, boolean] {
+  if (rep === 'repeat-x') {
+    return [true, false]
+  }
+  if (rep === 'repeat-y') {
+    return [false, true]
+  }
+  const [x = 'repeat', y = x] = rep.split(/\s+/)
+  return [x !== 'no-repeat', y !== 'no-repeat']
+}
+
+/** Explicit background-size lengths in CSS px against the positioning
+ * area `w`×`h` ([w, h], null for auto), or null for auto / cover /
+ * contain / `100% 100%`. */
+export function backgroundSize(
+  size: string,
+  w: number,
+  h: number
+): [number | null, number | null] | null {
+  const s = size.trim()
+  if (
+    s === '' ||
+    s === 'auto' ||
+    s === 'auto auto' ||
+    s === 'cover' ||
+    s === 'contain' ||
+    s === '100% 100%'
+  ) {
+    return null
+  }
+  const parts = s.split(/\s+/)
+  const len = (tok: string | undefined, dim: number): number | null => {
+    if (tok === undefined || tok === 'auto') {
+      return null
+    }
+    const n = Number.parseFloat(tok)
+    if (!Number.isFinite(n)) {
+      return null
+    }
+    return tok.endsWith('%') ? (n / 100) * dim : n
+  }
+  const out: [number | null, number | null] = [
+    len(parts[0], w),
+    len(parts[1], h)
+  ]
+  return out[0] === null && out[1] === null ? null : out
+}
+
+/** `background-position` -> px offsets of a `w`×`h` tile in the free
+ * space (`freeW`×`freeH`, area minus tile): keywords, % and px; the
+ * four-value form falls back to the fraction mapping. */
+export function positionPx(
+  value: string,
+  freeW: number,
+  freeH: number
+): [number, number] {
+  const toks = value.trim().split(/\s+/).filter(Boolean)
+  const one = (tok: string | undefined, free: number): number | null => {
+    if (tok === undefined) {
+      return null
+    }
+    const k = positionComponent(tok)
+    if (k !== null && !/px$/.test(tok)) {
+      return k * free
+    }
+    const n = Number.parseFloat(tok)
+    return Number.isFinite(n) ? n : null
+  }
+  if (toks.length === 2) {
+    const x = one(toks[0], freeW)
+    const y = one(toks[1], freeH)
+    if (x !== null && y !== null) {
+      return [x, y]
+    }
+  }
+  const [fx, fy] = mapBackgroundPosition(value)
+  return [fx * freeW, fy * freeH]
 }
 
 /**
@@ -639,6 +749,28 @@ function parseShadowLayer(layer: string): ShadowLayer | null {
 }
 
 /** CSS corner clamp (see readCorners) for an arbitrary w × h box. */
+/** clampCorners per axis: horizontal radii against the width, vertical
+ * against the height, one factor for both. */
+function clampCornersXY(
+  x: Corners,
+  y: Corners,
+  w: number,
+  h: number
+): { x: Corners; y: Corners } {
+  const ratio = (sum: number, dim: number) => (sum > 0 ? dim / sum : 1)
+  const f = Math.min(
+    1,
+    ratio(x[0] + x[1], w),
+    ratio(x[3] + x[2], w),
+    ratio(y[0] + y[3], h),
+    ratio(y[1] + y[2], h)
+  )
+  return {
+    x: x.map((v) => v * f) as Corners,
+    y: y.map((v) => v * f) as Corners
+  }
+}
+
 function clampCorners(r: Corners, w: number, h: number): Corners {
   const [tl, tr, br, bl] = r
   const ratio = (sum: number, dim: number) => (sum > 0 ? dim / sum : 1)
@@ -685,7 +817,12 @@ export function readShadows(
     return []
   }
   const { w, h } = place.local
-  const radius = readCorners(s, { x: 0, y: 0, width: w, height: h })
+  const rr = readCornerRadii(s, { x: 0, y: 0, width: w, height: h })
+  const elliptical = rr.x.some((v, k) => v !== rr.y[k])
+  const radius = elliptical
+    ? rr.x
+    : readCorners(s, { x: 0, y: 0, width: w, height: h })
+  const radiusY = elliptical ? rr.y : null
   const out: BoxRecord[] = []
   const layers = splitTopLevel(value, ',').filter(Boolean)
   for (let i = layers.length - 1; i >= 0; i--) {
@@ -698,7 +835,7 @@ export function readShadows(
       continue
     }
     if (inset) {
-      const rec = insetShadow(s, place, radius, layer, color, alloc())
+      const rec = insetShadow(s, place, radius, radiusY, layer, color, alloc())
       if (rec) {
         out.push(rec)
       }
@@ -714,9 +851,10 @@ export function readShadows(
     const x0 = ox - spread - pad
     const y0 = oy - spread - pad
     const sp = subPlacement(place, x0, y0, sw + 2 * pad, sh + 2 * pad)
-    const grown = radius.map((r) =>
-      r > 0 ? Math.max(0, r + spread) : 0
-    ) as Corners
+    const grow = (r: Corners): Corners =>
+      r.map((v) => (v > 0 ? Math.max(0, v + spread) : 0)) as Corners
+    const grown = grow(radius)
+    const xy = radiusY ? clampCornersXY(grown, grow(radiusY), sw, sh) : null
     // Batching footprint: 1.5σ (vs. the 3σ paint padding above) — the tail
     // beyond it is under ~7% alpha, so using it for overlap tests keeps
     // adjacent elements' shadows from splitting batches without visibly
@@ -737,14 +875,22 @@ export function readShadows(
       rect: placementAabb(sp),
       xform: sp.xform,
       local: sp.local,
-      radius: clampCorners(grown, sw, sh),
+      radius: xy ? xy.x : clampCorners(grown, sw, sh),
+      ...(xy ? { radiusY: xy.y } : {}),
       fill: color,
       gradient: null,
       border: null,
       shadow: {
         color,
         blur,
-        inner: { x: -x0, y: -y0, w, h, radius }
+        inner: {
+          x: -x0,
+          y: -y0,
+          w,
+          h,
+          radius,
+          ...(radiusY ? { radiusY } : {})
+        }
       },
       opacity: 1,
       z: 0,
@@ -759,6 +905,7 @@ function insetShadow(
   s: CSSStyleDeclaration,
   place: Placement,
   radius: Corners,
+  radiusY: Corners | null,
   layer: ShadowLayer,
   color: RGBA,
   id: number
@@ -784,6 +931,53 @@ function insetShadow(
   const sh = Math.max(0, ph - 2 * spread)
   const shrunk = pr.map((r) => (r > 0 ? Math.max(0, r - spread) : 0))
   const sp = subPlacement(place, bl, bt, pw, ph)
+  if (radiusY) {
+    // Elliptical: each axis inset by its own side's width.
+    const [x0, x1, x2, x3] = radius
+    const [y0, y1, y2, y3] = radiusY
+    const px: Corners = [
+      Math.max(0, x0 - bl),
+      Math.max(0, x1 - br),
+      Math.max(0, x2 - br),
+      Math.max(0, x3 - bl)
+    ]
+    const py: Corners = [
+      Math.max(0, y0 - bt),
+      Math.max(0, y1 - bt),
+      Math.max(0, y2 - bb),
+      Math.max(0, y3 - bb)
+    ]
+    const shrink = (r: Corners): Corners =>
+      r.map((v) => (v > 0 ? Math.max(0, v - spread) : 0)) as Corners
+    const inner = clampCornersXY(shrink(px), shrink(py), sw, sh)
+    return {
+      kind: 'box',
+      id,
+      rect: placementAabb(sp),
+      xform: sp.xform,
+      local: sp.local,
+      radius: px,
+      radiusY: py,
+      fill: color,
+      gradient: null,
+      border: null,
+      shadow: {
+        color,
+        blur,
+        inner: {
+          x: ox + spread,
+          y: oy + spread,
+          w: sw,
+          h: sh,
+          radius: inner.x,
+          radiusY: inner.y
+        },
+        inset: true
+      },
+      opacity: 1,
+      z: 0
+    }
+  }
   return {
     kind: 'box',
     id,

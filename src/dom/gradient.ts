@@ -157,11 +157,20 @@ function splitStop(arg: string): { color: string; positions: string[] } {
 function parseStops(
   args: string[],
   lineLength: number,
-  parse: ColorParser
+  parse: ColorParser,
+  angular = false
 ): GradientStop[] | null {
   const colors: RGBA[] = []
   const pos: (number | null)[] = []
   const toFrac = (tok: string): number | null => {
+    if (angular) {
+      // Conic: angles (a turn = 1) or percentages.
+      const a = parseAngle(tok)
+      if (a != null) {
+        return a / (2 * Math.PI)
+      }
+      return tok.endsWith('%') ? Number.parseFloat(tok) / 100 : null
+    }
     const l = parseLen(tok)
     if (!l) {
       return null
@@ -176,7 +185,7 @@ function parseStops(
       return null
     }
     // Transition hint: a lone length between two colours. Ignored.
-    if (parseLen(arg)) {
+    if (parseLen(arg) || (angular && parseAngle(arg) != null)) {
       continue
     }
     const { color, positions } = splitStop(arg)
@@ -475,6 +484,52 @@ function parseRadial(
   }
 }
 
+/** `conic-gradient([from <angle>] [at <position>], <stops>)`. */
+function parseConic(
+  all: string[],
+  rect: Rect,
+  parse: ColorParser
+): Gradient | null {
+  const args = stripInterpolation(all)
+  let rest = args
+  let angle = 0
+  let center: [number, number] = [rect.width / 2, rect.height / 2]
+  const head = (args[0] ?? '').toLowerCase().trim()
+  if (head.startsWith('from ') || head.startsWith('at ')) {
+    rest = args.slice(1)
+    const toks = head.split(/\s+/)
+    const at = toks.indexOf('at')
+    const pre = at >= 0 ? toks.slice(0, at) : toks
+    if (pre[0] === 'from') {
+      const a = parseAngle(pre[1] ?? '')
+      if (a == null) {
+        return null
+      }
+      angle = a
+    }
+    if (at >= 0) {
+      const p = parsePosition(toks.slice(at + 1), rect)
+      if (!p) {
+        return null
+      }
+      center = p
+    }
+  }
+  const stops = parseStops(rest, 1, parse, true)
+  if (!stops) {
+    return null
+  }
+  const w = rect.width
+  const h = rect.height
+  return {
+    kind: 'conic',
+    angle,
+    center: [w > 0 ? center[0] / w : 0.5, h > 0 ? center[1] / h : 0.5],
+    radii: [1, 1],
+    stops
+  }
+}
+
 /**
  * Parse one computed `background-image` layer into a Gradient resolved
  * against `rect` (the gradient box), or null when it isn't a supported
@@ -503,7 +558,9 @@ export function parseGradient(
       ? parseLinear(args, rect, parse)
       : fn === 'radial-gradient'
         ? parseRadial(args, rect, parse)
-        : null
+        : fn === 'conic-gradient'
+          ? parseConic(args, rect, parse)
+          : null
   if (g && repeating) {
     g.repeating = true
   }

@@ -15,17 +15,21 @@ https://terathon.com/blog/decade-slug.html and https://sluglibrary.com/.
   path is flattened to **quadratic** Béziers in normalised em space (cubics are
   reduced via a midpoint split — scaffold-grade; the reference uses a tighter
   reduction).
-- **Bands**: the em box is sliced into 16 horizontal bands; each band lists the
-  quads crossing it. This is Slug's acceleration structure — a pixel only tests
-  the curves in its band.
+- **Bands**: the em box is sliced into 16 horizontal (row) bands, then 16
+  vertical (column) bands whose curves are stored x/y-swapped; each band lists
+  the quads crossing it. This is Slug's acceleration structure — a pixel only
+  tests the curves in its bands.
 - **GPU buffers** (`rasterizer.ts`): `bands` (vec4f per band: yMin, yMax,
   curveStart, curveEnd) and `curves` (vec4f p0.xy/p1.xy + vec4f c.xy) are built
   once per font; `glyphs` holds one instance per on-screen glyph.
 
 ## Shader (`shaders.ts`)
-Per pixel: transform to em space, pick the band by `em.y`, walk that band's
-curves, accumulate a winding number from scanline crossings to the right, and
-convert to coverage.
+Per pixel (`slug_coverage`): transform to em space and cast a horizontal ray
+through the row band holding `em.y` and a vertical one through the column band
+holding `em.x`, each as two rays a quarter pixel either side of the centre.
+Each ray sums signed sub-pixel coverage from its curve crossings; the two
+directions are blended by their weights (Slug's), and `SLUG_GAMMA` (0.87)
+thickens edges toward Chrome's weight.
 
 `prepare()` resolves each `FontFace`'s `@font-face` `url()` and fetches the
 bytes at runtime (`text/fontSource.ts`); it is not a stub.

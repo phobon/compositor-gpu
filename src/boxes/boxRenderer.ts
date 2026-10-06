@@ -12,7 +12,7 @@ import { SD_BOX_WGSL } from '../gpu/sdf'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
-const FLOATS_PER_BOX = 68 // 17 * vec4f
+const FLOATS_PER_BOX = 72 // 18 * vec4f
 const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 const BYTES_PER_STOP = FLOATS_PER_STOP * 4
@@ -38,11 +38,12 @@ struct Box {
   bc0    : vec4f,   // top border colour, sRGB rgba
   params : vec4f,   // border styles (base-4 t,r,b,l), opacity, z, space
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial; +2 repeating),
+  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial, 3 conic;
+                    // +8 repeating),
                     // angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
   sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset;
-                    // plain box: w = gradient tile repeats
+                    // plain box: w = gradient tile repeats (1 x, 2 y)
   sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
                     // element box (outer) or the shadow box (inset);
                     // plain box: background-clip insets t, r, b, l
@@ -53,6 +54,9 @@ struct Box {
   bc2    : vec4f,   // bottom border colour
   bc3    : vec4f,   // left border colour
   ry     : vec4f,   // vertical radii tl, tr, br, bl (= radius: circular)
+  gt     : vec4f,   // gradient tile x, y (from the padding box), w, h;
+                    // w = 0: the padding box. Shadows: inner vertical
+                    // radii (with shr)
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 // Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
@@ -125,16 +129,23 @@ fn gaussian(x : f32, sigma : f32) -> f32 {
 // Blurred coverage of one row (height offset y from the centre) of a
 // rounded box, integrated exactly along x (Evan Wallace, "Fast Rounded
 // Rectangle Shadows").
-fn shadow_x(x : f32, y : f32, sigma : f32, corner : f32, h : vec2f) -> f32 {
+fn shadow_x(x : f32, y : f32, sigma : f32, corner : f32, cy : f32,
+            h : vec2f) -> f32 {
+  // Elliptical corners (cy != corner): the ellipse's half-width at y.
+  let dy = min(h.y - cy - abs(y), 0.0);
+  let ell = h.x - corner +
+    corner * sqrt(max(0.0, 1.0 - (dy * dy) / max(cy * cy, 1e-8)));
   let delta = min(h.y - corner - abs(y), 0.0);
-  let curved = h.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+  let circ = h.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+  let curved = select(ell, circ, corner == cy);
   let i = 0.5 + 0.5 * erf2((x + vec2f(-curved, curved)) * (0.70710678 / sigma));
   return i.y - i.x;
 }
 
 // Gaussian-blurred coverage of the rounded box (centre-relative p, half
 // size h, per-corner radii r4) — numerical integration along y over +-3σ.
-fn shadow_cov(p : vec2f, h : vec2f, r4 : vec4f, sigma : f32) -> f32 {
+fn shadow_cov(p : vec2f, h : vec2f, r4 : vec4f, ry4 : vec4f,
+              sigma : f32) -> f32 {
   let low = p.y - h.y;
   let high = p.y + h.y;
   let start = clamp(-3.0 * sigma, low, high);
@@ -147,8 +158,14 @@ fn shadow_cov(p : vec2f, h : vec2f, r4 : vec4f, sigma : f32) -> f32 {
     let row = p.y - y;
     let top = select(r4.x, r4.y, p.x > 0.0);
     let bot = select(r4.w, r4.z, p.x > 0.0);
-    let corner = min(select(top, bot, row > 0.0), min(h.x, h.y));
-    v = v + shadow_x(p.x, row, sigma, corner, h) * gaussian(y, sigma) * st;
+    let circular = all(r4 == ry4);
+    let rx = select(top, bot, row > 0.0);
+    let corner = select(min(rx, h.x), min(rx, min(h.x, h.y)), circular);
+    let ytop = select(ry4.x, ry4.y, p.x > 0.0);
+    let ybot = select(ry4.w, ry4.z, p.x > 0.0);
+    let cy = select(min(select(ytop, ybot, row > 0.0), h.y), corner,
+                    circular);
+    v = v + shadow_x(p.x, row, sigma, corner, cy, h) * gaussian(y, sigma) * st;
     y = y + st;
   }
   return v;
@@ -404,7 +421,7 @@ fn base_fs(in : VOut) -> vec4f {
   // Derivatives must sit in uniform control flow: take the inner mask's
   // before branching.
   let ip = in.local + in.half - (b.sh1.xy + b.sh1.zw * 0.5);
-  let di = sd_round_box(ip, b.sh1.zw * 0.5, b.shr);
+  let di = sd_box(ip, b.sh1.zw * 0.5, b.shr, b.gt);
   let aai = max(fwidth(di), 1e-4);
   if (b.sh0.z > 0.5 && b.sh0.w > 0.5) {
     // Inset: the quad is the padding box (pad = 0), kept inside by the
@@ -412,7 +429,7 @@ fn base_fs(in : VOut) -> vec4f {
     let sigma = b.sh0.x;
     var inner = 1.0 - smoothstep(-aai, aai, di);
     if (sigma > 0.05) {
-      inner = shadow_cov(ip, b.sh1.zw * 0.5, b.shr, sigma);
+      inner = shadow_cov(ip, b.sh1.zw * 0.5, b.shr, b.gt, sigma);
     }
     let keep = 1.0 - smoothstep(-aa, aa, d);
     let sa = b.fill.a * clamp(1.0 - inner, 0.0, 1.0) * keep;
@@ -422,7 +439,8 @@ fn base_fs(in : VOut) -> vec4f {
     let sigma = b.sh0.x;
     var cov = 1.0 - smoothstep(-aa, aa, d);
     if (sigma > 0.05) {
-      cov = shadow_cov(in.local, in.half - vec2f(b.sh0.y), b.radius, sigma);
+      cov = shadow_cov(in.local, in.half - vec2f(b.sh0.y), b.radius, b.ry,
+                       sigma);
     }
     // Fully opaque from the border-box edge outward, so the element's own
     // AA edge pixel composites over full shadow (no background seam).
@@ -501,23 +519,33 @@ fn base_fs(in : VOut) -> vec4f {
   var bgp = b.fill.rgb * b.fill.a;
   var bga = b.fill.a;
   if (b.grad.x > 0.5) {
-    // Gradient box = padding box.
-    let size = ih * 2.0;
+    // Gradient box = the tile (background-size/-position), else the
+    // padding box; gp is centre-relative.
+    var size = ih * 2.0;
     var gp = in.local - ic;
-    var gm = 1.0;
-    if (b.sh0.w > 0.5) {
-      // Repeat: wrap into the tile, so the border area shows the far end.
-      let q = gp + ih;
-      let sz = max(size, vec2f(1e-4));
-      gp = q - floor(q / sz) * sz - ih;
-    } else {
-      let e = ih - abs(gp);
-      gm = clamp(min(e.x, e.y) / aa + 0.5, 0.0, 1.0);
+    if (b.gt.z > 0.0) {
+      size = b.gt.zw;
+      gp = in.local - ic + ih - b.gt.xy - size * 0.5;
     }
+    let hs = size * 0.5;
+    // Repeating axes wrap into the tile; the others mask outside it.
+    let rm = u32(b.sh0.w + 0.5);
+    let rep = vec2<bool>((rm & 1u) != 0u, (rm & 2u) != 0u);
+    let q = gp + hs;
+    let sz = max(size, vec2f(1e-4));
+    gp = select(gp, q - floor(q / sz) * sz - hs, rep);
+    let e = select(hs - abs(gp), vec2f(1e9), rep);
+    let gm = clamp(min(e.x, e.y) / aa + 0.5, 0.0, 1.0);
     var t = 0.0;
-    let repeating = b.grad.x > 2.5;
-    let kind = select(b.grad.x, b.grad.x - 2.0, repeating);
-    if (kind < 1.5) {
+    let repeating = b.grad.x > 8.5;
+    let kind = select(b.grad.x, b.grad.x - 8.0, repeating);
+    if (kind > 2.5) {
+      // Conic: the angle about the centre, clockwise from up, past the from angle.
+      let c = (b.gradc.xy - vec2f(0.5)) * size;
+      let v = gp - c;
+      let a = atan2(v.x, -v.y) - b.grad.y;
+      t = fract(a * 0.15915494);
+    } else if (kind < 1.5) {
       let ang = b.grad.y;
       let dir = vec2f(sin(ang), -cos(ang));
       let len = abs(size.x * sin(ang)) + abs(size.y * cos(ang));
@@ -814,7 +842,9 @@ export class BoxPass implements RenderPass {
       d[o++] = c ? c.y + c.height : 1e9
       const g = b.gradient
       if (g && g.stops.length >= 2) {
-        d[o++] = (g.kind === 'linear' ? 1 : 2) + (g.repeating ? 2 : 0)
+        d[o++] =
+          (g.kind === 'linear' ? 1 : g.kind === 'radial' ? 2 : 3) +
+          (g.repeating ? 8 : 0)
         d[o++] = g.angle
         d[o++] = so / FLOATS_PER_STOP
         d[o++] = g.stops.length
@@ -854,7 +884,7 @@ export class BoxPass implements RenderPass {
         d[o++] = 0
         d[o++] = 0
         d[o++] = 0
-        d[o++] = g?.repeat ? 1 : 0
+        d[o++] = (g?.repeat?.[0] ? 1 : 0) + (g?.repeat?.[1] ? 2 : 0)
         const bi = b.bgInset
         for (let k = 0; k < 4; k++) {
           d[o++] = bi ? sw(bi[k] ?? 0) : 0
@@ -882,9 +912,14 @@ export class BoxPass implements RenderPass {
         d[o++] = c?.b ?? 0
         d[o++] = c?.a ?? 0
       }
-      const ry = sh ? undefined : b.radiusY
+      const ry = b.radiusY
       for (let k = 0; k < 4; k++) {
         d[o++] = ry ? (ry[k] ?? 0) : (b.radius[k] ?? 0)
+      }
+      // Shadows: the inner box's vertical radii; boxes: the gradient tile.
+      const gt = sh ? (sh.inner.radiusY ?? sh.inner.radius) : b.gradient?.tile
+      for (let k = 0; k < 4; k++) {
+        d[o++] = gt ? (gt[k] ?? 0) : 0
       }
     }
     this.shared.device.queue.writeBuffer(

@@ -56,6 +56,7 @@ import {
   beginTextRead,
   contentHeight,
   FAST_TEXT_READ,
+  isPlaced,
   readTextNode
 } from './textRuns'
 import {
@@ -762,19 +763,6 @@ export class SceneReader {
         own = [...own, ...inset]
       }
     }
-    if (s.boxShadow !== 'none') {
-      // Shadows draw circular corners only: keep the element's own
-      // records circular too, so box, images and shadow line up.
-      for (const r of own) {
-        if ((r.kind === 'box' || r.kind === 'image') && r.radiusY) {
-          const y = r.radiusY
-          r.radius = r.radius.map((v, i) =>
-            Math.min(v, y[i] ?? v)
-          ) as typeof r.radius
-          delete r.radiusY
-        }
-      }
-    }
 
     // An element's own box is clipped by its ancestors; its content
     // (children and text) is additionally clipped by its own overflow.
@@ -843,8 +831,10 @@ export class SceneReader {
             scene.allocId(),
             0, // fontId resolved by the text backend in a later stage
             0,
-            // Chunk rects are AABBs under a transform; split only upright.
-            FAST_TEXT_READ && !lin
+            FAST_TEXT_READ,
+            // Under a transform the split solves each line's frame from
+            // its AABB; glyphs it can't place are re-derived below.
+            lin
           )
           if (run) {
             if (lin) {
@@ -1260,6 +1250,9 @@ function transformGlyphs(
 ): void {
   let fallbackH = -1
   for (const g of glyphs) {
+    if (isPlaced(g)) {
+      continue
+    }
     const r = g.rect
     let size = solveLocalSize(lin, r.width, r.height)
     if (!size) {

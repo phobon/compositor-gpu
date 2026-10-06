@@ -14,8 +14,8 @@ presets `blur`/`displace`/`cursorGlow`/`clickRipple`/`ripple`). `docs/HANDOFF.md
 the last batch's verification and the first move on each item. Every harness passes
 on the current tree:
 
-- `npm run test:visual` — 23 shots (incl. `borderfill`, `texttransform`,
-  `duo`/`duo-s900` full-viewport), DOM-vs-GPU parity 0.14–2.2% (images 5%
+- `npm run test:visual` — 28 shots (incl. `borderfill`, `texttransform`, `shapes`,
+  `duo`/`duo-s900` full-viewport), DOM-vs-GPU parity 0.06–1.06% (images 2.9%
   from resampling). `-- --with-fx` installs `/fx` with no pass and must
   match the plain goldens at 0.00. Goldens are local + GPU-specific: run
   `-- --update` once on a new machine.
@@ -91,8 +91,8 @@ nothing invalidating the mirror at idle. **Safari**: read 2 ms, frame 1 ms.
 5. **Housekeeping.** Commit + push compositor-gpu, bump the submodule
    pointer in mds-home (`git -C compositor-gpu pull`), `git submodule`
    the local checkout back onto a clean HEAD; delete `_staging/` here and
-   `_to_delete/` in mds-home; upstream the opentype.js gvar fix
-   (`text/slug/gvarFix.ts`) as an issue/PR so the workaround can go.
+   `_to_delete/` in mds-home; file the opentype.js gvar issue
+   (`docs/UPSTREAM-gvar.md`, repro checked) so `text/slug/gvarFix.ts` can go.
 
 **Effects layer** (`docs/EFFECTS.md`, spec settled 2026-10-01; `/fx`
 entry point, three primitives — Pass, Material, Layer — over a shared
@@ -161,7 +161,8 @@ perspective transforms · culling · WebGL2 backend.
 
 ## Phase 1 — text that renders
 - [x] Validate the Slug shader in-browser; fix winding sign + band selection
-- [x] Analytic anti-aliasing (signed sub-pixel coverage + 3-tap vertical AA)
+- [x] Analytic anti-aliasing: Slug's dual rays (row + column bands), two
+      rays per direction, coverage gamma 0.87 (text parity 0.95% -> 0.63%)
 - [x] Resolve FontFace → bytes at runtime in `prepare()`
 - [x] Ligatures via GSUB `liga`/`clig` matching (fi/fl/ffi/ffl); honours
       `font-variant-ligatures` / `"liga" 0`
@@ -236,9 +237,10 @@ perspective transforms · culling · WebGL2 backend.
       (selected text keeps its colour); doubled AA on square-cornered
       round-dot corners; `cutouts: false`; windowed `fps`; URL SVGs sized
       from their fetched markup (same-origin, no fragment).
-- [ ] Atlas eviction + edge-filled gutters; conic gradients; gradient
-      background-size/position; elliptical shadows; text under a
-      transform read per grapheme
+- [x] Conic and repeating-conic gradients; gradient
+      `background-size`/`-position`/`-origin` tiles, per-axis repeat;
+      elliptical outer and inset shadows
+- [ ] Atlas eviction + edge-filled gutters
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
 - [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)
@@ -294,9 +296,11 @@ perspective transforms · culling · WebGL2 backend.
 - [x] `FAST_TEXT_READ`: per-node `getClientRects()` + Canvas 2D suffix-width
       split, per-chunk and per-grapheme fallbacks, `stats().textRead`
       (Range queries 84k → 15k on the 400-card page, full read −26%)
-- [ ] Fast text read under a transform (rotated cards read per grapheme;
-      needs local-space line rects) and for `font-optical-sizing: none` on
-      an opsz axis (the canvas `font` shorthand always uses auto)
+- [x] Fast text read under a transform: lines measured in the local frame
+      and placed through the linear part (perGrapheme 10.8k -> 2.7k, Range
+      queries 15k -> 7.8k on the 400-card page)
+- [ ] Fast text read for `font-optical-sizing: none` on an opsz axis (the
+      canvas `font` shorthand always uses auto)
 - [x] Batch builder: grid-indexed members + per-glyph text footprints
       (400-card page: 841 → 114 draws)
 - [x] `text-decoration` underline / overline / line-through (per line fragment,

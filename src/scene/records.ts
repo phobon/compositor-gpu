@@ -41,20 +41,24 @@ export interface GradientStop {
 
 /** A resolved CSS gradient (angles/corners already resolved against rect). */
 export interface Gradient {
-  kind: 'linear' | 'radial'
-  /** linear: CSS angle in radians (0 = to top, clockwise). */
+  kind: 'linear' | 'radial' | 'conic'
+  /** linear: CSS angle in radians (0 = to top, clockwise); conic: the
+   * `from` angle. */
   angle: number
-  /** radial: centre as a fraction of the box (0..1). */
+  /** radial, conic: centre as a fraction of the box (0..1). */
   center: [number, number]
   /** radial: radii in px. */
   radii: [number, number]
   stops: GradientStop[]
+  /** background-size / -position: the tile, x, y (from the padding box's
+   * top-left), w, h, local px; absent: the padding box. */
+  tile?: [number, number, number, number]
   /** `repeating-*-gradient`: the stop pattern repeats past the last stop
    * (period = last pos - first pos). */
   repeating?: boolean
-  /** background-repeat is not `no-repeat`: the padding-box tile repeats
-   * into the border area when background-clip reaches it. */
-  repeat?: boolean
+  /** background-repeat per axis (x, y): the tile repeats along that axis
+   * (`space`/`round` approximated as `repeat`), else paints once. */
+  repeat?: [boolean, boolean]
 }
 
 /** Coordinate space of a record's rect / xform / clip (see top of file).
@@ -120,7 +124,15 @@ export interface BoxRecord {
   shadow?: {
     color: RGBA
     blur: number
-    inner: { x: number; y: number; w: number; h: number; radius: Corners }
+    inner: {
+      x: number
+      y: number
+      w: number
+      h: number
+      radius: Corners
+      /** Vertical radii when elliptical. */
+      radiusY?: Corners
+    }
     inset?: boolean
   } | null
   /** Multiplier applied by the pass. The reader writes 1: an element's

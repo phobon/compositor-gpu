@@ -149,19 +149,13 @@ fn glyph_clip(k : u32) -> vec4f {
 // control flow. 0 for a glyph Slug doesn't draw (emoji, fallback faces).
 fn glyph_coverage(k : u32, uv : vec2f) -> f32 {
   let em = vec2f(uv.x, 1.0 - uv.y);
-  let invPx = 1.0 / max(fwidth(em.x), 1e-5);
-  let pxH = max(fwidth(em.y), 1e-5);
+  let inv = 1.0 / max(fwidth(em), vec2f(1e-5));
   let g = fx_glyph(k);
   var gref = g.gref;
   if (gref.y == 0u) {
     gref = vec4u(0u, 1u, 0u, 0u);
   }
-  var sum = 0.0;
-  for (var t = 0; t < 3; t = t + 1) {
-    let off = (f32(t) + 0.5) / 3.0 - 0.5;
-    sum = sum + abs(coverage_row(vec2f(em.x, em.y + off * pxH), gref, invPx));
-  }
-  return select(clamp(sum / 3.0, 0.0, 1.0), 0.0, g.gref.y == 0u);
+  return select(slug_coverage(em, gref, inv), 0.0, g.gref.y == 0u);
 }
 `
 
@@ -902,7 +896,7 @@ function sideResources(
     })
   // At least one element of each array (Glyph is 112 bytes).
   const g = glyphs
-    ? { glyphs: buf(112), bands: buf(16), curves: buf(32) }
+    ? { glyphs: buf(112), bands: buf(512), curves: buf(32) }
     : null
   return {
     image: tex &&

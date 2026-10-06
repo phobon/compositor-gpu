@@ -3,6 +3,14 @@ import { isColorGrapheme } from '../text/glyphAtlas'
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
 import { toDocRect } from './styles'
+import {
+  type Affine,
+  affine,
+  type Mat2,
+  solveLocalSize,
+  solveTranslation,
+  solveWidthGivenHeight
+} from './transform'
 
 /** Read text by line fragment or by whitespace-free chunk and split it
  * into graphemes with Canvas 2D advances (see `readTextNode`). False reads
@@ -102,7 +110,7 @@ export function graphemeClass(cell: string): GraphemeClass {
  * text". Chrome splits a ligature's advance across its graphemes' rects;
  * the Slug backend merges those back into the ligature glyph.
  *
- * With `fast` (FAST_TEXT_READ, off under a transform) the node is read
+ * With `fast` (FAST_TEXT_READ) the node is read
  * with one `getClientRects()` and its lines are split into graphemes from
  * Canvas 2D advances (`readLines`); failing that, each whitespace-free
  * chunk is read with one Range and split the same way (`readChunk`);
@@ -133,7 +141,8 @@ export function readTextNode(
   runId: number,
   fontId: number,
   startIndex: number,
-  fast = FAST_TEXT_READ
+  fast = FAST_TEXT_READ,
+  lin: Mat2 | null = null
 ): GlyphRun | null {
   const text = node.nodeValue
   if (!text?.trim()) {
@@ -169,15 +178,16 @@ export function readTextNode(
     b1 = cell
     off += cell.length
   }
-  const push = (i: number, rect: Rect): void => {
+  const push = (i: number, rect: Rect, placed?: Placed): void => {
     const cell = shown[i] ?? ''
     const cls = graphemeClass(cell)
-    glyphs.push({
+    const g: Glyph = {
       index: startIndex + i,
       rect,
-      // Untransformed; the reader re-derives these under a transform.
-      xform: [1, 0, 0, 1, rect.x, rect.y],
-      local: { w: rect.width, h: rect.height },
+      // Untransformed; the reader re-derives these under a transform
+      // unless the split placed them (`placed`).
+      xform: placed ? placed.xform : [1, 0, 0, 1, rect.x, rect.y],
+      local: placed ? placed.local : { w: rect.width, h: rect.height },
       glyphId: cell.codePointAt(0) ?? 0,
       text: cell,
       colour: cls.colour,
@@ -186,10 +196,19 @@ export function readTextNode(
       fontSize,
       color,
       offset: { x: 0, y: 0 }
-    })
+    }
+    if (placed) {
+      PLACED.add(g)
+    }
+    glyphs.push(g)
   }
   const range = document.createRange()
   const split = fast ? splitSetup(s) : null
+  if (split) {
+    split.lin = lin
+    split.contentH = -1
+    split.style = s
+  }
   const stats = textReadStats
   const lined =
     split?.lines === true &&
@@ -315,6 +334,11 @@ interface SplitSetup {
   letterSpacing: number
   /** A chunk rect taller than this spans lines (1.5x the content height). */
   maxHeight: number
+  /** The text's transform (linear part), null upright; set per node. */
+  lin?: Mat2 | null
+  /** The font's content height, -1 until needed (frameOf). */
+  contentH: number
+  style?: CSSStyleDeclaration
   /** Text is shown untransformed, so a chunk is a substring of the node. */
   plain: boolean
   /** Whitespace collapses and lines aren't justified (`readLines`). */
@@ -414,7 +438,9 @@ function readSplitSetup(
       collapse === 'collapse' &&
       s.textAlign !== 'justify' &&
       lastAlign !== 'justify',
-    space: cache.space + letterSpacing + (Number.parseFloat(s.wordSpacing) || 0)
+    space:
+      cache.space + letterSpacing + (Number.parseFloat(s.wordSpacing) || 0),
+    contentH: -1
   }
 }
 
@@ -475,6 +501,52 @@ function suffixWidths(split: SplitSetup, joined: string): Float64Array {
   }
   cache.set(joined, out)
   return out
+}
+
+/** Glyphs the split placed in their transformed line (xform and local
+ * final); the reader re-derives the others from their AABBs. */
+const PLACED = new WeakSet<Glyph>()
+export const isPlaced = (g: Glyph): boolean => PLACED.has(g)
+
+/** A placed glyph's frame (see `push`). */
+interface Placed {
+  xform: Affine
+  local: { w: number; h: number }
+}
+
+/**
+ * A line or chunk rect in its own frame: local size and the affine of its
+ * top-left, from its AABB under `split.lin` (sized as transformGlyphs
+ * does: the 2×2 solve, else the font's content height). Null upright or
+ * when the AABB can't be solved.
+ */
+function frameOf(
+  r: DOMRect,
+  split: SplitSetup
+): { w: number; h: number; xform: Affine } | null {
+  const lin = split.lin
+  if (!lin) {
+    return null
+  }
+  const d = toDocRect(r)
+  let size = solveLocalSize(lin, d.width, d.height)
+  if (!size) {
+    if (split.contentH < 0 && split.style) {
+      split.contentH = contentHeight(split.style)
+    }
+    const w = solveWidthGivenHeight(lin, split.contentH, d.width, d.height)
+    if (w === null) {
+      return null
+    }
+    size = [w, split.contentH]
+  }
+  const [tx, ty] = solveTranslation(lin, size[0], size[1], d.x, d.y)
+  return { w: size[0], h: size[1], xform: affine(lin, tx, ty) }
+}
+
+/** Local width of a rect: its frame's under a transform, else its own. */
+function widthOf(r: DOMRect, split: SplitSetup): number | null {
+  return split.lin ? (frameOf(r, split)?.w ?? null) : r.width
 }
 
 /** Collapsible whitespace (a run renders as at most one space). */
@@ -582,26 +654,28 @@ function readLines(
     if (!r || r.width <= 0) {
       continue
     }
-    if (c >= count || r.height > split.maxHeight) {
+    const lw = widthOf(r, split)
+    const lh = split.lin ? (frameOf(r, split)?.h ?? 0) : r.height
+    if (lw === null || c >= count || lh > split.maxHeight) {
       return false
     }
-    let matched = fit(c, 0, r.width)
+    let matched = fit(c, 0, lw)
     // Only the node's first fragment can open with a rendered space.
     if (leading) {
       leading = false
-      const spaced = fit(0, sp, r.width)
+      const spaced = fit(0, sp, lw)
       if (matched >= 0 && spaced >= 0) {
         // A leading space or a trailing one: measure the leading run.
         range.setStart(node, 0)
         range.setEnd(node, offs[starts[0] ?? 0] ?? 0)
-        const lead = range.getBoundingClientRect().width
+        const lead = widthOf(range.getBoundingClientRect(), split) ?? 0
         textReadStats.ranges++
-        matched = fit(0, lead > sp / 2 ? sp : 0, r.width)
+        matched = fit(0, lead > sp / 2 ? sp : 0, lw)
       } else if (spaced >= 0) {
         matched = spaced
       } else if (matched >= 0) {
-        matched = fit(0, 0, r.width)
-      } else if (Math.abs(r.width - sp) <= SPLIT_TOLERANCE) {
+        matched = fit(0, 0, lw)
+      } else if (Math.abs(lw - sp) <= SPLIT_TOLERANCE) {
         // A lone leading space that ended the line before.
         continue
       }
@@ -622,6 +696,7 @@ function readLines(
   split.cache.hits++
   let baseOf: DOMRect | null = null
   let base: Rect = { x: 0, y: 0, width: 0, height: 0 }
+  let frame: { w: number; h: number; xform: Affine } | null = null
   for (let c = 0; c < count; c++) {
     const i = starts[c] ?? 0
     const m = (ends[c] ?? 0) - i
@@ -646,11 +721,64 @@ function readLines(
     if (r !== baseOf) {
       baseOf = r
       base = toDocRect(r)
+      frame = frameOf(r, split)
+    }
+    if (frame) {
+      pushPlaced(
+        widths[c] ?? new Float64Array(1),
+        m,
+        ls,
+        i,
+        xOf[c] ?? 0,
+        frame,
+        push
+      )
+      continue
     }
     const x = base.x + (xOf[c] ?? 0)
     pushSplit(widths[c] ?? new Float64Array(1), m, ls, i, x, base, push)
   }
   return true
+}
+
+/** pushSplit in a transformed line: grapheme k at local x `x + x0_k` in
+ * `frame`, placed directly (xform, local, AABB rect). */
+function pushPlaced(
+  suf: Float64Array,
+  m: number,
+  ls: number,
+  i: number,
+  x: number,
+  frame: { w: number; h: number; xform: Affine },
+  push: (i: number, rect: Rect, placed?: Placed) => void
+): void {
+  const [a, b, c, d, tx, ty] = frame.xform
+  const h = frame.h
+  const total = (suf[0] ?? 0) + ls * m
+  let x0 = 0
+  for (let k = 0; k < m; k++) {
+    const x1 = total - (suf[k + 1] ?? 0) - ls * (m - k - 1)
+    const w = x1 - x0
+    if (w > 0) {
+      const ox = tx + a * (x + x0)
+      const oy = ty + b * (x + x0)
+      const xs = [ox, ox + a * w, ox + c * h, ox + a * w + c * h]
+      const ys = [oy, oy + b * w, oy + d * h, oy + b * w + d * h]
+      const minX = Math.min(...xs)
+      const minY = Math.min(...ys)
+      push(
+        i + k,
+        {
+          x: minX,
+          y: minY,
+          width: Math.max(...xs) - minX,
+          height: Math.max(...ys) - minY
+        },
+        { xform: [a, b, c, d, ox, oy], local: { w, h } }
+      )
+    }
+    x0 = x1
+  }
 }
 
 /** Push the `m` grapheme rects of a chunk starting at doc x `x`, from its
@@ -717,7 +845,13 @@ function readChunk(
   range.setEnd(node, end)
   const r = range.getBoundingClientRect()
   textReadStats.ranges++
-  if (r.height <= 0 || r.height > split.maxHeight) {
+  const frame = frameOf(r, split)
+  if (split.lin && !frame) {
+    return false
+  }
+  const rw = frame ? frame.w : r.width
+  const rh = frame ? frame.h : r.height
+  if (rh <= 0 || rh > split.maxHeight) {
     return false
   }
   const suf = suffixWidths(split, joined)
@@ -727,11 +861,15 @@ function readChunk(
   }
   const ls = split.letterSpacing
   const total = (suf[0] ?? 0) + ls * m
-  if (Math.abs(r.width - total) > SPLIT_TOLERANCE) {
+  if (Math.abs(rw - total) > SPLIT_TOLERANCE) {
     split.cache.misses++
     return false
   }
   split.cache.hits++
+  if (frame) {
+    pushPlaced(suf, m, ls, i, 0, frame, push)
+    return true
+  }
   const base = toDocRect(r)
   pushSplit(suf, m, ls, i, base.x, base, push)
   return true

@@ -3,6 +3,7 @@ import type { Layer } from '../types'
 import { splitTopLevel } from '../util/css'
 import { backgroundLayers } from './gradient'
 import {
+  backgroundSize,
   boxInset,
   insetCorners,
   layerClipInset,
@@ -51,43 +52,6 @@ export function mapBackgroundSize(
     return 'fill'
   }
   return 'none'
-}
-
-/** Explicit background-size lengths in CSS px against the positioning
- * area `w`×`h` ([w, h], null for auto), or null for auto / cover /
- * contain / `100% 100%`. */
-export function backgroundSize(
-  size: string,
-  w: number,
-  h: number
-): [number | null, number | null] | null {
-  const s = size.trim()
-  if (
-    s === '' ||
-    s === 'auto' ||
-    s === 'auto auto' ||
-    s === 'cover' ||
-    s === 'contain' ||
-    s === '100% 100%'
-  ) {
-    return null
-  }
-  const parts = s.split(/\s+/)
-  const len = (tok: string | undefined, dim: number): number | null => {
-    if (tok === undefined || tok === 'auto') {
-      return null
-    }
-    const n = Number.parseFloat(tok)
-    if (!Number.isFinite(n)) {
-      return null
-    }
-    return tok.endsWith('%') ? (n / 100) * dim : n
-  }
-  const out: [number | null, number | null] = [
-    len(parts[0], w),
-    len(parts[1], h)
-  ]
-  return out[0] === null && out[1] === null ? null : out
 }
 
 /** background-repeat -> whether the image tiles. Only exact `no-repeat`
@@ -387,7 +351,7 @@ export function backgroundLayerRecords(
       z: 0,
       clip
     })
-    reaches ||= inset === null && gradient.repeat === true
+    reaches ||= inset === null && gradient.repeat?.some(Boolean) === true
   }
   if (box?.border && reaches && out.length > 0) {
     const top: BoxRecord = {

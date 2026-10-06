@@ -17,6 +17,10 @@ export interface GlyphBands {
   bbox: { x1: number; y1: number; x2: number; y2: number }
   /** Band boundaries (y, ascending) with slice [start,end) into `curves`. */
   bands: { yMin: number; yMax: number; start: number; end: number }[]
+  /** Column bands (x, ascending; yMin/yMax hold the x range): their slices
+   * of `curves` hold the quads x/y-swapped, so the shader's vertical ray
+   * is the same code as its horizontal one. */
+  vbands: { yMin: number; yMax: number; start: number; end: number }[]
   /** Flat quad list, grouped by band (a quad may appear in multiple bands). */
   curves: Quad[]
 }
@@ -199,6 +203,7 @@ export function makeInstance(
         y2: bb.y2 / upm
       },
       bands: bands.bands,
+      vbands: bands.vbands,
       curves: bands.curves
     }
     cache.set(index, result)
@@ -356,25 +361,41 @@ function cubicToQuads(
   ]
 }
 
-/** Bucket quads into horizontal bands (Slug's acceleration structure). */
+/** Bucket quads into row bands, then column bands with the quads
+ * x/y-swapped (Slug's acceleration structure for its two rays). */
 function bucketIntoBands(quads: Quad[]): {
   bands: GlyphBands['bands']
+  vbands: GlyphBands['vbands']
   curves: Quad[]
 } {
   const curves: Quad[] = []
-  const bands: GlyphBands['bands'] = []
-  for (let i = 0; i < BAND_COUNT; i++) {
-    const yMin = i / BAND_COUNT
-    const yMax = (i + 1) / BAND_COUNT
-    const start = curves.length
-    for (const q of quads) {
-      const lo = Math.min(q.y0, q.cy, q.y1)
-      const hi = Math.max(q.y0, q.cy, q.y1)
-      if (hi >= yMin && lo <= yMax) {
-        curves.push(q)
+  const bucket = (qs: Quad[]): GlyphBands['bands'] => {
+    const out: GlyphBands['bands'] = []
+    for (let i = 0; i < BAND_COUNT; i++) {
+      const yMin = i / BAND_COUNT
+      const yMax = (i + 1) / BAND_COUNT
+      const start = curves.length
+      for (const q of qs) {
+        const lo = Math.min(q.y0, q.cy, q.y1)
+        const hi = Math.max(q.y0, q.cy, q.y1)
+        if (hi >= yMin && lo <= yMax) {
+          curves.push(q)
+        }
       }
+      out.push({ yMin, yMax, start, end: curves.length })
     }
-    bands.push({ yMin, yMax, start, end: curves.length })
+    return out
   }
-  return { bands, curves }
+  const bands = bucket(quads)
+  const vbands = bucket(
+    quads.map((q) => ({
+      x0: q.y0,
+      y0: q.x0,
+      cx: q.cy,
+      cy: q.cx,
+      x1: q.y1,
+      y1: q.x1
+    }))
+  )
+  return { bands, vbands, curves }
 }

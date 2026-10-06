@@ -38,8 +38,8 @@ partial-read and frame-encode medians (`test/perf/out/last.json`);
 (mostly the browser's own reflow), encode <1 ms; the run also prints
 `stats().textRead`. Range reads are no longer the floor: `FAST_TEXT_READ`
 cut them from 84k to ~15k per full read (profile: 1103 → 332 ms native
-over five reads); what remains is 40 rotated cards (the split is off under
-a transform), 16px titles (opsz mismatch, see Text), and computed-style
+over five reads), and to ~7.8k with the split under transforms; what
+remains is 16px titles (opsz mismatch, see Text) and computed-style
 reads. Timings swing ±30% run to run in the sandbox (more when other
 jobs share the machine), so compare A/B in the same session. That page draws in ~114 calls: the batch builder indexes
 members in a 128px grid and tests text runs per glyph (a run's union rect
@@ -213,13 +213,17 @@ the element's own box record over the colour; the layers above are their
 own records, bottom to top (gradients as border-less boxes that keep the
 border widths, url() layers as ImageRecords with `bgSize` for explicit
 `background-size` lengths), and the border moves to a record on top when
-one of them reaches the border area. `repeating-*-gradient` is gradient
-kind + 2 in the box shader. Radii are per axis (`readCornerRadii`):
+one of them reaches the border area. Gradient kind in the box shader is
+1 linear, 2 radial, 3 conic, + 8 when repeating; a gradient layer sized,
+positioned or with an origin other than the padding box carries
+`gradient.tile` (padding-box relative, packed in the box's `gt`), and
+`gradient.repeat` wraps per axis (`sh0.w`: 1 x, 2 y). Radii are per axis (`readCornerRadii`):
 records carry `radius` (horizontal) and `radiusY` only when elliptical;
 the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
-`sd_round_box` exactly when circular. Shadows stay circular, so an
-element with `box-shadow` keeps its own records circular (the smaller
-radius per corner). The selection highlight (`dom/selection.ts`) is read
+`sd_round_box` exactly when circular. Shadows are elliptical too
+(`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
+`gt`), and reduce to the circular expressions when `radiusY` equals
+`radius`. The selection highlight (`dom/selection.ts`) is read
 with the text: boxes at the front of `run.decorations`, re-read on
 `selectionchange` for the text parents the old and new selections touch
 (`selectedParents`; a full read past 256).
@@ -335,7 +339,9 @@ provenance. Pipeline:
 1. `dom/textRuns.ts` ranges over each **grapheme** (`Intl.Segmenter`) in a text
    node and takes its client rect — this is how the browser's shaping, kerning,
    bidi and line breaking are inherited for free. With `FAST_TEXT_READ`
-   (on; off under a transform) it takes far fewer rects: one
+   (on, also under a transform: lines and widths are measured in the
+   element's local frame and placed through its linear part, `frameOf`/
+   `pushPlaced`) it takes far fewer rects: one
    `getClientRects()` per text node (a rect per line fragment), with lines
    and graphemes placed from Canvas 2D `measureText` suffix widths
    (`readLines`), else one Range per whitespace-free chunk (`readChunk`),
@@ -352,15 +358,18 @@ provenance. Pipeline:
    fi/fl/ffi match the browser; `calt` contextual alternates are not applied.
 2. `font.ts` (opentype.js) flattens each outline to quadratics normalised into
    the glyph's own tight bbox `[0,1]²`, **y-up**, and buckets them into 16
-   horizontal bands. It reads `glyph.path` (font units, y-up) — *not*
+   row bands, then 16 column bands whose curves are stored x/y-swapped. It reads `glyph.path` (font units, y-up) — *not*
    `getPath()`, which is y-down and baseline-relative and silently produces
    nothing. This trap has already been hit once (commit 602d3e3).
 3. `rasterizer.ts` (`SlugText`) packs bands + curves into storage buffers once
    per font and one 16-float instance per on-screen glyph. The instance quad is
    the glyph's **ink box**, derived from ascender/descender metrics and the
    grapheme's line box — not the line box itself — so outlines aren't stretched.
-4. `shaders.ts` computes signed sub-pixel coverage from the band's curve
-   crossings with a 3-tap vertical supersample. No atlas, no resolution ceiling.
+4. `shaders.ts` (`slug_coverage`, shared with `/fx` Layers) casts Slug's
+   two rays, horizontal through the row band and vertical through the
+   column band, each as two rays a quarter pixel either side of the centre,
+   and blends them by their weights; `SLUG_GAMMA` (0.87) thickens edges to
+   match Chrome's weight. No atlas, no resolution ceiling.
 5. **Fallback atlas** (`text/glyphAtlas.ts` + `text/atlasShader.ts`): any
    grapheme Slug can't draw — emoji/colour glyphs, code points the face lacks
    (`.notdef`), multi-code-point clusters, or a run whose family has no

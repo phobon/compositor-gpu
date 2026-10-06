@@ -11,7 +11,7 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `718df5d` (leftovers, open item 4; M3b `7a9f504`) + uncommitted M3c (open item 3) |
+| `~/code/compositor-gpu` | the library, source of truth | `01c2a53 Stacked effects` (M3c, open item 3) + the uncommitted mirror batch (open item 7) |
 | `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
 | `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
 
@@ -123,7 +123,7 @@ the compositor.
 
 1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
    `5c90a6b`, `realContext` / partial-read fix `a36d65b`, M3b `7a9f504`;
-   leftovers `718df5d`; M3c (item 3) is uncommitted. M3b added the dev dependency
+   leftovers `718df5d`, M3c `01c2a53`; the mirror batch (item 7) is uncommitted. M3b added the dev dependency
    `unplugin-typegpu@0.12.3` (`package.json`, `pnpm-lock.yaml`): run
    `pnpm install` before `npm run dev` or the harnesses, since
    `vite.config.ts` imports it. MDS-home: bump the submodule to `origin/main` once
@@ -217,7 +217,7 @@ the compositor.
    Try `/fx.html`: the M3b section has toggles for heading glyphs, image
    tiles, simulated dots, a raw box, a 'use gpu' box material and a
    'use gpu' grey pass.
-   **M3c follow-ons — built 2026-10-06, uncommitted:** passes take
+   **M3c follow-ons — built 2026-10-06, committed (`01c2a53`):** passes take
    `image: target` (`image(uv)` / `image_level` / `image_size()`, bind
    group 3); glyph materials get `mat_index(record)`, the glyph's stable
    index in the target (written into the Slug instance from
@@ -240,8 +240,7 @@ the compositor.
      url() layers take `background-size` lengths (`bgSize`).
    - Elliptical radii: `border-radius: 50%` on a non-square box,
      `60px / 24px`; `radiusY` on box / image / cutout records, `sd_box`
-     in `gpu/sdf.ts`. Shadows stay circular, so an element with a
-     `box-shadow` keeps circular corners throughout.
+     in `gpu/sdf.ts`. Shadows are elliptical too since item 7.
    - `::selection` highlight boxes (Ben chose highlight only: selected
      text keeps its colour), re-read on `selectionchange`.
    - Square-cornered round-dot borders double the corner dots' AA as
@@ -249,9 +248,6 @@ the compositor.
    - `cutouts: false` option; readout `fps` is the frames rendered in
      the last second; URL SVGs are sized from their fetched markup
      (same-origin, no `#fragment`).
-   Not done: text under a CSS transform still reads per grapheme (the
-   fast path needs local-space line rects, which the browser only gives
-   as AABBs under a transform).
    New visual shots `bglayers` and `bglayers-select` (`data-vr-select`);
    goldens for `outline`, `outline-focus`, `borderfill` updated (the
    corner dots and the 50% outline ellipse).
@@ -271,7 +267,28 @@ the compositor.
    `images` parity 4.75 → 2.90 %), no cutout for ignored elements above
    the canvas. New visual shots `outline` and `outline-focus`
    (`data-vr-focus`).
-6. **Upstream** the gvar issue (`docs/UPSTREAM-gvar.md`).
+6. **Upstream** the gvar issue (`docs/UPSTREAM-gvar.md`; repro checked
+   against `playground/InterVariable.ttf` on 2026-10-06). Ben files it.
+7. **Mirror batch 2026-10-06, uncommitted (on top of M3c):**
+   - Conic and repeating-conic gradients; gradient layers honour
+     `background-size`/`-position`/`-origin` (`gradient.tile`, packed in
+     `gt`), `repeat-x`/`-y` per axis. Kind: 1 linear, 2 radial, 3 conic,
+     + 8 repeating.
+   - Slug curve budget `MAX_CURVES` 1024 (column bands double a glyph's
+     stored curves).
+   - Elliptical outer and inset shadows (`shadow_x`/`shadow_cov`), so
+     elements with `box-shadow` keep elliptical corners.
+   - `FAST_TEXT_READ` under a transform (`frameOf`/`pushPlaced`):
+     perGrapheme 10.8k -> 2.7k, Range queries 15k -> 7.8k, 400-card page.
+   - Text AA: Slug's dual rays (row + column bands), two rays per
+     direction, `SLUG_GAMMA` 0.87. Text parity 0.95 -> 0.63 %, every
+     text-bearing shot improved; the `y` tail streak is gone.
+   New visual shot `shapes` (incl. repeat-x and content-box origin); all
+   visual and fx goldens re-taken (text). Opus review: no serious
+   defects; its fixes (per-axis repeat, origin, `background-size` 0
+   paints nothing, curve budget, `pow(0)` guard) are in. Perf: frame
+   time +3 % under SwiftShader vs ffd452c (a CPU proxy; GPU time on real
+   hardware not measured).
 
 ## Gotchas
 
