@@ -1,6 +1,12 @@
 /// <reference path="./fx.d.ts" />
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import {
+  createDialKit,
+  createDialRoot,
+  type DialConfig,
+  type TransitionConfig
+} from 'dialkit/vanilla'
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import * as std from 'typegpu/std'
@@ -11,14 +17,15 @@ import {
   cursorGlow,
   displace,
   gpu,
+  ripple as imageRipple,
   type Layer,
-  MatIn,
   type Material,
+  MatIn,
   type Pass,
-  progressiveBlur,
-  ripple as imageRipple
+  progressiveBlur
 } from '@/fx'
 import { createCompositor } from '@/index'
+import 'dialkit/vanilla/styles.css'
 
 // Effects playground: the mirror plus `compositor-gpu/fx` with the blur
 // and displace presets. `?vr` hides the control panel and pins time and
@@ -56,30 +63,68 @@ function imagesReady(): Promise<void> {
   ).then(() => undefined)
 }
 
-/** Bind a checkbox to `pass.enabled` and each slider to a param. */
-function bindPanel(key: string, pass: Pass | Layer | Material): void {
-  const box = $(`c-${key}`) as HTMLInputElement
-  box.checked = pass.enabled
-  box.addEventListener('change', () => {
-    pass.enabled = box.checked
-  })
-  const params = pass.params as Record<string, number>
-  for (const input of document.querySelectorAll<HTMLInputElement>(
-    `[id^="s-${key}-"]`
-  )) {
-    const name = input.id.slice(`s-${key}-`.length)
-    const out = input.nextElementSibling as HTMLOutputElement | null
-    input.value = String(params[name])
-    if (out) {
-      out.value = String(params[name])
+type Effect = Pass | Layer | Material
+/** An effect's DialKit folder: its toggle and its params' ranges. */
+interface Dial {
+  name: string
+  effect: Effect
+  params?: Record<string, [number, number, number]>
+}
+
+/** cubic-bezier(x1, y1, x2, y2) at progress x (DialKit easing curves). */
+function bezier(e: readonly number[], x: number): number {
+  const [x1 = 0, y1 = 0, x2 = 1, y2 = 1] = e
+  const at = (a: number, b: number, t: number): number =>
+    3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2
+    if (at(x1, x2, mid) < x) {
+      lo = mid
+    } else {
+      hi = mid
     }
-    input.addEventListener('input', () => {
-      params[name] = Number(input.value)
-      if (out) {
-        out.value = input.value
-      }
-    })
   }
+  return at(y1, y2, (lo + hi) / 2)
+}
+
+/** The DialKit panel: a folder per effect (on/off and its params). */
+function mountDials(
+  dials: Dial[],
+  extra: DialConfig,
+  onAction: (a: string) => void
+): ReturnType<typeof createDialKit> {
+  const config: DialConfig = {}
+  for (const d of dials) {
+    const params = d.effect.params as Record<string, number>
+    const folder: DialConfig = { _collapsed: true, enabled: d.effect.enabled }
+    for (const [k, [min, max, step]] of Object.entries(d.params ?? {})) {
+      folder[k] = [params[k] ?? min, min, max, step]
+    }
+    config[d.name] = folder
+  }
+  Object.assign(config, extra)
+  createDialRoot({ position: 'top-right', theme: 'dark' })
+  const kit = createDialKit('Effects', config, { onAction })
+  kit.subscribe((values) => {
+    const v = values as Record<string, Record<string, number | boolean>>
+    for (const d of dials) {
+      const f = v[d.name]
+      if (!f) {
+        continue
+      }
+      d.effect.enabled = f.enabled === true
+      const params = d.effect.params as Record<string, number>
+      for (const k of Object.keys(d.params ?? {})) {
+        const x = f[k]
+        if (typeof x === 'number') {
+          params[k] = x
+        }
+      }
+    }
+  })
+  return kit
 }
 
 async function boot(): Promise<void> {
@@ -150,7 +195,24 @@ async function boot(): Promise<void> {
       t.enabled = mode !== 'off'
     })
   }
+  // The stagger's settings, tuned from the panel's Layer transforms folder.
+  const tfAnim = {
+    fromScale: 0.8,
+    fromY: 60,
+    fromRotate: 0,
+    fromOpacity: 0,
+    stagger: 0.12,
+    transition: {
+      type: 'easing',
+      duration: 0.7,
+      ease: [0.22, 1, 0.36, 1]
+    } as TransitionConfig
+  }
   const tfPlay = (): void => {
+    const a = tfAnim
+    const tr = a.transition
+    const dur = tr.type === 'easing' ? tr.duration : (tr.visualDuration ?? 0.5)
+    const ease = tr.type === 'easing' ? tr.ease : [0.22, 1, 0.36, 1]
     const start = performance.now()
     tf.forEach((t) => {
       t.enabled = true
@@ -158,11 +220,15 @@ async function boot(): Promise<void> {
     const step = (now: number): void => {
       let busy = false
       tf.forEach((t, i) => {
-        const k = Math.min(1, Math.max(0, (now - start - i * 120) / 700))
-        const e = 1 - (1 - k) ** 3
-        t.scale = 0.8 + 0.2 * e
-        t.y = 60 * (1 - e)
-        t.opacity = e
+        const k = Math.min(
+          1,
+          Math.max(0, ((now - start) / 1000 - i * a.stagger) / dur)
+        )
+        const e = bezier(ease, k)
+        t.scale = a.fromScale + (1 - a.fromScale) * e
+        t.y = a.fromY * (1 - e)
+        t.rotate = a.fromRotate * (1 - e)
+        t.opacity = a.fromOpacity + (1 - a.fromOpacity) * e
         busy ||= k < 1
       })
       if (busy) {
@@ -202,7 +268,12 @@ async function boot(): Promise<void> {
       // blue box's centre to past the third box.
       const r = anchor.rect
       const rect = l.params.rect as number[]
-      const next = [r.x + r.width / 2, r.y + r.height * 0.35, 260, r.height * 0.3]
+      const next = [
+        r.x + r.width / 2,
+        r.y + r.height * 0.35,
+        260,
+        r.height * 0.3
+      ]
       if (next.some((v, i) => v !== rect[i])) {
         l.params.rect = next
       }
@@ -403,7 +474,10 @@ async function boot(): Promise<void> {
         }`
     }
   })
-  const tgFragment = tgpu.fn([MatIn], d.vec4f)((m) => {
+  const tgFragment = tgpu.fn(
+    [MatIn],
+    d.vec4f
+  )((m) => {
     'use gpu'
     const s = std.step(0.5, std.fract((m.local.x - m.local.y) / 20))
     const gold = d.vec4f(m.color.w, m.color.w * 0.8, 0, m.color.w)
@@ -474,24 +548,96 @@ async function boot(): Promise<void> {
         return i + c * (1.0 - i.a);
       }`
   })
-  bindPanel('stagger', stagger)
-  bindPanel('pimage', pimage)
-  bindPanel('lglyphs', lglyphs)
-  bindPanel('limage', limage)
-  bindPanel('sim', sim)
-  bindPanel('raw', raw)
-  bindPanel('tgbox', tgbox)
-  bindPanel('tgjs', tgjs)
-  bindPanel('blur', b)
-  bindPanel('displace', dsp)
-  bindPanel('mripple', mripple)
-  bindPanel('wave', wave)
-  bindPanel('bend', bend)
-  bindPanel('tint', tint)
-  bindPanel('glow', glow)
-  bindPanel('ripple', ripple)
-  bindPanel('region', region)
-  bindPanel('after', after)
+  if (!vrMode) {
+    const kit = mountDials(
+      [
+        { name: 'blur', effect: b, params: { radius: [0, 64, 0.5] } },
+        {
+          name: 'displace',
+          effect: dsp,
+          params: {
+            strength: [0, 40, 0.5],
+            scale: [4, 400, 1],
+            speed: [0, 4, 0.05],
+            pointerStrength: [0, 80, 1],
+            pointerRadius: [8, 600, 1],
+            mode: [0, 1, 1]
+          }
+        },
+        {
+          name: 'progressiveBlur',
+          effect: progressive,
+          params: { radius: [0, 64, 0.5], curve: [0.25, 4, 0.05] }
+        },
+        {
+          name: 'cursorGlow',
+          effect: glow,
+          params: { radius: [8, 800, 1], intensity: [0, 1, 0.01] }
+        },
+        {
+          name: 'clickRipple',
+          effect: ripple,
+          params: { radius: [4, 600, 1], duration: [0.05, 5, 0.05] }
+        },
+        {
+          name: 'regionBlur',
+          effect: region,
+          params: { radius: [0, 64, 0.5] }
+        },
+        { name: 'layerAfterBlueBox', effect: after },
+        {
+          name: 'imageRipple',
+          effect: mripple,
+          params: { amplitude: [0, 40, 0.5] }
+        },
+        { name: 'headingWave', effect: wave, params: { amount: [0, 20, 0.5] } },
+        { name: 'imageBend', effect: bend, params: { amount: [-80, 80, 1] } },
+        { name: 'boxStripes', effect: tint },
+        {
+          name: 'layerHeadingGlyphs',
+          effect: lglyphs,
+          params: { drop: [0, 200, 1] }
+        },
+        {
+          name: 'layerImageTiles',
+          effect: limage,
+          params: { gap: [0, 40, 1] }
+        },
+        { name: 'simulatedDots', effect: sim, params: { pull: [0, 60, 1] } },
+        { name: 'rawMaterial', effect: raw },
+        { name: 'useGpuMaterial', effect: tgbox },
+        {
+          name: 'letterStagger',
+          effect: stagger,
+          params: { delay: [0, 0.3, 0.01] }
+        },
+        { name: 'passSamplingImage', effect: pimage },
+        { name: 'useGpuPass', effect: tgjs, params: { amount: [0, 1, 0.01] } }
+      ],
+      {
+        layerTransforms: {
+          fromScale: [tfAnim.fromScale, 0.2, 1.5, 0.01],
+          fromY: [tfAnim.fromY, -200, 200, 1],
+          fromRotate: [tfAnim.fromRotate, -45, 45, 0.5],
+          fromOpacity: [tfAnim.fromOpacity, 0, 1, 0.01],
+          stagger: [tfAnim.stagger, 0, 0.6, 0.01],
+          transition: tfAnim.transition,
+          replay: { type: 'action', label: 'Replay stagger' }
+        }
+      },
+      (action) => {
+        if (action === 'layerTransforms.replay') {
+          tfPlay()
+        }
+      }
+    )
+    kit.subscribe((values) => {
+      const t = (values as { layerTransforms?: typeof tfAnim }).layerTransforms
+      if (t) {
+        Object.assign(tfAnim, t)
+      }
+    })
+  }
   // A TypeGPU fragment (WGSL-bodied tgpu.fn): premultiplied invert.
   const invert = tgpu.fn(
     [d.vec2f, d.texture2d(d.f32), d.sampler()],

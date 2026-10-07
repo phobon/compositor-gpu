@@ -54,6 +54,7 @@
     "@typescript/typescript6": "^6.0.2",
     "@webgpu/types": "^0.1.74",
     "dejavu-fonts-ttf": "^2.37.3",
+    "dialkit": "^2.0.2",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.63.0",
     "pngjs": "^7.0.0",

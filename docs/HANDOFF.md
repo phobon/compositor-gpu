@@ -314,6 +314,14 @@ the compositor.
    real frame times (SwiftShader charges ~2 s per frame with any
    offscreen group, old renderer included, so its frame intervals mean
    nothing here).
+10. **DialKit panels, 2026-10-07, uncommitted.** The playground's hand-built
+    `#panel` in `fx.html` is replaced by DialKit's framework-free adapter
+    (`dialkit/vanilla`, dev dependency): one "Effects" panel, a folder per
+    effect (on/off + params) and a Layer transforms folder (from-values,
+    stagger, easing editor, replay). Not created in `?vr` mode. MDS-home:
+    `Duo/useDials.js` (same adapter, loaded only with `?dials=1`,
+    persisted per panel) drives `AppScroll`'s scale and edge blur; run
+    `yarn` there for the new `dialkit` dependency.
 
 ## Gotchas
 

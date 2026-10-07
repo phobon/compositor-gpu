@@ -49,18 +49,9 @@
       }
       .bars i { display: block; width: 3px; background: #e5e7eb; }
       .bars i:nth-child(odd) { background: #f472b6; }
-      #panel {
-        position: fixed; right: 16px; bottom: 16px; z-index: 10;
-        width: 280px; padding: 12px 14px; border-radius: 12px;
-        background: rgba(20, 20, 26, 0.92); border: 1px solid #3a3a48;
-        font: 13px/1.4 system-ui, sans-serif;
-      }
-      #panel fieldset { border: 0; padding: 0; margin: 0 0 10px; }
-      #panel legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
-      #panel label { display: grid; grid-template-columns: 1fr 120px 40px; gap: 6px; align-items: center; }
-      #panel output { text-align: right; color: #a0a0ac; }
-      body.vr #panel { display: none; }
       section.clear { background: transparent; }
+      /* Above the compositor canvas (z-index 2147483646). */
+      .dialkit-panel { z-index: 2147483647 !important; }
       .card {
         width: 300px; padding: 20px; border-radius: 20px;
         background: #26262c; border: 1px solid #44444f;
@@ -208,82 +199,6 @@
         </div>
       </section>
 
-      <div id="panel" data-gpu-ignore>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-blur" /> blur</label></legend>
-          <label>radius <input type="range" id="s-blur-radius" min="0" max="64" step="0.5" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-displace" /> displace</label></legend>
-          <label>strength <input type="range" id="s-displace-strength" min="0" max="40" step="0.5" /><output></output></label>
-          <label>scale <input type="range" id="s-displace-scale" min="4" max="400" step="1" /><output></output></label>
-          <label>speed <input type="range" id="s-displace-speed" min="0" max="4" step="0.05" /><output></output></label>
-          <label>pointer <input type="range" id="s-displace-pointerStrength" min="0" max="80" step="1" /><output></output></label>
-          <label>p. radius <input type="range" id="s-displace-pointerRadius" min="8" max="600" step="1" /><output></output></label>
-          <label>mode <input type="range" id="s-displace-mode" min="0" max="1" step="1" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-glow" /> cursor glow</label></legend>
-          <label>radius <input type="range" id="s-glow-radius" min="8" max="800" step="1" /><output></output></label>
-          <label>intensity <input type="range" id="s-glow-intensity" min="0" max="1" step="0.01" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-ripple" /> click ripple</label></legend>
-          <label>radius <input type="range" id="s-ripple-radius" min="4" max="600" step="1" /><output></output></label>
-          <label>duration <input type="range" id="s-ripple-duration" min="0.05" max="5" step="0.05" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-region" /> region blur (card)</label></legend>
-          <label>radius <input type="range" id="s-region-radius" min="0" max="64" step="0.5" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-after" /> layer after blue box</label></legend>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-mripple" /> ripple (image material, click it)</label></legend>
-          <label>amplitude <input type="range" id="s-mripple-amplitude" min="0" max="40" step="0.5" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-wave" /> wave (heading glyphs)</label></legend>
-          <label>amount <input type="range" id="s-wave-amount" min="0" max="20" step="0.5" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-bend" /> bend (image, 16×16)</label></legend>
-          <label>amount <input type="range" id="s-bend-amount" min="-80" max="80" step="1" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-tint" /> stripes (box)</label></legend>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-lglyphs" /> layer: heading glyphs</label></legend>
-          <label>drop <input type="range" id="s-lglyphs-drop" min="0" max="200" step="1" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-limage" /> layer: image tiles</label></legend>
-          <label>gap <input type="range" id="s-limage-gap" min="0" max="40" step="1" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-sim" /> layer: simulated dots</label></legend>
-          <label>pull <input type="range" id="s-sim-pull" min="0" max="60" step="1" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-raw" /> raw material (green box)</label></legend>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-tgbox" /> 'use gpu' material (blue box)</label></legend>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-stagger" /> stagger (letters)</label></legend>
-          <label>delay <input type="range" id="s-stagger-delay" min="0" max="0.3" step="0.01" /><output></output></label>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-pimage" /> pass sampling the image</label></legend>
-        </fieldset>
-        <fieldset>
-          <legend><label style="display:inline"><input type="checkbox" id="c-tgjs" /> 'use gpu' pass</label></legend>
-          <label>amount <input type="range" id="s-tgjs-amount" min="0" max="1" step="0.01" /><output></output></label>
-        </fieldset>
-      </div>
     </div>
     <div id="log"></div>
     <script type="module" src="./fx.ts"></script>
