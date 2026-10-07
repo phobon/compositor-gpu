@@ -16,6 +16,7 @@ import {
   createEffects,
   cursorGlow,
   displace,
+  dissolve,
   gpu,
   ripple as imageRipple,
   type Layer,
@@ -177,6 +178,13 @@ async function boot(): Promise<void> {
     width: [0.3, 0.7],
     corners: 1,
     region: $('orbit')
+  })
+  // Dissolve on the transform row: half way, with a rim.
+  const dsv = dissolve(fx, $('tf-row'), {
+    enabled: false,
+    progress: 0.5,
+    edge: 0.06,
+    edgeColor: '#f472b6'
   })
   // Layer transforms on three cards: pinned states for the harness, a
   // staggered scale-in on click.
@@ -570,6 +578,17 @@ async function boot(): Promise<void> {
           params: { radius: [0, 64, 0.5], curve: [0.25, 4, 0.05] }
         },
         {
+          name: 'dissolve',
+          effect: dsv,
+          params: {
+            progress: [0, 1, 0.01],
+            scale: [2, 200, 1],
+            softness: [0, 0.5, 0.01],
+            sweep: [0, 1, 0.01],
+            edge: [0, 0.3, 0.005]
+          }
+        },
+        {
           name: 'cursorGlow',
           effect: glow,
           params: { radius: [8, 800, 1], intensity: [0, 1, 0.01] }
@@ -683,6 +702,7 @@ async function boot(): Promise<void> {
     ripple,
     region,
     progressive,
+    dissolve: dsv,
     tfSet,
     after,
     mripple,

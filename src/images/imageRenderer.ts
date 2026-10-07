@@ -909,6 +909,9 @@ export class ImagePass implements RenderPass {
       return 0
     }
     const mp = this.materials.get(material)
+    if (!mp && this.materials.held(material)) {
+      return 0
+    }
     encoder.setPipeline(mp ?? this.pipeline)
     let verts = 6
     if (mp && material) {

@@ -373,6 +373,7 @@ fx.material({
   params?: { ...schema },
   subdivisions?: 1,                 // n × n cells per quad, for bending
   hideSource?: !!(vertex || raw),   // hide the element's DOM paint
+  hold?: false,                     // don't draw until compiled
   enabled?: true, continuous?: false,
   update?: (material, time, ctx) => void
 }) -> Material { name, params, target, enabled, continuous, destroy() }
@@ -427,7 +428,8 @@ viewport in CSS px), `params`, `pointer`.
 
 The pipeline compiles asynchronously the first time the records are
 drawn; until then (and for good if the WGSL fails, with the error in the
-console under `fx:<name>:<kind>`) they draw as usual. Text: Slug glyphs
+console under `fx:<name>:<kind>`) they draw as usual, or, with `hold`,
+not at all until it has compiled (for materials that start hidden). Text: Slug glyphs
 and their hard shadows take the material, fallback-atlas glyphs (emoji,
 missing code points) don't. A vertex hook moves geometry away from where
 the DOM paints it, so by default the target's own DOM paint is hidden
@@ -595,6 +597,14 @@ layer draws nothing).
 - `cursorGlow(fx, { radius = 160, intensity = 0.35, color = '#fff',
   place = 'above' })`: one viewport-space quad on the eased follower, a
   radial falloff; `place: 'below'` lights up behind content.
+- `dissolve(fx, target, { progress = 0, scale = 40, softness = 0.1,
+  direction = [0, 1], sweep = 0.35, edge = 0, edgeColor = '#fff', hold
+  = true })`: a Material over all kinds that shows each pixel once
+  `progress` passes its threshold: value noise (feature size `scale` CSS
+  px, fixed to the page) mixed by `sweep` with a ramp across the
+  target's box along `direction`. `softness` is the fade width and
+  `edge` a rim in `edgeColor` at the front, in threshold units. Hides
+  the target's DOM paint while enabled; progress 1 draws as without it.
 - `ripple(fx, target, { amplitude = 8, wavelength = 24, speed = 360,
   duration = 1.2 })`: an image Material (fragment only, `mat_sample`): a
   wave packet travelling out from each recent click; `continuous` only

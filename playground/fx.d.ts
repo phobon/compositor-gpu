@@ -16,6 +16,8 @@ declare global {
       region: Pass
       /** progressiveBlur on #orbit. */
       progressive: Pass
+      /** dissolve on #tf-row (progress 0.5, a rim). */
+      dissolve: Material
       /** The #tf-* cards' layer transforms: off, identity or pinned. */
       tfSet(mode: 'off' | 'identity' | 'pinned'): void
       /** A quad drawn right after #after-anchor. */

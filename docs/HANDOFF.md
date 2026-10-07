@@ -155,8 +155,9 @@ the compositor.
      on all 25, `--with-fx` 0.00, `test:fx` all 26 OK.
    - Replace mode focus rings: fixed 2026-10-05 (item 5): `outline` is
      mirrored and focus changes re-read.
-   - Drag-select doesn't show in replace mode (`::selection` not
-     mirrored). Ben: expected; no decision yet on mirroring it.
+   - Selection: the `::selection` highlight is mirrored (item 4); the
+     selected text keeps its own colour (no `::selection { color }`).
+     Ben, 2026-10-07: selection is a requirement.
 3. **Effects.** M2 (Target, Layer, region Pass, `cursorGlow`,
    `clickRipple`, `displace` `mode`) is committed (`dcf94b1`; push mode
    left as is). **M3a, materials** is committed (`08433a2`):
@@ -322,6 +323,28 @@ the compositor.
     `Duo/useDials.js` (same adapter, loaded only with `?dials=1`,
     persisted per panel) drives `AppScroll`'s scale and edge blur; run
     `yarn` there for the new `dialkit` dependency.
+11. **`/duo` screenshot reveal, 2026-10-07, MDS-home only, uncommitted.**
+    `AppSections` marks each section's screenshot grid `data-reveal-group`
+    and the two screenshots `data-reveal`. `AppScroll` plays a staggered
+    scale-in once per group when its top reaches 80% of the viewport
+    (GSAP tween + `CustomEase` from the dial's bezier): `fx.transform` per
+    screenshot (nested inside the panel's own layer) with the compositor,
+    CSS transform/opacity otherwise; at rest with reduced motion. Dials:
+    `reveal` folder (from scale/y/opacity, stagger, easing, Replay);
+    `useDials` gained an `onAction` argument.
+12. **`/duo` hero dissolve, 2026-10-07, uncommitted.** Library: `dissolve`
+    preset (a Material over the target's boxes, images and glyphs:
+    value noise mixed with a top-to-bottom sweep, soft front, optional
+    rim; hides the DOM paint) and Material `hold` (records not drawn
+    until the pipeline has compiled). MDS-home: `Hero` hides itself
+    before the first client paint when `?gpu=1` (and motion is allowed),
+    then dissolves in once the compositor is up (`hero` dials:
+    easing, scale, softness, sweep, edge, Replay); CSS fade if the
+    compositor comes up inactive or not within 4 s. The SSR HTML still
+    shows the hero until hydration (the flag is client-only).
+    `Duo/fxRuntime.js` shares one fx runtime between `Hero` and
+    `AppScroll` (a second `createEffects` would replace the post chain);
+    each destroys its own passes, materials and transforms.
 
 ## Gotchas
 

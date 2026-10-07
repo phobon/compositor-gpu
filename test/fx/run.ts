@@ -51,6 +51,8 @@
 //   fx-transform-identity  identity transforms: equal to fx-transform-off
 //                     exactly (an isolated group composites in place)
 //   fx-transform-then-off  pinned, then off: equal to fx-transform-off
+//   fx-dissolve       the transform row half dissolved (noise + sweep, rim)
+//   fx-dissolve-full  progress 1: equal to fx-transform-off exactly
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -85,6 +87,8 @@ type Effect =
   | 'progressive'
   | 'transform'
   | 'transform-id'
+  | 'dissolve'
+  | 'dissolve-full'
   | 'mripple'
   | 'wave'
   | 'bend'
@@ -160,6 +164,9 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.after.enabled = e === 'after'
     h.region.enabled = e === 'region'
     h.progressive.enabled = e === 'progressive'
+    h.dissolve.enabled = e === 'dissolve' || e === 'dissolve-full'
+    ;(h.dissolve.params as Record<string, number>).progress =
+      e === 'dissolve-full' ? 1 : 0.5
     h.tfSet(
       e === 'transform' ? 'pinned' : e === 'transform-id' ? 'identity' : 'off'
     )
@@ -550,7 +557,11 @@ async function main(): Promise<void> {
       await capture('fx-off', 'fx-pass-image', 'pimage')
     }
     const tfs = 'fx-transform'
-    const tfInv = ['fx-transform-identity', 'fx-transform-then-off']
+    const tfInv = [
+      'fx-transform-identity',
+      'fx-transform-then-off',
+      'fx-dissolve-full'
+    ]
     let tfPre: PNG | null = null
     if (want('fx-transform-off') || tfInv.some(want)) {
       tfPre = await capture(tfs, 'fx-transform-off', 'none')
@@ -584,6 +595,15 @@ async function main(): Promise<void> {
       same(
         'fx-transform-then-off',
         await capture(tfs, 'fx-transform-then-off', 'none')
+      )
+    }
+    if (want('fx-dissolve')) {
+      await capture(tfs, 'fx-dissolve', 'dissolve')
+    }
+    if (want('fx-dissolve-full')) {
+      same(
+        'fx-dissolve-full',
+        await capture(tfs, 'fx-dissolve-full', 'dissolve-full')
       )
     }
     await pinPlain()

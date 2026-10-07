@@ -950,6 +950,9 @@ export class BoxPass implements RenderPass {
       return 0
     }
     const mp = this.materials.get(material)
+    if (!mp && this.materials.held(material)) {
+      return 0
+    }
     encoder.setPipeline(mp ?? this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
     let verts = 6

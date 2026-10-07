@@ -88,6 +88,10 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
   /** Hide the target's own DOM paint while enabled (displaced geometry
    * would uncover it). Default: true when `vertex` or `raw` is given. */
   hideSource?: boolean
+  /** Until its pipeline for a record kind has compiled, don't draw those
+   * records (default: they draw as usual). For materials that start
+   * hidden, such as a reveal. */
+  hold?: boolean
   /** Called every frame while enabled. `time` is the page clock, s. */
   update?: (material: Material<S>, time: number, ctx: FrameContext) => void
 }
@@ -222,6 +226,7 @@ export function createMaterial<S extends ParamSchema>(
     kinds: new Set(kindsOf(o as unknown as MaterialOptions)),
     ...(o.raw ? { raw: o.raw } : {}),
     subdivisions: Math.max(1, Math.floor(o.subdivisions ?? 1)),
+    ...(o.hold ? { hold: true } : {}),
     layout,
     bindGroup,
     target: target.el,

@@ -72,7 +72,9 @@ stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 pass on an arc of images), and on the transform section
 `fx-transform-off`, `fx-transform` (three cards under pinned layer
 transforms, one past the row's clip), `fx-transform-identity` and
-`fx-transform-then-off` (both must equal `fx-transform-off` exactly). Material pipelines compile asynchronously:
+`fx-transform-then-off` (both must equal `fx-transform-off` exactly),
+`fx-dissolve` (the row half dissolved) and `fx-dissolve-full` (progress
+1: must equal `fx-transform-off` exactly). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -128,13 +130,14 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 `gpu/material.ts`), the TypeGPU externals `gpu`/`MatIn`/`Quad`
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
 'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
-`clickRipple`/`ripple`. The playground's dev server runs `unplugin-typegpu` (dev
+`clickRipple`/`ripple`/`dissolve`. The playground's dev server runs `unplugin-typegpu` (dev
 dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),
 records are tagged with a material id by `Scene.assign` before each batch
 build and batches never mix materials; material pipelines compile async
-and fall back to the default pipeline until ready or on error. Layers draw at `extra` entries of `scene.batches` (anchors
+and fall back to the default pipeline until ready or on error (a
+`hold` material's records aren't drawn until ready instead). Layers draw at `extra` entries of `scene.batches` (anchors
 resolved by `Scene.anchors` at every batch build; `graph.addLayer`); a
 region pass isolates its element (`graph.isolate` → `SceneReader.isolated`
 → a group with `region` set, composited by its `RegionHandler`). It

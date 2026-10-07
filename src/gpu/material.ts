@@ -77,6 +77,9 @@ export interface MaterialBinding {
   readonly raw?: Partial<Record<MaterialKind, string>>
   readonly layout: GPUBindGroupLayout
   readonly bindGroup: GPUBindGroup
+  /** Until a pass's pipeline for it has compiled, its records aren't
+   * drawn there (instead of drawing with the default pipeline). */
+  readonly hold?: boolean
   /** Called when a pass's pipeline for it has finished compiling (the
    * records draw with the default pipeline until then). */
   ready?(): void
@@ -160,6 +163,16 @@ export class MaterialPipelines {
       return null
     }
     return p === 'pending' || p === 'failed' ? null : p
+  }
+
+  /** True while `mat` holds its records back here: get() returned null
+   * because its pipeline is still compiling. */
+  held(mat: MaterialBinding | null | undefined): boolean {
+    return (
+      mat?.hold === true &&
+      mat.kinds.has(this.kind) &&
+      this.cache.get(mat.id) === 'pending'
+    )
   }
 
   private compile(mat: MaterialBinding): void {

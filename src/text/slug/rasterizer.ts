@@ -1085,6 +1085,9 @@ export class SlugText implements TextBackend {
     // A material re-shades the Slug glyphs (and their hard shadows); atlas
     // (fallback) glyphs keep the default pipeline.
     const mp = this.materials.get(material)
+    if (!mp && this.materials.held(material)) {
+      return 0
+    }
     const slugPipeline = mp ?? this.pipeline
     let verts = 6
     if (mp && material) {
