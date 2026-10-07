@@ -157,6 +157,9 @@ export interface ElNode {
   place?: Placement
   /** Region id when isolated for a region effect (SceneReader.isolated). */
   region?: number
+  /** With `region`: the clip its ancestors apply to it (null for a fixed
+   * element on the viewport, which they don't reach). */
+  regionClip?: Rect | null
 }
 
 export type ElKid = ElNode | GlyphRun | BoxRecord
@@ -243,6 +246,9 @@ export function flatten(
       }
       if (node.region !== undefined) {
         c.region = node.region
+        c.box = node.rect
+        c.clip = node.regionClip ?? null
+        c.space = node.space
       }
       ctx.items.push(c)
     }
@@ -805,6 +811,7 @@ export class SceneReader {
     }
     if (region !== undefined) {
       node.region = region
+      node.regionClip = clip
     }
     this.nodes.set(el, node)
 

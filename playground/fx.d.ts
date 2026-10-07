@@ -16,6 +16,8 @@ declare global {
       region: Pass
       /** progressiveBlur on #orbit. */
       progressive: Pass
+      /** The #tf-* cards' layer transforms: off, identity or pinned. */
+      tfSet(mode: 'off' | 'identity' | 'pinned'): void
       /** A quad drawn right after #after-anchor. */
       after: Layer
       /** Pin two clicks around the viewport centre (fx.__override). */

@@ -133,6 +133,48 @@ async function boot(): Promise<void> {
     corners: 1,
     region: $('orbit')
   })
+  // Layer transforms on three cards: pinned states for the harness, a
+  // staggered scale-in on click.
+  const tf = [0, 1, 2].map((i) =>
+    fx.transform($(`tf-${i}`), { enabled: false })
+  )
+  const TF_PIN = [
+    { scale: 0.85, y: 40, opacity: 0.5 },
+    { scale: 0.92, y: 20, rotate: -4 },
+    { x: 140, rotate: 6 }
+  ]
+  const tfIdentity = { x: 0, y: 0, scale: 1, rotate: 0, opacity: 1 }
+  const tfSet = (mode: 'off' | 'identity' | 'pinned'): void => {
+    tf.forEach((t, i) => {
+      Object.assign(t, tfIdentity, mode === 'pinned' ? TF_PIN[i] : {})
+      t.enabled = mode !== 'off'
+    })
+  }
+  const tfPlay = (): void => {
+    const start = performance.now()
+    tf.forEach((t) => {
+      t.enabled = true
+    })
+    const step = (now: number): void => {
+      let busy = false
+      tf.forEach((t, i) => {
+        const k = Math.min(1, Math.max(0, (now - start - i * 120) / 700))
+        const e = 1 - (1 - k) ** 3
+        t.scale = 0.8 + 0.2 * e
+        t.y = 60 * (1 - e)
+        t.opacity = e
+        busy ||= k < 1
+      })
+      if (busy) {
+        requestAnimationFrame(step)
+      }
+    }
+    requestAnimationFrame(step)
+  }
+  if (!vrMode) {
+    $('tf-row').addEventListener('click', tfPlay)
+  }
+
   // A quad straddling the first three boxes, drawn right after the blue
   // one: over it, under the two that follow.
   const anchor = fx.target($('after-anchor'))
@@ -495,6 +537,7 @@ async function boot(): Promise<void> {
     ripple,
     region,
     progressive,
+    tfSet,
     after,
     mripple,
     wave,

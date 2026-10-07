@@ -22,9 +22,15 @@ export interface StackingContext {
   /** The element's own opacity when < 1: the context is then an opacity
    * group (rendered offscreen, composited once). Absent/1 otherwise. */
   alpha?: number
-  /** Isolated for a region effect (gpu/graph.ts `isolate`): the context
-   * becomes a group even at alpha 1, composited by the region's handler. */
+  /** Isolated for a region effect (gpu/graph.ts `isolate`) or a layer
+   * transform (`transform`): the context becomes a group even at alpha 1,
+   * composited by the region's handler or through the transform. */
   region?: number
+  /** With `region`: the element's border box, the clip its ancestors
+   * apply to it, and their space ('viewport' in a fixed subtree). */
+  box?: Rect
+  clip?: Rect | null
+  space?: 'doc' | 'viewport'
 }
 
 /**
@@ -48,9 +54,15 @@ export interface OpacityGroup {
   vbounds: Rect | null
   /** 0 for a group not inside another group. */
   depth: number
-  /** Set when the group isolates an element for a region effect: the
-   * renderer composites it through that region's handler. */
+  /** Set when the group isolates an element for a region effect or a
+   * layer transform: the renderer composites it through that region's
+   * handler or transform. */
   region?: number
+  /** With `region`: the element's border box (transform origin), its
+   * ancestors' clip, and the space of both. */
+  box?: Rect
+  clip?: Rect | null
+  space?: 'doc' | 'viewport'
 }
 
 export type Item = SceneRecord | StackingContext
@@ -299,6 +311,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       }
       if (ctx.region !== undefined) {
         g.region = ctx.region
+        g.box = ctx.box
+        g.clip = ctx.clip ?? null
+        g.space = ctx.space
       }
       groups.push(g)
       const e: Extents = { doc: emptyExtent(), vp: emptyExtent() }

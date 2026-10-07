@@ -69,12 +69,17 @@ until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
 `fx-progressive` (progressiveBlur toward the bottom corners, as a region
-pass on an arc of images). Material pipelines compile asynchronously:
+pass on an arc of images), and on the transform section
+`fx-transform-off`, `fx-transform` (three cards under pinned layer
+transforms, one past the row's clip), `fx-transform-identity` and
+`fx-transform-then-off` (both must equal `fx-transform-off` exactly). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
 the plain goldens at 0.00. The perf harness also reports `steady encode
-(blur)`. Never run two harnesses at once (they time each other out), and
+(blur)` and `animated transforms` (up to 30 cards in view animated through
+CSS transforms vs `fx.transform`: frame interval and compositor CPU per
+frame; SwiftShader frame intervals are meaningless with offscreen groups). Never run two harnesses at once (they time each other out), and
 don't edit files under `src/`/`playground/` during a run: the dev server
 reloads the page and the run dies.
 
@@ -291,10 +296,25 @@ Conventions each pass must follow:
   (`border.widths`/`colors`, mitred in the shader).
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
-  list carries `push`/`pop` markers at its cuts; `Renderer` renders the range
-  into a pooled offscreen texture (own Frame uniform: viewport = texture size,
-  scroll = group origin) and `gpu/composite.ts` draws it back once with the
-  group alpha. Records therefore carry `opacity = 1`; passes stay unaware.
+  list carries `push`/`pop` markers at its cuts. `Renderer.render` runs in
+  two phases: `prepare` renders every group's range into a pooled offscreen
+  texture (own Frame uniform: viewport = texture size, scroll = group
+  origin), children before parents, each in its own pass; then each
+  target's single pass draws its batches and composites its child groups
+  at their push (`compositeGroup`; `gpu/composite.ts` draws a quad of four
+  corners with the group alpha). The main pass is never split. Records
+  therefore carry `opacity = 1`; passes stay unaware.
+- **Layer transforms** (`graph.transform`, `/fx` `fx.transform`): an
+  element isolated like a region (shared id; `node.regionClip`, the
+  group's `box`/`clip`/`space`) whose group is composited through a
+  per-frame affine (`layerAffine`: translate, rotate, scale about an origin
+  in its box) with an extra opacity, scissored to its ancestors' clip AABB.
+  At identity and opacity 1 the group draws in place (`plan` 'in-place':
+  pixel-identical, no texture). Under a transform `openGroup` renders the
+  part that can land in the parent (parent ∩ clip, mapped back), and
+  `growExtents` grows enclosing groups to where transformed descendants
+  land. No DOM writes, so no re-reads: the CSS-transform route costs a
+  full read per frame on the perf page.
 - **Cutouts** (`boxes/cutoutPass.ts`). A `data-gpu-ignore` element
   (`IGNORE_ATTR`) is not mirrored: the reader gives it an `ElNode` with one
   own `CutoutRecord` (border box, radii, local/xform, space, ancestor clip)

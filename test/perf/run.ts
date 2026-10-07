@@ -208,6 +208,11 @@ async function main(): Promise<void> {
     await page.evaluate(() => window.__perf?.setBlur(true))
     const steadyBlur = await sampleSteadyFrames(page, 30)
     await page.evaluate(() => window.__perf?.setBlur(false))
+    // (c'') cards in view animated through CSS transforms (re-read every
+    // frame) and through fx.transform (layer transforms, no DOM writes).
+    console.log('[perf] animated transforms')
+    const animDom = await page.evaluate(() => window.__perf?.animate('dom', 60))
+    const animGpu = await page.evaluate(() => window.__perf?.animate('gpu', 60))
     // (d) final counts.
     const finalStats = (await page.evaluate(() =>
       window.__perf?.stats()
@@ -251,6 +256,21 @@ async function main(): Promise<void> {
         encodeMsMedian: median(steadyBlur.map((s) => s.encodeMs)),
         encodeMsP90: p90(steadyBlur.map((s) => s.encodeMs)),
         fpsMedian: median(steadyBlur.map((s) => s.fps))
+      },
+      animate: {
+        cards: animGpu?.cards ?? 0,
+        dom: {
+          frameMedianMs: median(animDom?.frameMs ?? []),
+          frameP90Ms: p90(animDom?.frameMs ?? []),
+          cpuMedianMs: median(animDom?.cpuMs ?? []),
+          cpuP90Ms: p90(animDom?.cpuMs ?? [])
+        },
+        gpu: {
+          frameMedianMs: median(animGpu?.frameMs ?? []),
+          frameP90Ms: p90(animGpu?.frameMs ?? []),
+          cpuMedianMs: median(animGpu?.cpuMs ?? []),
+          cpuP90Ms: p90(animGpu?.cpuMs ?? [])
+        }
       }
     }
 
@@ -287,6 +307,11 @@ function printTable(r: {
     fpsMedian: number
   }
   steadyBlur: { encodeMsMedian: number; encodeMsP90: number; fpsMedian: number }
+  animate: {
+    cards: number
+    dom: AnimRow
+    gpu: AnimRow
+  }
 }): void {
   const ms = (v: number): string => v.toFixed(3)
   console.log(
@@ -327,6 +352,28 @@ function printTable(r: {
   )
   console.log(`  steady fps (median)     ${r.steadyFrame.fpsMedian.toFixed(1)}`)
   console.log(`  steady fps (blur)       ${r.steadyBlur.fpsMedian.toFixed(1)}`)
+  const a = r.animate
+  console.log(
+    `\n  animated transforms, ${a.cards} cards (frame interval / compositor CPU)`
+  )
+  for (const [label, row] of [
+    ['CSS transform', a.dom],
+    ['fx.transform ', a.gpu]
+  ] as const) {
+    console.log(
+      `  ${label} frame    ${ms(row.frameMedianMs).padStart(9)}   ${ms(row.frameP90Ms).padStart(8)}`
+    )
+    console.log(
+      `  ${label} cpu      ${ms(row.cpuMedianMs).padStart(9)}   ${ms(row.cpuP90Ms).padStart(8)}`
+    )
+  }
+}
+
+interface AnimRow {
+  frameMedianMs: number
+  frameP90Ms: number
+  cpuMedianMs: number
+  cpuP90Ms: number
 }
 
 main().catch((e) => {

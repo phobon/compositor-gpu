@@ -290,23 +290,30 @@ the compositor.
    paints nothing, curve budget, `pow(0)` guard) are in. Perf: frame
    time +3 % under SwiftShader vs ffd452c (a CPU proxy; GPU time on real
    hardware not measured).
-8. **`/duo` app wheel, 2026-10-06.** Library: `progressiveBlur`
-   (`8113ebf`, then reworked uncommitted: edges/width/corners masks
-   instead of a start→end ramp). MDS-home, uncommitted:
-   `Duo/AppWheel.jsx`: once the first app section reaches the top, the
-   stage pins and scrolling turns a wheel centred below the viewport,
-   one viewport height per section with snapping; the next section
-   enters from the bottom-right, the current leaves past the
-   bottom-left, and the bottom corners blur (`progressiveBlur`
-   fullscreen pass while pinned with the compositor; masked
-   `backdrop-filter` corners otherwise). Stacked sections below 1024 ×
-   640, with reduced motion, or when a section is taller than the
-   viewport. In-page links and a hash on load to `#timepage` etc. scroll
-   to that section's turn. `AppSections` renders the intro, then each
-   section in its own `LayoutGrid` inside `AppWheel`; `GpuCompositor`
-   gained `onReady`, which `index.jsx` stores and passes down. Checked
-   in a vanilla port under SwiftShader, not in Gatsby. The earlier
-   orbit-under-the-hero attempt was removed (`Duo/Orbit.jsx`).
+8. **`/duo` app sections, 2026-10-06.** Library: `progressiveBlur`
+   (`8113ebf`, reworked uncommitted: edges/width/corners masks instead
+   of a start→end ramp). MDS-home, uncommitted: `Duo/AppScroll.jsx`
+   (sketch 3): the app sections scroll normally; each scales from 0.86
+   to 1 over the bottom 35% of the viewport and back down over the top
+   35% (one ScrollTrigger per section, scale from its position), and
+   while any section is in view the top and bottom 20% of the viewport
+   blur progressively (`progressiveBlur` fullscreen pass with
+   `edges [1, 0, 1, 0]`, `corners 0`; no blur without the compositor).
+   No scaling with
+   reduced motion. `AppSections` renders the intro, then each section
+   in its own `LayoutGrid` inside `AppScroll`; `GpuCompositor` gained
+   `onReady`, which `index.jsx` stores and passes down. Checked in a
+   vanilla port under SwiftShader, not in Gatsby. A wheel prototype and
+   an orbit under the hero were tried and removed.
+9. **GPU layer transforms, 2026-10-07, uncommitted.** `fx.transform(el)`
+   moves, scales, rotates and fades an element on the GPU (no DOM writes,
+   no re-reads); GSAP tweens its fields. The renderer now renders all
+   group textures first and draws each target in one pass. Shots
+   `fx-transform`, `-identity` (= off exactly), `-then-off`. Perf: new
+   `animated transforms` rows; run `npm run test:perf` on the Mac for
+   real frame times (SwiftShader charges ~2 s per frame with any
+   offscreen group, old renderer included, so its frame intervals mean
+   nothing here).
 
 ## Gotchas
 

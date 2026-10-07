@@ -380,23 +380,30 @@ export async function createCompositor(
     },
     replace: () => rebatch(),
     isolate(el, handler) {
-      let id = regionIds.get(el)
-      if (handler) {
-        if (id === undefined) {
-          id = nextRegion++
-          regionIds.set(el, id)
-        }
-        reader.isolated.set(el, id)
-        renderer.regions.set(id, handler)
-      } else if (id !== undefined) {
-        regionIds.delete(el)
-        reader.isolated.delete(el)
-        renderer.regions.delete(id)
-      } else {
+      const id = regionIds.get(el)
+      if (!handler && (id === undefined || !renderer.regions.has(id))) {
         return
       }
-      pendingReadFlags |= Dirty.STYLE
-      scheduler.request()
+      const rid = isolationId(el)
+      if (handler) {
+        renderer.regions.set(rid, handler)
+      } else {
+        renderer.regions.delete(rid)
+      }
+      updateIsolation(el, rid)
+    },
+    transform(el, t) {
+      const id = regionIds.get(el)
+      if (!t && (id === undefined || !renderer.transforms.has(id))) {
+        return
+      }
+      const rid = isolationId(el)
+      if (t) {
+        renderer.transforms.set(rid, t)
+      } else {
+        renderer.transforms.delete(rid)
+      }
+      updateIsolation(el, rid)
     },
     addMaterial(entry) {
       renderer.materials.set(entry.id, entry)
@@ -442,6 +449,31 @@ export async function createCompositor(
   let nextMaterial = 1
   let nextRegion = 1
   const regionIds = new Map<Element, number>()
+  // An element is isolated (one group) while it has a region handler or a
+  // layer transform; both share its id.
+  const isolationId = (el: Element): number => {
+    let id = regionIds.get(el)
+    if (id === undefined) {
+      id = nextRegion++
+      regionIds.set(el, id)
+    }
+    return id
+  }
+  const updateIsolation = (el: Element, id: number): void => {
+    const want = renderer.regions.has(id) || renderer.transforms.has(id)
+    if (want === reader.isolated.has(el)) {
+      scheduler.request()
+      return
+    }
+    if (want) {
+      reader.isolated.set(el, id)
+    } else {
+      reader.isolated.delete(el)
+      regionIds.delete(el)
+    }
+    pendingReadFlags |= Dirty.STYLE
+    scheduler.request()
+  }
   const rebatch = (): void => {
     scene.sort()
     scheduler.request()

@@ -167,7 +167,8 @@ async function boot(): Promise<void> {
 
   let mutateCounter = 0
   // A fullscreen blur for the `steady encode (blur)` row, off until asked.
-  const blurPass = blur(createEffects(compositor), { enabled: false })
+  const fx = createEffects(compositor)
+  const blurPass = blur(fx, { enabled: false })
 
   window.__perf = {
     ready: (async () => {
@@ -183,6 +184,51 @@ async function boot(): Promise<void> {
     invalidate: () => compositor.invalidate(),
     setBlur(on: boolean) {
       blurPass.enabled = on
+    },
+    async animate(mode: 'dom' | 'gpu', frames: number) {
+      // Scale and lift the cards in view each frame: through their CSS
+      // transform (re-read by the compositor) or fx.transform (no DOM
+      // write). Frame interval and the compositor's CPU time per frame.
+      const vh = window.innerHeight
+      const cards = Array.from(document.querySelectorAll('.pcard'))
+        .filter((c) => {
+          const r = c.getBoundingClientRect()
+          return r.bottom > 0 && r.top < vh
+        })
+        .slice(0, 30) as HTMLElement[]
+      const tfs = mode === 'gpu' ? cards.map((c) => fx.transform(c)) : []
+      await raf2()
+      await raf2()
+      const frameMs: number[] = []
+      const cpuMs: number[] = []
+      let last = performance.now()
+      for (let f = 0; f < frames; f++) {
+        cards.forEach((c, i) => {
+          const s = 0.9 + 0.1 * Math.abs(Math.sin((f + i) / 8))
+          const y = (1 - s) * 60
+          const t = tfs[i]
+          if (t) {
+            t.scale = s
+            t.y = y
+          } else {
+            c.style.transform = `translateY(${y}px) scale(${s})`
+          }
+        })
+        const now = await new Promise<number>((r) =>
+          requestAnimationFrame((t) => r(t))
+        )
+        frameMs.push(now - last)
+        last = now
+        cpuMs.push(compositor.stats().frameMs)
+      }
+      for (const t of tfs) {
+        t.destroy()
+      }
+      for (const c of cards) {
+        c.style.transform = ''
+      }
+      await raf2()
+      return { cards: cards.length, frameMs, cpuMs }
     },
     mutate(kind: 'text' | 'class' | 'append') {
       const stage2 = document.getElementById('stage') as HTMLElement

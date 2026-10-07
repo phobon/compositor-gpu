@@ -71,3 +71,8 @@ export {
   type TgpuFnLike
 } from './shader'
 export type { Target, TargetGlyphs, TargetImage } from './target'
+export type {
+  Transform,
+  TransformOptions,
+  TransformValues
+} from './transform'

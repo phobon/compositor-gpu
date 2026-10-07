@@ -2,22 +2,30 @@ import { reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
 
 // Opacity-group compositing: an offscreen texture pool plus a pipeline that
-// draws a group's texture back into its parent target as one textured quad
-// at the group's doc-space rect, scaled by the group alpha.
+// draws a group's texture back into its parent target as one textured quad,
+// scaled by the group alpha. The quad is the group's doc-space rect, or its
+// image under a layer transform (a parallelogram: four corners).
 
-/** Floats per composite instance: rect(4) + uv(4). */
-const FLOATS_PER_COMP = 8
+/** Floats per composite instance: corners(8) + uv(4). */
+const FLOATS_PER_COMP = 12
 const BYTES_PER_COMP = FLOATS_PER_COMP * 4
 /** Texture sizes are rounded up to this many device px, for reuse. */
 const SIZE_STEP = 64
 /** Pool textures unused for this many frames are destroyed. */
 const EVICT_FRAMES = 120
 
+/** The corners of a doc-space rect (minX, minY, maxX, maxY), for draw. */
+export function rectQuad(r: readonly number[]): number[] {
+  const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = r
+  return [x0, y0, x1, y0, x0, y1, x1, y1]
+}
+
 export const COMPOSITE_WGSL = /* wgsl */ `
 ${FRAME_WGSL}
 
 struct Comp {
-  rect : vec4f,   // doc-space minX, minY, maxX, maxY
+  c01  : vec4f,   // doc-space corners: top-left, top-right
+  c23  : vec4f,   // bottom-left, bottom-right
   uv   : vec4f,   // u, v extent of the used region; alpha; _
 };
 @group(1) @binding(0) var<storage, read> comps : array<Comp>;
@@ -36,10 +44,12 @@ fn vs(@builtin(vertex_index) vi : u32,
   var corners = array<vec2f, 6>(
     vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
+  var at = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
   let c = comps[ii];
   let k = corners[vi];
+  let q = array<vec2f, 4>(c.c01.xy, c.c01.zw, c.c23.xy, c.c23.zw);
   var out : VOut;
-  out.pos = doc_to_clip(mix(c.rect.xy, c.rect.zw, k));
+  out.pos = doc_to_clip(q[at[vi]]);
   out.uv = k * c.uv.xy;
   out.alpha = c.uv.z;
   return out;
@@ -193,22 +203,23 @@ export class GroupCompositor {
     return best
   }
 
-  /**
-   * Record a composite of `target`'s top-left `w`×`h` device px onto the
-   * doc-space `rect` (minX, minY, maxX, maxY) of the parent pass `rp`, and
-   * release the target for reuse by later (non-overlapping-in-time) groups.
-   * Instance data is uploaded by flush(), before submit.
-   */
   /** Release `target` for reuse without compositing it (a region handler
    * drew it instead). */
   release(target: GroupTarget): void {
     target.inUse = false
   }
 
+  /**
+   * Record a composite of `target`'s top-left `w`×`h` device px onto the
+   * doc-space `quad` of the parent pass `rp` (corners top-left, top-right,
+   * bottom-left, bottom-right as x, y pairs; see rectQuad), and release
+   * the target for reuse by later (non-overlapping-in-time) groups.
+   * Instance data is uploaded by flush(), before submit.
+   */
   draw(
     rp: GPURenderPassEncoder,
     target: GroupTarget,
-    rect: [number, number, number, number],
+    quad: readonly number[],
     w: number,
     h: number,
     alpha: number
@@ -219,7 +230,7 @@ export class GroupCompositor {
     if (!buffer || index >= this.capacity) {
       return
     }
-    this.data.push(...rect, w / target.width, h / target.height, alpha, 0)
+    this.data.push(...quad, w / target.width, h / target.height, alpha, 0)
     if (!target.bindGroup) {
       target.bindGroup = this.device.createBindGroup({
         layout: this.layout,

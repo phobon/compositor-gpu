@@ -105,6 +105,27 @@ export interface RegionHandler {
   composite(rp: GPURenderPassEncoder, frame: RegionFrame): void
 }
 
+/**
+ * A layer transform: how an isolated element's group is composited, read
+ * every frame (mutate it, then requestFrame). CSS order: translate, then
+ * rotate, then scale, about the origin. The DOM is untouched, so hit
+ * testing stays at the element's layout position.
+ */
+export interface LayerTransform {
+  /** CSS px. */
+  x: number
+  y: number
+  scaleX: number
+  scaleY: number
+  /** Degrees, clockwise. */
+  rotate: number
+  /** Multiplies the element's own opacity. */
+  opacity: number
+  /** Fractions of the element's border box. */
+  originX: number
+  originY: number
+}
+
 /** A Material registered with the graph (an `/fx` Material). */
 export interface MaterialEntry extends MaterialBinding {
   /** The element whose subtree's records it re-shades. */
@@ -141,6 +162,11 @@ export interface RenderGraph {
   /** Render `el`'s subtree as one group composited by `handler` (null
    * ends it). Takes effect on the next read, which this schedules. */
   isolate(el: Element, handler: RegionHandler | null): void
+  /** Composite `el`'s subtree as one group through `t` (null ends it).
+   * Starting or ending takes effect on the next read, which this
+   * schedules; later changes to `t` only need requestFrame. A region
+   * handler on the same element takes precedence. */
+  transform(el: Element, t: LayerTransform | null): void
   /** Re-shade `entry.target`'s subtree (records of `entry.kinds`) with
    * the material; returns its removal. On overlap the later wins. Call
    * replace() after `active()` changes. */

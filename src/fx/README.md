@@ -454,6 +454,50 @@ the material's as for hooks. `kinds` defaults to the keys of `raw`. Draw
 with `6·n²` vertices per instance and premultiplied-over blending, as
 the pass does.
 
+## Transforms
+
+```ts
+const t = fx.transform(el, {          // el: Element or Target
+  x, y,                                // CSS px, default 0
+  scale, scaleX, scaleY,               // default 1 (scale sets both)
+  rotate,                              // degrees, clockwise
+  opacity,                             // multiplies the element's own
+  originX, originY,                    // fractions of the border box, 0.5
+  enabled = true,
+  fallback = 'dom'                     // without WebGPU: 'dom' | 'none'
+}) -> Transform { ...those fields, el, gpu, enabled, destroy() }
+```
+
+Moves, scales, rotates and fades the element's mirrored subtree on the
+GPU; the DOM is never written, so nothing is re-read and the page's
+layout and hit-testing stay where they are (as with a browser compositor
+layer). The fields are plain numbers: write them, or let GSAP tween them
+(`gsap.from(t, { scale: 0.85, y: 40, opacity: 0, stagger: 0.08 })`).
+Each write schedules a frame. CSS order: translate, rotate, then scale,
+about the origin.
+
+- While enabled the element is isolated (a stacking context, as with
+  region passes). At rest (identity, opacity 1) its records draw in
+  place, pixel-identical to no transform; otherwise its subtree renders
+  to its own texture each frame and is drawn back through the transform.
+  The texture covers only the part that can land on screen (inside the
+  ancestors' clip). An enclosing group (opacity, region pass, another
+  transform) grows its own texture to where transformed descendants land.
+- Mid-animation the subtree is a resampled bitmap (text included), so
+  scaling above 1 softens it; scaling down stays clean.
+- The result is clipped by the element's ancestors' clips (their AABB:
+  rounded or rotated clips are not followed).
+- Toggling `enabled` (and creating or destroying one) isolates or
+  releases the element, which schedules a full read; changing the
+  numbers doesn't.
+- A region pass on the same element takes precedence.
+- Inert runtime (no WebGPU): with `fallback: 'dom'` each write sets the
+  element's inline `transform` (before its computed transform),
+  `transform-origin` and `opacity` (times its computed opacity); at
+  rest, when disabled and on `destroy()` its own inline values come
+  back. One animation drives both paths. With `transform-origin` changed,
+  an existing transform composes about the new origin.
+
 ## Wake rules
 
 The compositor idles unless something asks for frames. `/fx` requests one

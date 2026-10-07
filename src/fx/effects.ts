@@ -43,6 +43,11 @@ import {
   stageSource
 } from './shader'
 import { createTarget, type Target } from './target'
+import {
+  createTransform,
+  type Transform,
+  type TransformOptions
+} from './transform'
 
 export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Labels pipelines and shader errors. */
@@ -108,6 +113,9 @@ export interface Effects {
   target(el: Element): Target
   /** Targets for every element matching `selector` (under `root`). */
   targets(selector: string, root?: ParentNode): Target[]
+  /** Move, scale, rotate and fade an element on the GPU (see
+   * TransformOptions); its CSS transform without WebGPU. */
+  transform(el: Target | Element, opts?: TransformOptions): Transform
   /** Remove every pass and layer and the pointer listeners. */
   destroy(): void
   /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
@@ -236,6 +244,7 @@ function inertEffects(): Effects {
     layer: (opts) => inertLayer(opts),
     material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
+    transform: (el, opts) => createTransform(null, el, opts),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
@@ -286,6 +295,7 @@ export function createEffects(compositor: Compositor): Effects {
   const passes: PassState[] = []
   const layers: LayerState[] = []
   const materials: MaterialState[] = []
+  const transforms: Transform[] = []
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
@@ -1055,6 +1065,11 @@ export function createEffects(compositor: Compositor): Effects {
       return s.handle as unknown as Material<S>
     },
     target: (el) => targetOf(el, targetCache, graph),
+    transform(el, opts) {
+      const t = createTransform(graph, el, opts)
+      transforms.push(t)
+      return t
+    },
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) =>
         targetOf(el, targetCache, graph)
@@ -1066,6 +1081,10 @@ export function createEffects(compositor: Compositor): Effects {
       destroyed = true
       tracker.unlisten()
       removeHook()
+      for (const t of transforms) {
+        t.destroy()
+      }
+      transforms.length = 0
       graph.setPostChain(null)
       for (const p of passes) {
         freePass(p)

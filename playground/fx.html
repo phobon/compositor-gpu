@@ -71,6 +71,9 @@
       .overlap .box { margin-right: -40px; }
       .orbit { position: relative; height: 330px; margin-top: 16px; }
       .orbit img { position: absolute; width: 140px; height: 100px; object-fit: cover; border-radius: 12px; }
+      .tf-row { display: flex; gap: 24px; margin-top: 16px; padding: 16px; overflow: hidden; border: 1px solid #44444f; border-radius: 16px; }
+      .tf-card { width: 220px; padding: 12px; border-radius: 16px; background: #26262c; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+      .tf-card img { width: 100%; height: 180px; object-fit: cover; border-radius: 10px; }
       #log { position: fixed; left: 8px; bottom: 8px; color: #f87171; font: 12px monospace; white-space: pre; }
     </style>
   </head>
@@ -182,6 +185,26 @@
           <img src="./test.png" alt="" style="left:735px;top:48px;transform:rotate(10.5deg)" />
           <img src="./test.png" alt="" style="left:907px;top:125px;transform:rotate(21.0deg)" />
           <img src="./test.png" alt="" style="left:970px;top:230px;transform:rotate(31.5deg)" />
+        </div>
+      </section>
+
+      <section data-vr="fx-transform" class="clear">
+        <h2>Layer transforms</h2>
+        <p>Each card scales, moves, turns and fades on the GPU; the DOM
+          never moves. Click the row to replay the stagger.</p>
+        <div class="tf-row" id="tf-row">
+          <div class="tf-card" id="tf-0">
+            <img src="./test.png" alt="" />
+            <span>VK-166</span>
+          </div>
+          <div class="tf-card" id="tf-1">
+            <img src="./test.png" alt="" />
+            <span>CF-1211</span>
+          </div>
+          <div class="tf-card" id="tf-2">
+            <img src="./test.png" alt="" />
+            <span>ZZ-412</span>
+          </div>
         </div>
       </section>
 

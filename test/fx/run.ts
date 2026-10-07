@@ -45,6 +45,12 @@
 //   fx-mat-stagger    a glyph material staggered by mat_index
 //   fx-follow-then-off  stagger on, then off: equal to fx-follow exactly
 //   fx-pass-image     the fx-off section through a pass sampling #mat-img
+//   fx-transform-off  the transform section, nothing enabled
+//   fx-transform      three cards with pinned layer transforms (one moved
+//                     past the row's overflow clip)
+//   fx-transform-identity  identity transforms: equal to fx-transform-off
+//                     exactly (an isolated group composites in place)
+//   fx-transform-then-off  pinned, then off: equal to fx-transform-off
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -77,6 +83,8 @@ type Effect =
   | 'after'
   | 'region'
   | 'progressive'
+  | 'transform'
+  | 'transform-id'
   | 'mripple'
   | 'wave'
   | 'bend'
@@ -152,6 +160,9 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.after.enabled = e === 'after'
     h.region.enabled = e === 'region'
     h.progressive.enabled = e === 'progressive'
+    h.tfSet(
+      e === 'transform' ? 'pinned' : e === 'transform-id' ? 'identity' : 'off'
+    )
     h.mripple.enabled = e === 'mripple' || e === 'materials'
     h.wave.enabled = e === 'wave' || e === 'materials'
     h.bend.enabled = e === 'bend' || e === 'materials'
@@ -537,6 +548,43 @@ async function main(): Promise<void> {
     }
     if (want('fx-pass-image')) {
       await capture('fx-off', 'fx-pass-image', 'pimage')
+    }
+    const tfs = 'fx-transform'
+    const tfInv = ['fx-transform-identity', 'fx-transform-then-off']
+    let tfPre: PNG | null = null
+    if (want('fx-transform-off') || tfInv.some(want)) {
+      tfPre = await capture(tfs, 'fx-transform-off', 'none')
+    }
+    const same = (name: string, post: PNG | null): void => {
+      if (tfPre && post) {
+        const n = exactDiff(tfPre, post)
+        const pct = diffPng(
+          tfPre,
+          post,
+          resolve(outDir, `${name}-invariant.png`)
+        )
+        results.push({
+          name: `${name} (= off)`,
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    if (want('fx-transform-identity')) {
+      same(
+        'fx-transform-identity',
+        await capture(tfs, 'fx-transform-identity', 'transform-id')
+      )
+    }
+    if (want(tfs) || want('fx-transform-then-off')) {
+      await capture(tfs, tfs, 'transform')
+    }
+    if (want('fx-transform-then-off')) {
+      same(
+        'fx-transform-then-off',
+        await capture(tfs, 'fx-transform-then-off', 'none')
+      )
     }
     await pinPlain()
     await setEffect(page, 'none')
