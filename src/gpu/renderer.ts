@@ -115,6 +115,20 @@ function layerAffine(
 
 type Box4 = [number, number, number, number]
 
+/** Resolution bounds for a transformed group's texture, relative to its
+ * parent's: rendered at the transform's own scale (as a browser
+ * re-rasters a scaled layer), so text and edges stay crisp scaled down or
+ * up and the composite samples about 1:1. */
+const MIN_RES = 1 / 16
+const MAX_RES = 4
+
+/** `m`'s axis scales (the lengths the unit x and y axes map to), clamped
+ * to [MIN_RES, MAX_RES]. */
+function axisScales(m: Affine): [number, number] {
+  const c = (v: number) => Math.min(MAX_RES, Math.max(MIN_RES, v))
+  return [c(Math.hypot(m[0], m[1])), c(Math.hypot(m[2], m[3]))]
+}
+
 /** A layer transform's opacity in [0, 1] (1 when not a number). */
 function layerAlpha(t: LayerTransform): number {
   return Number.isFinite(t.opacity) ? Math.min(1, Math.max(0, t.opacity)) : 1
@@ -788,6 +802,17 @@ export class Renderer {
         ...apply(m, x0, y1),
         ...apply(m, x1, y1)
       ]
+      // Without rotation the texture maps about 1:1 onto the parent's
+      // pixels (rendered at the transform's scale): snap its corner to
+      // the parent's pixel grid, or every texel lands between two pixels
+      // and the result blurs. Moves it by under a device pixel.
+      if (Math.abs(m[1]) < 1e-6 && Math.abs(m[2]) < 1e-6) {
+        const qx = ((quad[0] ?? 0) - parent.ox) * parent.sx
+        const qy = ((quad[1] ?? 0) - parent.oy) * parent.sy
+        const dx = (Math.round(qx) - qx) / parent.sx
+        const dy = (Math.round(qy) - qy) / parent.sy
+        quad = quad.map((v, i) => v + (i % 2 === 0 ? dx : dy))
+      }
     }
     // Moved content stays inside the clips of the element's ancestors
     // (its own records were clipped in the group).
@@ -900,22 +925,35 @@ export class Renderer {
       x1 = clamp(Math.ceil((bx1 + p - parent.ox) * parent.sx), parent.devW)
       y1 = clamp(Math.ceil((by1 + p - parent.oy) * parent.sy), parent.devH)
     }
-    const w = x1 - x0
-    const h = y1 - y0
-    if (w <= 0 || h <= 0) {
+    if (x1 <= x0 || y1 <= y0) {
       return null
     }
+    // Under a transform the texture is rendered at the transform's scale
+    // (k device px per parent device px), within the size limit.
+    let kx = 1
+    let ky = 1
+    if (inv && xf) {
+      const max = this.device.limits.maxTextureDimension2D
+      ;[kx, ky] = axisScales(xf)
+      kx = Math.min(kx, max / (x1 - x0))
+      ky = Math.min(ky, max / (y1 - y0))
+    }
+    const w = Math.max(1, Math.ceil((x1 - x0) * kx))
+    const h = Math.max(1, Math.ceil((y1 - y0) * ky))
+    const sx = parent.sx * kx
+    const sy = parent.sy * ky
     const pooled = this.composite.acquire(w, h)
     const ox = parent.ox + x0 / parent.sx
     const oy = parent.oy + y0 / parent.sy
     const frame = this.groupFrame(slot)
     const f = this.frameData
-    f[0] = pooled.width / parent.sx
-    f[1] = pooled.height / parent.sy
+    f[0] = pooled.width / sx
+    f[1] = pooled.height / sy
     f[2] = ox
     f[3] = oy
     f[4] = ctx.time
-    f[5] = this.shared.dpr
+    // Device px per CSS px in this target (Slug's AA pad reads it).
+    f[5] = this.shared.dpr * Math.max(kx, ky)
     // The target origin in viewport space, for viewport-space records: doc
     // origin minus the real scroll (not the parent's origin, which is the
     // canvas anchor on the main target).
@@ -929,11 +967,11 @@ export class Renderer {
       oy,
       devW: pooled.width,
       devH: pooled.height,
-      sx: parent.sx,
-      sy: parent.sy,
+      sx,
+      sy,
       group: -1,
       pooled,
-      rect: [ox, oy, ox + w / parent.sx, oy + h / parent.sy],
+      rect: [ox, oy, ox + w / sx, oy + h / sy],
       w,
       h,
       px: x0,

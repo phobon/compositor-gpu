@@ -495,8 +495,12 @@ about the origin.
   The texture covers only the part that can land on screen (inside the
   ancestors' clip). An enclosing group (opacity, region pass, another
   transform) grows its own texture to where transformed descendants land.
-- Mid-animation the subtree is a resampled bitmap (text included), so
-  scaling above 1 softens it; scaling down stays clean.
+- Mid-animation the subtree renders to a texture at the transform's own
+  scale (1/16 to 4 × the parent's resolution, per axis), as a browser
+  re-rasters a scaled layer: text and edges stay crisp scaled down or up,
+  and the texture lands about 1:1 on the screen. Without rotation its
+  corner snaps to the device-pixel grid (a sub-pixel shift) so it doesn't
+  blur; a rotated layer is resampled once.
 - The result is clipped by the element's ancestors' clips (their AABB:
   rounded or rotated clips are not followed).
 - Toggling `enabled` (and creating or destroying one) isolates or

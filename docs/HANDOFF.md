@@ -107,8 +107,14 @@ Follow-ups, roughly in order:
      0.00 on every existing shot against goldens from the previous
      code. Write the new goldens on the Mac:
      `npm run test:fx -- --update --only fx-motion`.
-   - MDS-home (uncommitted, needs the submodule bump first, untested on
-     the site): `src/components/shared/fx/` (`useFx` +
+   - MDS-home (uncommitted; submodule bumped by Ben). Checked on the dev
+     server in the browser pane: panel scrubs give 0.86 / 0.90 / 0.94 / 1
+     as a section's top moves 100 / 90 / 80 / 65% down the viewport,
+     mirrored at the top (same as the old `panelScale`); a showcase
+     below the line waits at opacity 0 / scale 0.8 / y 60 and plays
+     to rest on entry; ones above the line at mount stay shown; edge
+     blur on; DialKit panels Reveal and App sections built from the
+     schemas; no console errors. `src/components/shared/fx/` (`useFx` +
      `CompositorProvider`, `useReveal`, `useScrub`, `dials.js` building
      DialKit panels from schemas). `DuoShowcase` and `SplitView` call
      `useReveal` on their own screenshot (`Duo/reveal.js` holds the
@@ -116,9 +122,21 @@ Follow-ups, roughly in order:
      two composed `useScrub`s (scale in from the bottom, out at the
      top) and the edge blur; `DuoPlaceholder` forwards its ref.
      `Duo/fxRuntime.js` and `Duo/useDials.js` are unused (delete).
-7. **Library follow-ups** (ROADMAP): layer transforms (mipmaps for group
-   textures at small scales, crisp text above scale 1, rounded ancestor
-   clips, a group texture atlas); 16-bit PNGs crash SwiftShader on
+7. **Library follow-ups** (ROADMAP). Done 2026-10-08, uncommitted
+   (`src/gpu/renderer.ts`): a transformed group's texture renders at the
+   transform's axis scales (`axisScales`, 1/16..4 × the parent; group
+   Frame `dpr` scaled for Slug's pad) and its quad snaps to the parent's
+   pixel grid when not rotated, so it lands 1:1: crisp below and above
+   scale 1 without mips. Mips were tried first and measured worse against
+   Chrome's own CSS-scaled rendering (they blur; Chrome re-rasters at the
+   final scale), so they were dropped. `test:fx` 0.00 everywhere except
+   `fx-transform` 0.04 % (the scaled card); motion invariants exact.
+   Update that golden on the Mac (`npm run test:fx -- --update --only
+   fx-transform`), and check scale animations on hardware for a ±0.5 px
+   wobble from the snapping (none expected to be visible). Images inside
+   a scaled layer pick a coarser image mip, as CSS-scaled images in the
+   mirror already do (the image pass's filtering, not this). Remaining:
+   rounded ancestor clips, a group texture atlas; 16-bit PNGs crash SwiftShader on
    upload (the `/duo` screenshots are webp now, so lower risk); `hold`
    also holds back fallback-atlas glyphs (emoji) in the target; a wipe
    or other reveal material if the dissolve isn't enough.

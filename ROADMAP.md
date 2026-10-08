@@ -142,9 +142,12 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       pass (no main-pass split per group); shots `fx-transform*`; perf
       `animated transforms` rows (compositor CPU 460 ms → 0.6 ms per frame
       for 16 cards under SwiftShader).
-- [ ] Layer transform follow-ups: mipmaps for group textures at small
-      scales, crisp text above scale 1 (vertex-space transforms), rounded
-      ancestor clips, a group texture atlas (one pass for many groups).
+- [ ] Layer transform follow-ups: ~~mipmaps for group textures at small
+      scales, crisp text above scale 1~~ (done 2026-10-08 differently: the
+      group texture renders at the transform's scale and snaps to the pixel
+      grid, so no mips are needed; rotated layers still resample once),
+      rounded ancestor clips, a group texture atlas (one pass for many
+      groups).
 - [x] `dissolve` preset: a Material (all kinds) that reveals the target
       by value noise mixed with a sweep, soft front and optional rim;
       materials gained `hold` (records not drawn until the pipeline has

@@ -318,6 +318,10 @@ Conventions each pass must follow:
   group's `box`/`clip`/`space`) whose group is composited through a
   per-frame affine (`layerAffine`: translate, rotate, scale about an origin
   in its box) with an extra opacity, scissored to its ancestors' clip AABB.
+  The group texture renders at the transform's axis scales (`axisScales`,
+  1/16..4 × the parent's resolution; the group Frame's `dpr` scales with
+  it for Slug's pad) and, without rotation, the composite quad snaps to
+  the parent's pixel grid, so it lands 1:1 and stays crisp.
   At identity and opacity 1 the group draws in place (`plan` 'in-place':
   pixel-identical, no texture). Under a transform `openGroup` renders the
   part that can land in the parent (parent ∩ clip, mapped back), and
