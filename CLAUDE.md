@@ -234,7 +234,10 @@ the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
 (`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
 `gt`), and reduce to the circular expressions when `radiusY` equals
 `radius`. The selection highlight (`dom/selection.ts`) is read
-with the text: boxes at the front of `run.decorations`, re-read on
+with the text: boxes at the front of `run.decorations`, and the selected
+glyphs take the `::selection` colour (`colorSelected`: the page's when it
+differs from the text's, else `HighlightText` with no `::selection` rule,
+except on macOS, where the text keeps its colour), re-read on
 `selectionchange` for the text parents the old and new selections touch
 (`selectedParents`; a full read past 256).
 

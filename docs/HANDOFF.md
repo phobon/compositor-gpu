@@ -1,7 +1,7 @@
 # Handoff — compositor-gpu + bonobolabs.com `/duo`
 
-Rewritten 2026-10-03, updated 2026-10-05 (M2, M3a), to resume in a fresh
-session. `ROADMAP.md` is the live checklist (mirror phases + effects
+Rewritten 2026-10-03, updated through 2026-10-08, to resume in a fresh
+session. Start with **Start here** below. `ROADMAP.md` is the live checklist (mirror phases + effects
 milestones), `docs/ARCHITECTURE.md` the
 mirror's spec, `docs/EFFECTS.md` the effects layer's. This file is the
 context around them: checkouts, how to run and verify things, and the first
@@ -11,9 +11,9 @@ move on each open item.
 
 | Path | What | Position |
 | --- | --- | --- |
-| `~/code/compositor-gpu` | the library, source of truth | `01c2a53 Stacked effects` (M3c, open item 3) + the uncommitted mirror batch (open item 7) |
-| `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `0b9e327b Bump submodule` (pointer → `1094210 Cutouts`), 1 ahead of origin, + uncommitted `src/components/Duo/GpuCompositor.jsx` (`zIndex` prop, default 500), `GpuStats.jsx` (readout line) and `src/components/primitives/SharedLayout.jsx` (footer above the canvas, item 2) |
-| `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | checked out at `5c90a6b` (≠ the committed pointer, uncommitted) |
+| `~/code/compositor-gpu` | the library, source of truth, **public** since 2026-10-07 | `042c9ca Dissolve transition` on `main`, pushed; only this file uncommitted |
+| `~/code/bonobo/MDS-home` | the Gatsby site, branch `feature/duo_landing` | `5b9b5fb8 Add placeholder images`, pushed; submodule pointer → `042c9ca`; clean |
+| `~/code/bonobo/MDS-home/compositor-gpu` | git submodule | at the committed pointer `042c9ca` |
 
 The site runs from the submodule (`compositor-gpu` → `compositor-gpu/src`
 alias in `gatsby-config.js` / `jsconfig.json`). Flow: edit + commit + push in
@@ -22,14 +22,84 @@ alias in `gatsby-config.js` / `jsconfig.json`). Flow: edit + commit + push in
 git commit`. Claude (Cowork) edits only the standalone checkout; never the
 submodule.
 
-Git runs from the Cowork VM leave lock files it cannot delete: remove any
-that exist before git work. Now: `compositor-gpu/.git/index.lock`,
-`MDS-home/.git/index.lock`, `MDS-home/.git/modules/MDS-web-ui/index.lock`.
-From the VM, read state with `git --no-optional-locks status` (plain
-`git status` refreshes the index and leaves a lock). `_staging/` in compositor-gpu
-is scratch: it holds the old `compositor-gpu-changes.diff` (tracked, see
-above) and `tree-16df20b.tgz` (the archive used for verification, untracked);
-delete both.
+From the Cowork VM, read git state with `git --no-optional-locks` (plain
+`git status` refreshes the index and leaves a lock it can't delete). No lock
+files or scratch files are left in either repo as of 2026-10-08.
+
+## Start here (2026-10-08)
+
+Everything from items 7–12 below is committed and pushed. The cloud
+sandbox tree from the last session (`/home/claude/cgpu`) is gone with the
+session: copy the tree from `~/code/compositor-gpu` into the sandbox
+before running harnesses (`pnpm install --frozen-lockfile` there,
+`CHROMIUM_PATH` to Playwright's Chromium). The `/duo` React components
+were tested in the sandbox with a small vite page that aliases
+`@utils/gsap`, `compositor-gpu`, `compositor-gpu/fx` and stubs
+`@primitives/Layout` / `@utils/Typography`; rebuild it the same way if
+needed.
+
+Follow-ups, roughly in order:
+
+1. **Check on hardware** (Ben's Mac, `/duo?gpu=1&mode=replace&dials=1`):
+   hero dissolve on load, section scale, screenshot reveal, edge blur.
+   Only seen under SwiftShader so far, where frames take seconds and
+   GSAP's lag smoothing slows tweens. Try both Replay buttons and the
+   dials. In compositor-gpu, write the new fx golden:
+   `npm run test:fx -- --update --only fx-dissolve`.
+2. **Text selection is a requirement** (Ben, 2026-10-07). The
+   `::selection` highlight is mirrored (`dom/selection.ts`, item 4) and
+   works in replace mode. Missing:
+   - Selected text colour: done 2026-10-08, uncommitted.
+     `colorSelected` (`dom/selection.ts`, called from `tree.ts` after
+     the highlight) sets `Glyph.color` on selected graphemes: the
+     `::selection` colour when it differs from the text's, else
+     `HighlightText` when the page has no `::selection` rule (not on
+     macOS, which keeps the colour). New visual shot `selcolor` /
+     `selcolor-select` (default, page rule, background-only rule):
+     parity 2.01 -> 0.40 %; every other shot 0.00 regression. Not
+     covered: `::selection` text-shadow / decoration colour.
+   - Hit-testing follows the DOM, not GPU layer transforms: a section
+     scaled to 0.86 near the viewport edges, or a card mid-reveal, is
+     drawn away from where the DOM text is, so drag-selecting there is
+     off. Decided 2026-10-08 (Ben): accept it at the edges; no change.
+3. **Hero flash before hydration.** With `?gpu=1` the SSR HTML shows the
+   hero until `Hero`'s layout effect hides it (the flag is client-only).
+   Fix: a tiny inline head script that marks `<html>` when `gpu=1` and
+   `navigator.gpu` exist, plus CSS hiding `#duo__hero` under that mark
+   (cleared by `Hero`), or accept the flash.
+4. **`DuoShowcase`** (Ben, `5b9b5fb8`): tabbed screenshots with
+   auto-advance and CSS keyframe transitions; its stage carries
+   `data-reveal`. Under the compositor, running CSS animations make the
+   frame re-read their parents every frame (`DomSync`): check
+   `stats().readMs` while it advances; the crossfade could move to the
+   GPU (layer transform opacity or a `dissolve`) if it's costly.
+5. **Split View section** (`SplitView.jsx`): the only `/duo` section with
+   no GPU effect.
+6. **Effect authoring API** (ROADMAP open item, to grill before
+   building): how effects are assigned and triggered, composition,
+   GPU-vs-DOM ownership, dials, and one runtime per compositor
+   (`Duo/fxRuntime.js` is the stopgap: a second `createEffects` replaces
+   the first's post chain).
+7. **Library follow-ups** (ROADMAP): layer transforms (mipmaps for group
+   textures at small scales, crisp text above scale 1, rounded ancestor
+   clips, a group texture atlas); 16-bit PNGs crash SwiftShader on
+   upload (the `/duo` screenshots are webp now, so lower risk); `hold`
+   also holds back fallback-atlas glyphs (emoji) in the target; a wipe
+   or other reveal material if the dissolve isn't enough.
+8. **Spec docs.** `docs/EFFECTS.md` has no Deviations entries yet for
+   layer transforms, `progressiveBlur`, `dissolve` or Material `hold`
+   (they are in `src/fx/README.md`, `CLAUDE.md` and ROADMAP).
+9. **CI submodule access.** MDS-home CI clones submodules with
+   `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not
+   `phobon/compositor-gpu` (likely a fine-grained token: one owner only);
+   it failed with "Repository not found" until compositor-gpu was made
+   public on 2026-10-07. If it goes private again: transfer it to
+   Bonobolabs (and update `.gitmodules`), or add a token for it and, in
+   each of the four workflows, check out with `submodules: false`, then
+   set `url."https://x-access-token:<token>@github.com/<owner>/".insteadOf
+   "git@github.com:<owner>/"` per owner and run `git -c
+   http.https://github.com/.extraheader= submodule update --init
+   --recursive`.
 
 ## Last batch (`ab273c8`..`16df20b`, pushed)
 
@@ -121,7 +191,11 @@ the compositor.
 
 ## Open items, first move for each
 
-1. **Commit.** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
+History of each batch. Where an entry says "uncommitted", it has since
+been committed and pushed (all of it, as of 2026-10-08); the current
+follow-ups are in **Start here**.
+
+1. **Commit (done; history).** compositor-gpu: M2 `dcf94b1`, M3a `08433a2`, mirror batch
    `5c90a6b`, `realContext` / partial-read fix `a36d65b`, M3b `7a9f504`;
    leftovers `718df5d`, M3c `01c2a53`; the mirror batch (item 7) is uncommitted. M3b added the dev dependency
    `unplugin-typegpu@0.12.3` (`package.json`, `pnpm-lock.yaml`): run
@@ -270,7 +344,7 @@ the compositor.
    (`data-vr-focus`).
 6. **Upstream** the gvar issue (`docs/UPSTREAM-gvar.md`; repro checked
    against `playground/InterVariable.ttf` on 2026-10-06). Ben files it.
-7. **Mirror batch 2026-10-06, uncommitted (on top of M3c):**
+7. **Mirror batch 2026-10-06, committed (on top of M3c):**
    - Conic and repeating-conic gradients; gradient layers honour
      `background-size`/`-position`/`-origin` (`gradient.tile`, packed in
      `gt`), `repeat-x`/`-y` per axis. Kind: 1 linear, 2 radial, 3 conic,
@@ -306,7 +380,7 @@ the compositor.
    `onReady`, which `index.jsx` stores and passes down. Checked in a
    vanilla port under SwiftShader, not in Gatsby. A wheel prototype and
    an orbit under the hero were tried and removed.
-9. **GPU layer transforms, 2026-10-07, uncommitted.** `fx.transform(el)`
+9. **GPU layer transforms, 2026-10-07, committed.** `fx.transform(el)`
    moves, scales, rotates and fades an element on the GPU (no DOM writes,
    no re-reads); GSAP tweens its fields. The renderer now renders all
    group textures first and draws each target in one pass. Shots
@@ -315,7 +389,7 @@ the compositor.
    real frame times (SwiftShader charges ~2 s per frame with any
    offscreen group, old renderer included, so its frame intervals mean
    nothing here).
-10. **DialKit panels, 2026-10-07, uncommitted.** The playground's hand-built
+10. **DialKit panels, 2026-10-07, committed.** The playground's hand-built
     `#panel` in `fx.html` is replaced by DialKit's framework-free adapter
     (`dialkit/vanilla`, dev dependency): one "Effects" panel, a folder per
     effect (on/off + params) and a Layer transforms folder (from-values,
@@ -323,7 +397,7 @@ the compositor.
     `Duo/useDials.js` (same adapter, loaded only with `?dials=1`,
     persisted per panel) drives `AppScroll`'s scale and edge blur; run
     `yarn` there for the new `dialkit` dependency.
-11. **`/duo` screenshot reveal, 2026-10-07, MDS-home only, uncommitted.**
+11. **`/duo` screenshot reveal, 2026-10-07, MDS-home only, committed.**
     `AppSections` marks each section's screenshot grid `data-reveal-group`
     and the two screenshots `data-reveal`. `AppScroll` plays a staggered
     scale-in once per group when its top reaches 80% of the viewport
@@ -332,7 +406,7 @@ the compositor.
     CSS transform/opacity otherwise; at rest with reduced motion. Dials:
     `reveal` folder (from scale/y/opacity, stagger, easing, Replay);
     `useDials` gained an `onAction` argument.
-12. **`/duo` hero dissolve, 2026-10-07, uncommitted.** Library: `dissolve`
+12. **`/duo` hero dissolve, 2026-10-07, committed.** Library: `dissolve`
     preset (a Material over the target's boxes, images and glyphs:
     value noise mixed with a top-to-bottom sweep, soft front, optional
     rim; hides the DOM paint) and Material `hold` (records not drawn
@@ -345,6 +419,12 @@ the compositor.
     `Duo/fxRuntime.js` shares one fx runtime between `Hero` and
     `AppScroll` (a second `createEffects` would replace the post chain);
     each destroys its own passes, materials and transforms.
+    Later the same day (Ben): the page without the GPU is fully static.
+    `AppScroll` builds everything (section scale, edge blur, screenshot
+    reveal) only once the compositor is up, writing layer transforms
+    only (no GSAP CSS writes); groups already above the reveal line then
+    stay shown. `Hero` pre-hides only when `navigator.gpu` exists and
+    otherwise shows itself without a fade.
 
 ## Gotchas
 

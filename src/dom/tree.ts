@@ -38,7 +38,7 @@ import {
   readBeforeAfter,
   readMarker
 } from './pseudo'
-import { beginSelectionRead, selectionBoxes } from './selection'
+import { beginSelectionRead, colorSelected, selectionBoxes } from './selection'
 import {
   beginRead,
   clipRectFor,
@@ -867,6 +867,7 @@ export class SceneReader {
             if (hi) {
               run.decorations = [...hi, ...(run.decorations ?? [])]
             }
+            colorSelected(child as Text, run)
             node.kids.push(run)
           }
         }

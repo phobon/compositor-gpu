@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>compositor-gpu playground</title>
     <style>
+      .sel-page::selection, .sel-page *::selection {
+        color: #111827;
+        background: #facc15;
+      }
+      .sel-bg::selection { background: #7c3aed; }
       /* One variable file backs every weight; the compositor derives each
          weight it sees by instancing the wght axis at runtime. */
       @font-face {
@@ -743,6 +748,17 @@
         <p id="sel-text" style="max-width: 46ch;">Selected text gets a highlight
           box under its glyphs, read with the text whenever the selection
           changes.</p>
+      </section>
+
+      <section data-vr="selcolor" data-vr-select="#sel-color">
+        <h2>Selection colour</h2>
+        <div id="sel-color" style="max-width: 46ch;">
+          <p>Default highlight: <b>HighlightText</b> on Linux and Windows,
+            the text's own colour on macOS.</p>
+          <p class="sel-page">A page rule: <em>::selection</em> sets both
+            colour and background, applied to the selected glyphs.</p>
+          <p class="sel-bg">Background only: the text keeps its colour.</p>
+        </div>
       </section>
 
       <section data-vr="shapes">

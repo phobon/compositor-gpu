@@ -55,6 +55,7 @@ const SECTIONS = [
   'images',
   'gradients',
   'bglayers',
+  'selcolor',
   'shapes',
   'overflow',
   'stacking',

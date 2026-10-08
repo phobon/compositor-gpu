@@ -150,6 +150,14 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       materials gained `hold` (records not drawn until the pipeline has
       compiled, so a reveal can't flash). Shots `fx-dissolve`,
       `fx-dissolve-full`. Used by the `/duo` hero on load.
+- [x] Selection, required for `/duo`: ~~apply `::selection { color }` to
+      the selected glyphs~~ (done 2026-10-08, `colorSelected`, shot
+      `selcolor-select`). Hit-testing under GPU layer transforms:
+      accepted as is (Ben, 2026-10-08): text is at identity in the
+      middle of the viewport, so selection is off only near the edges
+      and mid-reveal. Details in `docs/HANDOFF.md` (Start here, 2).
+- [ ] Spec: Deviations entries in `docs/EFFECTS.md` for layer transforms,
+      `progressiveBlur`, `dissolve` and Material `hold`.
 - [ ] Effect authoring API (after the `/duo` proof of concept). Today a
       `/duo` reveal takes data attributes in the markup, a lookup inside
       `AppScroll` and a separate dials config. Questions to settle:
