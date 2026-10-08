@@ -41,11 +41,13 @@ needed.
 Follow-ups, roughly in order:
 
 1. **Check on hardware** (Ben's Mac, `/duo?gpu=1&mode=replace&dials=1`):
-   hero dissolve on load, section scale, screenshot reveal, edge blur.
+   section scale, screenshot reveal, edge blur (the hero dissolve is
+   gone, item 3).
    Only seen under SwiftShader so far, where frames take seconds and
-   GSAP's lag smoothing slows tweens. Try both Replay buttons and the
-   dials. In compositor-gpu, write the new fx golden:
-   `npm run test:fx -- --update --only fx-dissolve`.
+   GSAP's lag smoothing slows tweens. Try the reveal Replay button and the
+   dials. In compositor-gpu, write the new fx goldens:
+   `npm run test:fx -- --update --only fx-dissolve` and
+   `npm run test:visual -- --update --only selcolor`.
 2. **Text selection is a requirement** (Ben, 2026-10-07). The
    `::selection` highlight is mirrored (`dom/selection.ts`, item 4) and
    works in replace mode. Missing:
@@ -62,17 +64,27 @@ Follow-ups, roughly in order:
      scaled to 0.86 near the viewport edges, or a card mid-reveal, is
      drawn away from where the DOM text is, so drag-selecting there is
      off. Decided 2026-10-08 (Ben): accept it at the edges; no change.
-3. **Hero flash before hydration.** With `?gpu=1` the SSR HTML shows the
-   hero until `Hero`'s layout effect hides it (the flag is client-only).
-   Fix: a tiny inline head script that marks `<html>` when `gpu=1` and
-   `navigator.gpu` exist, plus CSS hiding `#duo__hero` under that mark
-   (cleared by `Hero`), or accept the flash.
-4. **`DuoShowcase`** (Ben, `5b9b5fb8`): tabbed screenshots with
-   auto-advance and CSS keyframe transitions; its stage carries
-   `data-reveal`. Under the compositor, running CSS animations make the
-   frame re-read their parents every frame (`DomSync`): check
-   `stats().readMs` while it advances; the crossfade could move to the
-   GPU (layer transform opacity or a `dissolve`) if it's costly.
+3. **Hero load dissolve: dropped** (Ben, 2026-10-08: never appeared,
+   long blank wait, glitchy dissolve). MDS-home, uncommitted: `Hero`
+   renders normally with no hide/dissolve, no `Hero` dials, and
+   `index.jsx` no longer passes it the compositor. GPU effects on `/duo`
+   start on scroll only (`AppScroll`). The library's `dissolve` preset
+   and Material `hold` stay. A pre-hide head script was tried and
+   reverted the same day.
+4. **`DuoShowcase`: measured and fixed 2026-10-08**, compositor-gpu,
+   uncommitted. On Ben's Mac (`/duo?gpu=1&stats=1`, Claude browser pane):
+   idle with auto-advance running, 0.6 ms read per frame (one element, the
+   progress bar); during a switch ~1 ms per frame (15-25 elements), plus
+   two full reads per switch (~210 elements, ~1.6k glyphs, 7-10 ms each).
+   Cause (`compositor.ts`): any mutation in a frame cleared `paintOnly`
+   for every running paint-only animation, so a panel mid-`scale` or the
+   progress bar mid-`scaleX` was rect-checked against its transformed
+   AABB and escalated. Now only a paint-only target that contains a
+   mutation scope loses the exemption (a mutation outside it is covered by
+   its own boundary's rect check). Reproduced and checked with a
+   standalone page mimicking Base UI's attribute sequence: 2 escalations
+   per switch -> 0. `test:visual` 0.00 on every shot. The crossfade can
+   stay CSS. Re-measure on the site after the submodule bump.
 5. **Split View section** (`SplitView.jsx`): the only `/duo` section with
    no GPU effect.
 6. **Effect authoring API** (ROADMAP open item, to grill before

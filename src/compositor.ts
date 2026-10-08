@@ -231,10 +231,14 @@ export async function createCompositor(
     // the next take()).
     let cssAnimating = false
     const scopes = dirty.scopes as Set<Element>
-    // Paint-only animation scopes skip the partial read's rect check, but
-    // only when no mutation shares the frame (it could move them).
+    // Paint-only animation scopes skip the partial read's rect check,
+    // except when a mutation in the same frame lies inside one (it could
+    // change its layout size). A mutation outside one is covered by its
+    // own boundary's rect check: if that boundary didn't move, neither did
+    // anything outside it.
     paintOnly.clear()
     const mutated = scopes.size > 0
+    const mutationScopes = mutated ? [...scopes] : null
     for (const el of sync.animatingScopes(paintOnly)) {
       scopes.add(el)
       cssAnimating = true
@@ -253,8 +257,12 @@ export async function createCompositor(
         flags |= Dirty.MUTATION
       }
     }
-    if (mutated) {
-      paintOnly.clear()
+    if (mutationScopes) {
+      for (const el of paintOnly) {
+        if (mutationScopes.some((m) => el.contains(m))) {
+          paintOnly.delete(el)
+        }
+      }
     }
     if (cssAnimating) {
       flags |= Dirty.MUTATION
