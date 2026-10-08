@@ -224,6 +224,47 @@ only these:
 - **M3 — materials.** Material contract for glyph/image/box; extension
   point 2; per-Target DOM hiding; `ripple`; `subdivisions`; Layer compute
   hook.
+- **M4 — authoring** (settled 2026-10-08, see Authoring below).
+  `fx.motion`; composition of transforms and motions per element; a
+  `schema` on every params object; one counted runtime per compositor
+  (`release()`); no DOM fallback; GSAP and Motion recipes.
+
+## Authoring (M4)
+
+How a page assigns, triggers, combines and tunes effects. Settled with
+Ben on 2026-10-08 after the `/duo` proof of concept, where a reveal took
+data attributes, a lookup inside one component and a hand-kept dials
+config.
+
+- **Home.** The library, React-free. Pages assign effects with hooks
+  (`useReveal(ref, opts)`, `useScrub(ref, opts)`), which live in the
+  site: the library has no React entry.
+- **One primitive for element motion.** `fx.motion(el, { from, to,
+  ease, progress })`: an element's layer transform interpolated from
+  `from` to `to` (default: at rest) by `progress`. A reveal is a motion
+  played 0 -> 1; a scroll-linked scale is a motion scrubbed by scroll.
+  `play()`/`reverse()` run a basic built-in tween for manual use.
+- **Timing belongs to motion libraries.** GSAP and Motion are assumed
+  alongside the compositor and set `progress` (or any params object).
+  The library ships recipes for them (`src/fx/README.md`), not
+  integration code or dependencies. Trigger modes the recipes cover:
+  play once on enter, replay each entry, scrub by scroll, manual.
+- **Composition.** One layer transform per element, shared by every
+  transform and motion on it: x, y and rotate add, scaleX, scaleY and
+  opacity multiply, the origin is the first enabled one's. Nested
+  elements get nested layers. Effects don't need to know about each
+  other.
+- **Progressive enhancement.** No DOM fallback anywhere (the M3
+  `fx.transform` `fallback: 'dom'` is removed). Without WebGPU the
+  runtime is inert: calls work, nothing renders, the page is its plain
+  self.
+- **Tuning.** Every params object carries its schema (`schema`: names,
+  types, defaults, ranges; motions list `from.*`, `to.*` and `ease`). A
+  dev-only helper in the site builds DialKit panels from the effects it
+  registers, so no separate config is kept in sync by hand.
+- **One runtime per compositor.** `createEffects(compositor)` returns
+  the same runtime to every caller and counts them; `release()` drops
+  one, the last destroys it. (`/duo`'s `fxRuntime.js` did this by hand.)
 
 ## Deviations (M1 implementation)
 

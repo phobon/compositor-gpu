@@ -197,6 +197,40 @@ async function boot(): Promise<void> {
     { x: 140, rotate: 6 }
   ]
   const tfIdentity = { x: 0, y: 0, scale: 1, rotate: 0, opacity: 1 }
+  // Motions on the same cards (harness: fx-motion). Card 0 half way from
+  // { scale 0.5, y 64, opacity 0 }; card 1 at its start (scale 0.5),
+  // composed with a transform's rotate -4; card 2 at rest. 'ref' sets the
+  // equivalent single transforms instead: the two must match exactly.
+  const mo = [
+    fx.motion($('tf-0'), {
+      from: { scale: 0.5, y: 64, opacity: 0 },
+      progress: 0.5,
+      enabled: false
+    }),
+    fx.motion($('tf-1'), { from: { scale: 0.5 }, enabled: false }),
+    fx.motion($('tf-2'), { from: { x: 80 }, progress: 1, enabled: false })
+  ]
+  const moSet = (mode: 'off' | 'motion' | 'ref'): void => {
+    for (const m of mo) {
+      m.enabled = mode === 'motion'
+    }
+    if (mode === 'off') {
+      return
+    }
+    const pin = [
+      { scale: 0.75, y: 32, opacity: 0.5 },
+      { rotate: -4, scale: 0.5 },
+      {}
+    ]
+    tf.forEach((t, i) => {
+      Object.assign(
+        t,
+        tfIdentity,
+        mode === 'ref' ? pin[i] : i === 1 ? { rotate: -4 } : {}
+      )
+      t.enabled = mode === 'ref' ? i < 2 : i === 1
+    })
+  }
   const tfSet = (mode: 'off' | 'identity' | 'pinned'): void => {
     tf.forEach((t, i) => {
       Object.assign(t, tfIdentity, mode === 'pinned' ? TF_PIN[i] : {})
@@ -704,6 +738,7 @@ async function boot(): Promise<void> {
     progressive,
     dissolve: dsv,
     tfSet,
+    moSet,
     after,
     mripple,
     wave,

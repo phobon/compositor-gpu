@@ -7,6 +7,7 @@ import type {
 } from '../gpu/graph'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
+import { createComposer } from './compose'
 import {
   createLayer,
   inertLayer,
@@ -21,6 +22,7 @@ import {
   type MaterialOptions,
   type MaterialState
 } from './material'
+import { createMotion, type Motion, type MotionOptions } from './motion'
 import {
   createParams,
   type ParamBlock,
@@ -77,6 +79,8 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
 export interface Pass<S extends ParamSchema = ParamSchema> {
   readonly name: string
   readonly params: ParamValues<S>
+  /** The params' schema (see ParamBlock.schema). */
+  readonly schema: S
   /** Toggling requests a frame; enabling resets `elapsed`. */
   enabled: boolean
   continuous: boolean
@@ -114,9 +118,17 @@ export interface Effects {
   /** Targets for every element matching `selector` (under `root`). */
   targets(selector: string, root?: ParentNode): Target[]
   /** Move, scale, rotate and fade an element on the GPU (see
-   * TransformOptions); its CSS transform without WebGPU. */
+   * TransformOptions). Nothing without WebGPU. */
   transform(el: Target | Element, opts?: TransformOptions): Transform
-  /** Remove every pass and layer and the pointer listeners. */
+  /** An element's layer transform from `from` to `to` as `progress` goes
+   * 0 -> 1 (see MotionOptions). Nothing renders without WebGPU. */
+  motion(el: Target | Element, opts?: MotionOptions): Motion
+  /** Give up this caller's use of the runtime (createEffects returns the
+   * same runtime per compositor, counting callers): the last release
+   * destroys it. Destroy your own passes, motions etc. first. */
+  release(): void
+  /** Remove every pass, layer, material, transform and motion and the
+   * pointer listeners, for every caller. Prefer release(). */
   destroy(): void
   /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
   __override(o: FxOverride | null): void
@@ -177,6 +189,7 @@ function passHandle<S extends ParamSchema>(
   return {
     name: s.name,
     params: s.block.values as ParamValues<S>,
+    schema: s.block.schema as S,
     get enabled() {
       return s.enabled
     },
@@ -235,6 +248,8 @@ function targetOf(
   return t
 }
 
+const inertComposer = createComposer(null)
+
 function inertEffects(): Effects {
   const pointer = emptyPointer()
   const cache = new WeakMap<Element, Target>()
@@ -244,7 +259,8 @@ function inertEffects(): Effects {
     layer: (opts) => inertLayer(opts),
     material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
-    transform: (el, opts) => createTransform(null, el, opts),
+    transform: (el, opts) => createTransform(inertComposer, false, el, opts),
+    motion: (el, opts) => createMotion(inertComposer, false, el, opts),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
@@ -272,6 +288,7 @@ function inertEffects(): Effects {
         () => {}
       )
     },
+    release() {},
     destroy() {},
     __override() {},
     __pending: () => 0
@@ -281,21 +298,58 @@ function inertEffects(): Effects {
 /** Ping-pong targets are sized up to this many device px, for reuse. */
 const SIZE_STEP = 64
 
+/** One runtime per compositor (it owns the post chain), with its callers
+ * counted. */
+const runtimes = new WeakMap<Compositor, { fx: Effects; users: number }>()
+
 /**
- * Create the effects runtime for `compositor`. On an inert compositor
- * (no WebGPU, or server-side) it returns an inert runtime: every call
- * works and nothing renders.
+ * The effects runtime for `compositor`: the same object for every caller,
+ * counted; each caller calls `release()` when done and the last release
+ * destroys it. On an inert compositor (no WebGPU, or server-side) it is an
+ * inert runtime: every call works and nothing renders.
  */
 export function createEffects(compositor: Compositor): Effects {
+  let entry = runtimes.get(compositor)
+  if (!entry) {
+    entry = { fx: buildEffects(compositor), users: 0 }
+    runtimes.set(compositor, entry)
+  }
+  entry.users++
+  return entry.fx
+}
+
+/** Drop `fx` as `compositor`'s runtime (it was destroyed). */
+function forget(compositor: Compositor, fx: Effects): void {
+  if (runtimes.get(compositor)?.fx === fx) {
+    runtimes.delete(compositor)
+  }
+}
+
+/** Count down one caller of `fx`; true when it was the last. */
+function lastUser(compositor: Compositor, fx: Effects): boolean {
+  const e = runtimes.get(compositor)
+  return e?.fx !== fx || --e.users <= 0
+}
+
+function buildEffects(compositor: Compositor): Effects {
   const graph: RenderGraph | null = compositor.active ? compositor.graph : null
   if (!graph) {
-    return inertEffects()
+    const fx = inertEffects()
+    fx.release = () => {
+      if (lastUser(compositor, fx)) {
+        forget(compositor, fx)
+      }
+    }
+    fx.destroy = () => forget(compositor, fx)
+    return fx
   }
   const { device, format, frameLayout } = graph.shared
   const passes: PassState[] = []
   const layers: LayerState[] = []
   const materials: MaterialState[] = []
   const transforms: Transform[] = []
+  const motions: Motion[] = []
+  const composer = createComposer(graph)
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
@@ -943,7 +997,7 @@ export function createEffects(compositor: Compositor): Effects {
     wake: () => graph.requestFrame()
   }
 
-  return {
+  const fx: Effects = {
     active: true,
     get pointer() {
       return tracker.state
@@ -1066,9 +1120,19 @@ export function createEffects(compositor: Compositor): Effects {
     },
     target: (el) => targetOf(el, targetCache, graph),
     transform(el, opts) {
-      const t = createTransform(graph, el, opts)
+      const t = createTransform(composer, true, el, opts)
       transforms.push(t)
       return t
+    },
+    motion(el, opts) {
+      const m = createMotion(composer, true, el, opts)
+      motions.push(m)
+      return m
+    },
+    release() {
+      if (lastUser(compositor, fx)) {
+        fx.destroy()
+      }
     },
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) =>
@@ -1079,12 +1143,18 @@ export function createEffects(compositor: Compositor): Effects {
         return
       }
       destroyed = true
+      forget(compositor, fx)
       tracker.unlisten()
       removeHook()
       for (const t of transforms) {
         t.destroy()
       }
       transforms.length = 0
+      for (const m of motions) {
+        m.destroy()
+      }
+      motions.length = 0
+      composer.clear()
       graph.setPostChain(null)
       for (const p of passes) {
         freePass(p)
@@ -1112,4 +1182,5 @@ export function createEffects(compositor: Compositor): Effects {
     },
     __pending: () => graph.materialsPending()
   }
+  return fx
 }

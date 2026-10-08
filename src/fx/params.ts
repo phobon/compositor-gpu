@@ -101,6 +101,9 @@ function toComponents(type: ParamType, v: unknown): number[] | null {
 
 export interface ParamBlock<S extends ParamSchema> {
   readonly values: ParamValues<S>
+  /** The schema the block was made from (names, types, ranges: what a
+   * tuning UI builds its controls from). */
+  readonly schema: S
   /** `struct Params { ... }` in WGSL. */
   readonly wgsl: string
   /** Size of the uniform block, bytes (a multiple of 16). */
@@ -154,6 +157,7 @@ export function createParams<S extends ParamSchema>(
 
   const block = {
     values: {} as ParamValues<S>,
+    schema,
     wgsl,
     byteSize,
     dirty: true,

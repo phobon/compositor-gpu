@@ -281,6 +281,8 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
 export interface Layer<S extends ParamSchema = ParamSchema> {
   readonly name: string
   readonly params: ParamValues<S>
+  /** The params' schema (see ParamBlock.schema). */
+  readonly schema: S
   /** count × stride floats; grows when `count` does. Call markDirty()
    * after writing. */
   readonly data: Float32Array
@@ -390,6 +392,7 @@ export function inertLayer<S extends ParamSchema>(
   return {
     name: o.name,
     params: block.values as ParamValues<S>,
+    schema: block.schema,
     get data() {
       return data
     },
@@ -683,6 +686,7 @@ export function createLayer<S extends ParamSchema>(
   const handle: Layer<ParamSchema> = {
     name: o.name,
     params: block.values,
+    schema: block.schema,
     get data() {
       return data
     },

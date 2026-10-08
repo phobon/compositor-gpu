@@ -6,7 +6,9 @@ geometry (M2: Targets, Layers, region passes) and Materials (M3), with
 the presets `blur`, `displace`, `cursorGlow`, `clickRipple` and `ripple`.
 M3b added the Layer `simulate` compute hook, Layers that draw a Target's
 glyphs or sample its image, `raw` materials, and TypeGPU externals for
-JS-bodied (`'use gpu'`) hooks.
+JS-bodied (`'use gpu'`) hooks. M4 added authoring: `fx.motion`,
+composition of several transforms/motions per element, a `schema` on
+every params object, and one shared runtime per compositor.
 
 ```ts
 import { createCompositor } from 'compositor-gpu'
@@ -18,6 +20,15 @@ const fx = createEffects(compositor)
 const soft = blur(fx, { radius: 6 })
 gsap.to(soft.params, { radius: 0, duration: 0.6 })
 ```
+
+`createEffects(compositor)` returns the same runtime for every caller on
+that compositor (the runtime owns the post chain, so there can only be
+one) and counts them: each caller destroys its own passes, motions etc.
+and calls `fx.release()`; the last release destroys the runtime.
+`fx.destroy()` tears it down for every caller at once.
+
+Effects are progressive enhancement: without WebGPU nothing renders and
+the page stays as it is. There is no DOM fallback.
 
 Importing `/fx` does nothing (safe on a server). On an inert compositor
 (no WebGPU) `createEffects` returns an inert runtime: `fx.pass()` returns a
@@ -465,8 +476,7 @@ const t = fx.transform(el, {          // el: Element or Target
   rotate,                              // degrees, clockwise
   opacity,                             // multiplies the element's own
   originX, originY,                    // fractions of the border box, 0.5
-  enabled = true,
-  fallback = 'dom'                     // without WebGPU: 'dom' | 'none'
+  enabled = true
 }) -> Transform { ...those fields, el, gpu, enabled, destroy() }
 ```
 
@@ -493,12 +503,108 @@ about the origin.
   releases the element, which schedules a full read; changing the
   numbers doesn't.
 - A region pass on the same element takes precedence.
-- Inert runtime (no WebGPU): with `fallback: 'dom'` each write sets the
-  element's inline `transform` (before its computed transform),
-  `transform-origin` and `opacity` (times its computed opacity); at
-  rest, when disabled and on `destroy()` its own inline values come
-  back. One animation drives both paths. With `transform-origin` changed,
-  an existing transform composes about the new origin.
+- Several transforms and motions on one element share its layer: the
+  enabled ones combine (x, y and rotate add; scaleX, scaleY and opacity
+  multiply; the origin is the first enabled one's). Effects on nested
+  elements nest, as layers do.
+- Inert runtime (no WebGPU): the handle works and nothing happens.
+
+## Motions
+
+```ts
+const m = fx.motion(el, {              // el: Element or Target
+  from: { scale: 0.8, y: 60, opacity: 0 },  // values at progress 0
+  to: {},                              // at progress 1; unset = at rest
+  ease,                                // cubic-bezier [x1, y1, x2, y2] on progress; default linear
+  progress = 0,
+  originX, originY,                    // 0.5
+  enabled = true
+}) -> Motion {
+  el, gpu, progress, enabled,
+  params: { from, to, ease },          // live: writes apply at once
+  schema,                              // { 'from.scale': { type, default, min, max }, ..., ease }
+  play({ duration = 0.6, delay = 0 }), reverse(...), stop(), destroy()
+}
+```
+
+A layer transform (as above) whose channels are interpolated from `from`
+to `to` by `progress`. Channels: `x`, `y` (px), `scale` (multiplies
+`scaleX`/`scaleY`), `scaleX`, `scaleY`, `rotate` (deg), `opacity`.
+Outside 0..1 progress extrapolates linearly. `play()`/`reverse()` run a
+basic rAF tween of `progress` (duration scaled by the distance left) and
+resolve when done or stopped; anything richer (scroll triggers,
+staggers, springs) comes from a motion library setting `progress`.
+`schema` lists the channels given in `from` or `to` (both sides) and
+`ease`, with ranges, for tuning UIs. Without WebGPU, `progress` and
+`params` still work and nothing renders.
+
+## Recipes: GSAP and Motion
+
+The library doesn't schedule effects: a motion library drives
+`progress` (or any params object). When it eases the tween, leave the
+motion's `ease` unset (linear) so the curve isn't applied twice.
+
+GSAP:
+
+```ts
+// Play once when the element's top reaches 80% of the viewport.
+const m = fx.motion(el, { from: { scale: 0.8, y: 60, opacity: 0 } })
+ScrollTrigger.create({
+  trigger: el,
+  start: 'top 80%',
+  once: true,
+  onEnter: () => gsap.to(m, { progress: 1, duration: 0.7, ease: 'expo.out' })
+})
+
+// Replay on each entry, reverse on leave.
+const tween = gsap.to(m, { progress: 1, duration: 0.7, paused: true })
+ScrollTrigger.create({
+  trigger: el,
+  start: 'top 80%',
+  onEnter: () => tween.play(),
+  onLeaveBack: () => tween.reverse()
+})
+
+// Scrub by scroll.
+ScrollTrigger.create({
+  trigger: el,
+  start: 'top bottom',
+  end: 'center center',
+  onUpdate: (st) => {
+    m.progress = st.progress
+  }
+})
+
+// Stagger a group.
+gsap.to(motions, { progress: 1, duration: 0.7, stagger: 0.12 })
+```
+
+Motion (`motion` package):
+
+```ts
+import { animate, inView, scroll } from 'motion'
+
+// Play once on enter.
+inView(el, () => {
+  animate(m, { progress: 1 }, { duration: 0.7, ease: [0.22, 1, 0.36, 1] })
+}, { amount: 0.2 })
+
+// Replay each entry: return a cleanup that runs on leave.
+inView(el, () => {
+  animate(m, { progress: 1 }, { duration: 0.7 })
+  return () => animate(m, { progress: 0 }, { duration: 0.3 })
+})
+
+// Scrub by scroll.
+scroll((p) => {
+  m.progress = p
+}, { target: el, offset: ['start end', 'center center'] })
+
+// Spring.
+animate(m, { progress: 1 }, { type: 'spring', bounce: 0.3 })
+```
+
+Manual (tabs, buttons): set `m.progress`, or `m.play()` / `m.reverse()`.
 
 ## Wake rules
 

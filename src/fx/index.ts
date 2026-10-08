@@ -23,6 +23,15 @@ export {
   type MaterialOptions
 } from './material'
 export {
+  type Bezier,
+  cubicBezier,
+  type Motion,
+  type MotionOptions,
+  type MotionSchema,
+  type MotionValues,
+  type PlayOptions
+} from './motion'
+export {
   createParams,
   type ParamBlock,
   type ParamDef,

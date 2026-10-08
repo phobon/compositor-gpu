@@ -158,27 +158,31 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       and mid-reveal. Details in `docs/HANDOFF.md` (Start here, 2).
 - [ ] Spec: Deviations entries in `docs/EFFECTS.md` for layer transforms,
       `progressiveBlur`, `dissolve` and Material `hold`.
-- [ ] Effect authoring API (after the `/duo` proof of concept). Today a
+- [x] Effect authoring API (M4, built 2026-10-08; spec `docs/EFFECTS.md`
+      "Authoring", contract and recipes `src/fx/README.md`). Today a
       `/duo` reveal takes data attributes in the markup, a lookup inside
-      `AppScroll` and a separate dials config. Questions to settle:
-      - Assignment: attributes, a `<Reveal>` wrapper, a hook
-        (`useReveal(ref, opts)`) or a declarative config per section.
-      - Triggers: play on enter, scrubbed by scroll or replay on each
-        entry, set per group or per element (now hard-coded: `top 80%`,
-        once).
-      - Composition: nested effects (a reveal inside a panel's scroll
-        scale) without one component owning both.
-      - GPU vs DOM: each effect choosing layer or CSS itself (as
-        `paintCard` does), or the library owning it. `fx.transform` has a
-        DOM fallback, but `/duo` loads `compositor-gpu/fx` only once the
-        compositor is up, so it can't reach it.
-      - Tuning: dials attached to an effect, not a config kept in sync by
-        hand.
-      - One runtime per compositor: `createEffects` owns the post chain,
-        so a second runtime replaces the first's passes and its
-        `destroy()` clears them. `/duo` shares one through
-        `Duo/fxRuntime.js`; the library could hand out the same runtime
-        per compositor instead.
+      `AppScroll` and a separate dials config. Settled with Ben
+      2026-10-08:
+      - Home: the library (`compositor-gpu/fx`), React-free. Pages
+        assign effects with hooks (`useReveal(ref, opts)` etc.), which
+        live in the site.
+      - Timing: GSAP and Motion are assumed alongside the compositor
+        and drive effects; the library ships documented recipes, not
+        integration code. Without one an effect is manual only (set
+        `progress`, or `play()` with a basic built-in tween). Modes the
+        recipes cover: play once on enter, replay each entry, scrub by
+        scroll, manual.
+      - Composition: one layer per element, shared by all its effects;
+        each effect writes its own channels, combined by the library
+        (scale/opacity multiply, x/y/rotate add); nested elements get
+        nested layers.
+      - No DOM fallback: progressive enhancement. Without WebGPU effects
+        are no-ops and the page is its plain self; `fx.transform`'s
+        `fallback: 'dom'` is removed.
+      - Tuning: effects describe their params (name, range, default); a
+        dev-only site helper builds DialKit panels from them.
+      - Runtime: `createEffects(compositor)` is memoised per compositor
+        and reference-counted; `Duo/fxRuntime.js` goes away.
 - [x] `progressiveBlur` preset: Gaussian whose radius grows toward
       weighted viewport (or region) edges, bands or corners; shot
       `fx-progressive`. Used by the `/duo` app sections (MDS-home

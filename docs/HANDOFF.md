@@ -85,13 +85,37 @@ Follow-ups, roughly in order:
    standalone page mimicking Base UI's attribute sequence: 2 escalations
    per switch -> 0. `test:visual` 0.00 on every shot. The crossfade can
    stay CSS. Re-measure on the site after the submodule bump.
-5. **Split View section** (`SplitView.jsx`): the only `/duo` section with
-   no GPU effect.
-6. **Effect authoring API** (ROADMAP open item, to grill before
-   building): how effects are assigned and triggered, composition,
-   GPU-vs-DOM ownership, dials, and one runtime per compositor
-   (`Duo/fxRuntime.js` is the stopgap: a second `createEffects` replaces
-   the first's post chain).
+5. **Split View section: done 2026-10-08**, MDS-home, uncommitted.
+   Rendered inside `AppScroll` (as `AppSections` children, from
+   `index.jsx`), so it scales with the app sections and its screenshot
+   (`data-reveal` in a `data-reveal-group` section) plays the same
+   scale-in. An unfold-on-scroll (`scaleX` scrubbed) was tried and
+   dropped the same day.
+6. **Effect authoring API (M4): built 2026-10-08, uncommitted.**
+   Decisions in ROADMAP / `docs/EFFECTS.md` "Authoring".
+   - Library: `fx.motion(el, { from, to, ease, progress })` with
+     `play()`/`reverse()` (`src/fx/motion.ts`); transforms and motions
+     on one element combine into its one layer transform
+     (`src/fx/compose.ts`: x/y/rotate add, scale/opacity multiply);
+     `schema` on every params object (`ParamBlock.schema`; passes,
+     layers, materials, motions); `createEffects` memoised per
+     compositor and counted (`release()`); `fx.transform`'s DOM
+     fallback removed. GSAP and Motion recipes in `src/fx/README.md`.
+     New fx shots `fx-motion` (must equal `fx-motion-ref`, the same
+     states as single transforms: 0 px), `fx-motion-then-off` (= off:
+     0 px). Verified in the sandbox: typecheck, biome, build; `test:fx`
+     0.00 on every existing shot against goldens from the previous
+     code. Write the new goldens on the Mac:
+     `npm run test:fx -- --update --only fx-motion`.
+   - MDS-home (uncommitted, needs the submodule bump first, untested on
+     the site): `src/components/shared/fx/` (`useFx` +
+     `CompositorProvider`, `useReveal`, `useScrub`, `dials.js` building
+     DialKit panels from schemas). `DuoShowcase` and `SplitView` call
+     `useReveal` on their own screenshot (`Duo/reveal.js` holds the
+     shared options); `AppScroll` is a `ScrollPanel` per section with
+     two composed `useScrub`s (scale in from the bottom, out at the
+     top) and the edge blur; `DuoPlaceholder` forwards its ref.
+     `Duo/fxRuntime.js` and `Duo/useDials.js` are unused (delete).
 7. **Library follow-ups** (ROADMAP): layer transforms (mipmaps for group
    textures at small scales, crisp text above scale 1, rounded ancestor
    clips, a group texture atlas); 16-bit PNGs crash SwiftShader on

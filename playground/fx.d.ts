@@ -20,6 +20,7 @@ declare global {
       dissolve: Material
       /** The #tf-* cards' layer transforms: off, identity or pinned. */
       tfSet(mode: 'off' | 'identity' | 'pinned'): void
+      moSet(mode: 'off' | 'motion' | 'ref'): void
       /** A quad drawn right after #after-anchor. */
       after: Layer
       /** Pin two clicks around the viewport centre (fx.__override). */

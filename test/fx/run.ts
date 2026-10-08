@@ -53,6 +53,10 @@
 //   fx-transform-then-off  pinned, then off: equal to fx-transform-off
 //   fx-dissolve       the transform row half dissolved (noise + sweep, rim)
 //   fx-dissolve-full  progress 1: equal to fx-transform-off exactly
+//   fx-motion     motions on the cards (half way; composed with a transform;
+//                 at rest); must equal fx-motion-ref, the same states as
+//                 single transforms, exactly
+//   fx-motion-then-off  motions off: equal to fx-transform-off exactly
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -87,6 +91,8 @@ type Effect =
   | 'progressive'
   | 'transform'
   | 'transform-id'
+  | 'motion'
+  | 'motion-ref'
   | 'dissolve'
   | 'dissolve-full'
   | 'mripple'
@@ -170,6 +176,7 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.tfSet(
       e === 'transform' ? 'pinned' : e === 'transform-id' ? 'identity' : 'off'
     )
+    h.moSet(e === 'motion' ? 'motion' : e === 'motion-ref' ? 'ref' : 'off')
     h.mripple.enabled = e === 'mripple' || e === 'materials'
     h.wave.enabled = e === 'wave' || e === 'materials'
     h.bend.enabled = e === 'bend' || e === 'materials'
@@ -560,6 +567,7 @@ async function main(): Promise<void> {
     const tfInv = [
       'fx-transform-identity',
       'fx-transform-then-off',
+      'fx-motion-then-off',
       'fx-dissolve-full'
     ]
     let tfPre: PNG | null = null
@@ -595,6 +603,29 @@ async function main(): Promise<void> {
       same(
         'fx-transform-then-off',
         await capture(tfs, 'fx-transform-then-off', 'none')
+      )
+    }
+    if (want('fx-motion') || want('fx-motion-then-off')) {
+      const mo = await capture(tfs, 'fx-motion', 'motion')
+      const ref = await capture(tfs, 'fx-motion-ref', 'motion-ref')
+      if (mo && ref) {
+        const n = exactDiff(ref, mo)
+        results.push({
+          name: 'fx-motion (= ref)',
+          regressionPct: diffPng(
+            ref,
+            mo,
+            resolve(outDir, 'fx-motion-ref-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    if (want('fx-motion-then-off')) {
+      same(
+        'fx-motion-then-off',
+        await capture(tfs, 'fx-motion-then-off', 'none')
       )
     }
     if (want('fx-dissolve')) {

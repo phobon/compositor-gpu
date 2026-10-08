@@ -130,7 +130,13 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 `gpu/material.ts`), the TypeGPU externals `gpu`/`MatIn`/`Quad`
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
 'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
-`clickRipple`/`ripple`/`dissolve`. The playground's dev server runs `unplugin-typegpu` (dev
+`clickRipple`/`ripple`/`dissolve`. M4 (authoring, `docs/EFFECTS.md`
+"Authoring"): `fx.motion` (from/to channels by `progress`, a basic
+`play()`), transforms and motions on one element combined into its
+single layer transform (`fx/compose.ts`), `schema` on every params
+object, `createEffects` memoised per compositor and counted
+(`release()`), no DOM fallback (inert without WebGPU); timing comes
+from GSAP/Motion (recipes in `src/fx/README.md`). The playground's dev server runs `unplugin-typegpu` (dev
 dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),
@@ -234,10 +240,7 @@ the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
 (`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
 `gt`), and reduce to the circular expressions when `radiusY` equals
 `radius`. The selection highlight (`dom/selection.ts`) is read
-with the text: boxes at the front of `run.decorations`, and the selected
-glyphs take the `::selection` colour (`colorSelected`: the page's when it
-differs from the text's, else `HighlightText` with no `::selection` rule,
-except on macOS, where the text keeps its colour), re-read on
+with the text: boxes at the front of `run.decorations`, re-read on
 `selectionchange` for the text parents the old and new selections touch
 (`selectedParents`; a full read past 256).
 

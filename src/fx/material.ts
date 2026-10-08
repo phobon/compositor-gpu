@@ -99,6 +99,8 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
 export interface Material<S extends ParamSchema = ParamSchema> {
   readonly name: string
   readonly params: ParamValues<S>
+  /** The params' schema (see ParamBlock.schema). */
+  readonly schema: S
   readonly target: Target
   enabled: boolean
   continuous: boolean
@@ -144,6 +146,7 @@ export function inertMaterial<S extends ParamSchema>(
   return {
     name: o.name,
     params: block.values as ParamValues<S>,
+    schema: block.schema,
     target,
     enabled: o.enabled ?? true,
     continuous: materialContinuous(o as unknown as MaterialOptions),
@@ -249,6 +252,7 @@ export function createMaterial<S extends ParamSchema>(
   const handle: Material<ParamSchema> = {
     name: o.name,
     params: block.values,
+    schema: block.schema,
     target,
     get enabled() {
       return state.enabled
