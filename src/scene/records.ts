@@ -19,6 +19,26 @@ export interface Rect {
   y: number
   width: number
   height: number
+  /** On a clip rect: the exact clip shape when a clipping ancestor is
+   * rounded or rotated (the rect is then its AABB). The innermost such
+   * ancestor's; outer ones clip by their AABB only. */
+  shape?: ClipShape
+}
+
+/**
+ * A clipping ancestor's padding box in its own local frame: `inv` maps a
+ * point in the record's space to that frame (origin at the padding box's
+ * top-left; [a, b, c, d, e, f]: local = (a x + c y + e, b x + d y + f)),
+ * `w`/`h` its size and `radius`/`radiusY` its inner corner radii (tl, tr,
+ * br, bl). Indexed per scene build (Scene.clipIndex) into the shapes the
+ * shaders read (frame.ts `frame_clip_cov`).
+ */
+export interface ClipShape {
+  inv: [number, number, number, number, number, number]
+  w: number
+  h: number
+  radius: [number, number, number, number]
+  radiusY: [number, number, number, number]
 }
 
 /** Linear 0..1 RGBA. */

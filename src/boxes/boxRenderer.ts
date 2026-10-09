@@ -36,7 +36,8 @@ struct Box {
   radius : vec4f,   // tl, tr, br, bl
   fill   : vec4f,   // sRGB rgba
   bc0    : vec4f,   // top border colour, sRGB rgba
-  params : vec4f,   // border styles (base-4 t,r,b,l), opacity, z, space
+  params : vec4f,   // border styles (base-4 t,r,b,l), opacity, clip
+                    // shape index (frame_clip_cov; 0 none), space
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial, 3 conic;
                     // +8 repeating),
@@ -402,7 +403,12 @@ fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
                   floor(wr * 0.5), a);
 }
 
+// The pass's output inside an exact (rounded/rotated) ancestor clip.
 fn base_fs(in : VOut) -> vec4f {
+  return base_fs0(in) * frame_clip_cov(in.docp, boxes[in.idx].params.z);
+}
+
+fn base_fs0(in : VOut) -> vec4f {
   let b = boxes[in.idx];
   let cl = b.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
@@ -833,7 +839,7 @@ export class BoxPass implements RenderPass {
           bd.styles[3] * 64
         : 0
       d[o++] = b.opacity
-      d[o++] = b.z
+      d[o++] = scene.clipIndex(b.clip)
       d[o++] = b.space === 'viewport' ? 1 : 0
       const c = b.clip
       d[o++] = c ? c.x : -1e9

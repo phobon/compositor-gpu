@@ -22,7 +22,8 @@ struct Quad {
   rect   : vec4f,   // x,y,w,h in the glyph's local line-box frame
   uv     : vec4f,   // u0,v0,u1,v1
   color  : vec4f,   // sRGB straight alpha; a = glyph alpha * run opacity
-  params : vec4f,   // tint (1 = mono coverage), space (1 = viewport), _, _
+  params : vec4f,   // tint (1 = mono coverage), space (1 = viewport),
+                    // clip shape index (frame_clip_cov; 0 none), _
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
   xf1    : vec4f,   // tx, ty (doc space, offset applied), _, _
@@ -64,10 +65,11 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let cl = q.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
-  let a = t.a * q.color.a;
+  let k = frame_clip_cov(in.docp, q.params.z);
+  let a = t.a * q.color.a * k;
   if (q.params.x > 0.5) {
     return vec4f(q.color.rgb * a, a);   // mono: alpha is coverage
   }
-  return vec4f(t.rgb * q.color.a, a);   // colour: already premultiplied
+  return vec4f(t.rgb * q.color.a * k, a);   // colour: already premultiplied
 }
 `

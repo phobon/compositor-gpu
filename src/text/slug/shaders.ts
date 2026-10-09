@@ -29,7 +29,8 @@ import {
 export const SLUG_STRUCTS_WGSL = /* wgsl */ `
 struct Glyph {
   rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
-  offset : vec4f,   // xy displacement, space (1 = viewport), _
+  offset : vec4f,   // xy displacement, space (1 = viewport), clip shape
+                    // index (frame_clip_cov; 0 none)
   color  : vec4f,
   gref   : vec4u,   // bandStart, bandCount, index in material target, _
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
@@ -222,7 +223,12 @@ fn vs(@builtin(vertex_index) vi : u32,
 }
 
 ${SLUG_COVERAGE_WGSL}
+// The pass's output inside an exact (rounded/rotated) ancestor clip.
 fn base_fs(in : VOut) -> vec4f {
+  return base_fs0(in) * frame_clip_cov(in.docp, glyphs[in.idx].offset.w);
+}
+
+fn base_fs0(in : VOut) -> vec4f {
   let g = glyphs[in.idx];
   if (g.gref.y == 0u) { discard; }
   let cl = g.clip;

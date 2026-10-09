@@ -14,7 +14,7 @@ struct Cut {
   xf1    : vec4f,   // tx, ty (record space), w, h (local size, CSS px)
   radius : vec4f,   // tl, tr, br, bl
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  params : vec4f,   // space, 0, 0, 0
+  params : vec4f,   // space, clip shape index (frame_clip_cov), 0, 0
   ry     : vec4f,   // vertical radii (= radius: circular)
 };
 @group(1) @binding(0) var<storage, read> cuts : array<Cut>;
@@ -74,7 +74,8 @@ fn fs(in : VOut) -> @location(0) vec4f {
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
       in.docp.x > cl.z || in.docp.y > cl.w) { discard; }
   let d = sd_box(in.local, in.half, c.radius, c.ry);
-  return vec4f(0.0, 0.0, 0.0, edge_cov(d, apx));
+  return vec4f(0.0, 0.0, 0.0,
+    edge_cov(d, apx) * frame_clip_cov(in.docp, c.params.y));
 }
 `
 
@@ -191,7 +192,7 @@ export class CutoutPass implements RenderPass {
       d[o++] = cl ? cl.x + cl.width : 1e9
       d[o++] = cl ? cl.y + cl.height : 1e9
       d[o++] = c.space === 'viewport' ? 1 : 0
-      d[o++] = 0
+      d[o++] = scene.clipIndex(c.clip)
       d[o++] = 0
       d[o++] = 0
       for (let k = 0; k < 4; k++) {

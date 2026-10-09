@@ -135,8 +135,24 @@ Follow-ups, roughly in order:
    fx-transform`), and check scale animations on hardware for a ±0.5 px
    wobble from the snapping (none expected to be visible). Images inside
    a scaled layer pick a coarser image mip, as CSS-scaled images in the
-   mirror already do (the image pass's filtering, not this). Remaining:
-   rounded ancestor clips, a group texture atlas; 16-bit PNGs crash SwiftShader on
+   mirror already do (the image pass's filtering, not this).
+   Rounded/rotated ancestor clips: done 2026-10-09, uncommitted, for
+   every record (it was a mirror-wide gap: `/duo`'s `Screen` frames,
+   radius + overflow hidden around a radius-less image, drew square
+   image corners). A clip `Rect` carries `shape` (`ClipShape`,
+   `clipShapeFor` in `dom/styles.ts`); `Scene.clipIndex` numbers them per
+   build; a fixed table at group 0 binding 1 (`MAX_CLIP_SHAPES` 4096);
+   each pass writes the index into a spare lane (box `params.z`, image
+   `params.y` bits 8+, Slug `offset.w`, atlas `params.z`, cutout
+   `params.y`, composite `uv.w`) and multiplies by `frame_clip_cov`.
+   Innermost rounded/rotated ancestor exact, outer ones by AABB. New
+   visual shot `roundclip` (rounded frame + radius-less image, elliptical
+   frame with border, rotated clip): parity 1.56 % (2.85 % with shapes
+   off). Existing shots within gate (`overflow` 0.03 %: the clip box is
+   rounded, so its edge is now anti-aliased and the text is cut by the
+   corner); `test:fx` unchanged. Write goldens on the Mac: `npm run
+   test:visual -- --update --only roundclip` (and `overflow`). Check
+   `/duo` showcase corners. Remaining: a group texture atlas; 16-bit PNGs crash SwiftShader on
    upload (the `/duo` screenshots are webp now, so lower risk); `hold`
    also holds back fallback-atlas glyphs (emoji) in the target; a wipe
    or other reveal material if the dissolve isn't enough.
@@ -149,6 +165,24 @@ Follow-ups, roughly in order:
    Mac: `npm run test:visual -- --update --only png16`). `test:visual`:
    every existing shot within gate (0.01-0.05 % on sections that moved
    down the page under the new one).
+10. **Bento effects, 2026-10-09, MDS-home, uncommitted** (Ben: all four).
+    `Duo/DuoBento.jsx` + new hooks in `src/components/shared/fx/`:
+    reveal upgrade (`useReveal` `blur: { radius: 14, target:
+    '[data-bento-inner]' }`: a region `blur` per tile on an inner
+    wrapper, radius tweened to 0 with the tile's motion, released at the
+    end), hover lift + lean (`useHoverTilt`: `fx.transform` per image
+    card, GSAP `quickTo`, mouse only), cursor spotlight (`useSpotlight`:
+    a box Material over the bento, light around `pointer.follow` times
+    the box's coverage, a rim near its edge), scroll parallax
+    (`useScrub` now takes `targets`; screens drift ±16 px, covers ±24 px
+    at scale 1.1). Dials: `Bento` (hover, spotlight, parallax) and
+    `Reveal` › bento (incl. blur). Checked: ESLint, the page runs with no
+    console errors (material compiled). Not seen working: the bento only
+    shows from 1200 px and the browser pane's emulated viewport draws
+    the canvas at half size, so look on the Mac at
+    `/duo?gpu=1&dials=1`. Parallax inside the rounded cards needs the
+    rounded-clip work (item 7) in the submodule.
+
 9. **CI submodule access.** MDS-home CI clones submodules with
    `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not
    `phobon/compositor-gpu` (likely a fine-grained token: one owner only);

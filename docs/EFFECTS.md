@@ -495,8 +495,9 @@ original spec.
   context); at identity and opacity 1 it draws in place, pixel-identical.
   Under a transform the group renders only the part that can land in its
   parent, enclosing groups grow to where transformed descendants land,
-  and the result is scissored to the ancestors' clip AABB (rounded or
-  rotated clips are not followed). The texture renders at the
+  and the result is scissored to the ancestors' clip AABB and, since
+  2026-10-09, masked by the innermost rounded or rotated one's exact
+  shape (the mirror's clip shapes; see CLAUDE.md). The texture renders at the
   transform's axis scales (1/16..4 × the parent's resolution) and, when
   not rotated, its quad snaps to the parent's pixel grid, so text stays
   crisp scaled down or up (mipmaps were tried first and measured blurrier

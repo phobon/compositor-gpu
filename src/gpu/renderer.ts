@@ -1,10 +1,17 @@
 import type { DrawBatch } from '../scene/batches'
+import type { Rect } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext, Layer } from '../types'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
 import type { GpuContext } from './device'
-import { FRAME_BYTES, type RenderPass, type Shared } from './frame'
+import {
+  CLIP_FLOATS,
+  FRAME_BYTES,
+  MAX_CLIP_SHAPES,
+  type RenderPass,
+  type Shared
+} from './frame'
 import {
   CopyThrough,
   type DeviceRect,
@@ -203,6 +210,13 @@ function skipGroup(
 export class Renderer {
   private readonly device: GPUDevice
   private readonly frameBuffer: GPUBuffer
+  /** Clip shapes (frame.ts FrameClip), bound in every bind group 0. */
+  private readonly clipBuffer: GPUBuffer
+  private readonly clipData = new Float32Array(MAX_CLIP_SHAPES * CLIP_FLOATS)
+  /** Scene.version the clip table was last uploaded for. */
+  private clipVersion = -1
+  /** The scene being rendered (for clip shape indices). */
+  private scene: Scene | null = null
   readonly shared: Shared
   private readonly passes: RenderPass[] = []
   private readonly passByLayer = new Map<Layer, RenderPass>()
@@ -250,18 +264,31 @@ export class Renderer {
       size: FRAME_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     })
+    this.clipBuffer = this.device.createBuffer({
+      label: 'clip-shapes',
+      size: MAX_CLIP_SHAPES * CLIP_FLOATS * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    })
     const frameLayout = this.device.createBindGroupLayout({
       entries: [
         {
           binding: 0,
           visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
           buffer: { type: 'uniform' }
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' }
         }
       ]
     })
     const frameBindGroup = this.device.createBindGroup({
       layout: frameLayout,
-      entries: [{ binding: 0, resource: { buffer: this.frameBuffer } }]
+      entries: [
+        { binding: 0, resource: { buffer: this.frameBuffer } },
+        { binding: 1, resource: { buffer: this.clipBuffer } }
+      ]
     })
     this.shared = {
       device: this.device,
@@ -302,6 +329,49 @@ export class Renderer {
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
 
+  /** `clip`'s shape index in the scene being rendered (0: none). Group
+   * clips are indexed when the scene is built, so this only looks up. */
+  private clipIndexOf(clip: Rect | null | undefined): number {
+    return this.scene?.clipIndex(clip) ?? 0
+  }
+
+  /** Upload the scene's clip shapes (slot i + 1 for clipShapes[i]). */
+  private writeClips(scene: Scene): void {
+    const n = Math.min(scene.clipShapes.length, MAX_CLIP_SHAPES - 1)
+    if (n === 0) {
+      return
+    }
+    const d = this.clipData
+    for (let i = 0; i < n; i++) {
+      const c = scene.clipShapes[i]
+      if (!c) {
+        continue
+      }
+      let o = (i + 1) * CLIP_FLOATS
+      d[o++] = c.inv[0]
+      d[o++] = c.inv[1]
+      d[o++] = c.inv[2]
+      d[o++] = c.inv[3]
+      d[o++] = c.inv[4]
+      d[o++] = c.inv[5]
+      d[o++] = c.w
+      d[o++] = c.h
+      for (let k = 0; k < 4; k++) {
+        d[o++] = c.radius[k] ?? 0
+      }
+      for (let k = 0; k < 4; k++) {
+        d[o++] = c.radiusY[k] ?? 0
+      }
+    }
+    this.device.queue.writeBuffer(
+      this.clipBuffer,
+      0,
+      d,
+      0,
+      (n + 1) * CLIP_FLOATS
+    )
+  }
+
   /** Frame uniform + bind group 0 for the `slot`th group of this frame. */
   private groupFrame(slot: number): FrameSlot {
     let f = this.groupFrames[slot]
@@ -312,7 +382,10 @@ export class Renderer {
       })
       const bindGroup = this.device.createBindGroup({
         layout: this.shared.frameLayout,
-        entries: [{ binding: 0, resource: { buffer } }]
+        entries: [
+          { binding: 0, resource: { buffer } },
+          { binding: 1, resource: { buffer: this.clipBuffer } }
+        ]
       })
       f = { buffer, bindGroup }
       this.groupFrames[slot] = f
@@ -349,7 +422,12 @@ export class Renderer {
    * see a render pass with bind group 0 set.
    */
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
+    this.scene = scene
     this.writeFrame(ctx, dpr)
+    if (scene.version !== this.clipVersion) {
+      this.clipVersion = scene.version
+      this.writeClips(scene)
+    }
     this.shared.dpr = dpr
     // Upload only the layers that changed since they were last drawn.
     let uploads = 0
@@ -824,7 +902,11 @@ export class Renderer {
     if (sc) {
       rp.setScissorRect(sc[0], sc[1], sc[2], sc[3])
     }
-    this.composite.draw(rp, pooled, quad, top.w, top.h, a)
+    // Inside a rounded/rotated ancestor clip (doc-space groups; the
+    // scissor above covers its AABB).
+    const shape =
+      top.xf && g && g.space !== 'viewport' ? this.clipIndexOf(g.clip) : 0
+    this.composite.draw(rp, pooled, quad, top.w, top.h, a, shape)
     if (sc) {
       rp.setScissorRect(0, 0, parent.devW, parent.devH)
     }
@@ -985,6 +1067,7 @@ export class Renderer {
       pass.destroy()
     }
     this.frameBuffer.destroy()
+    this.clipBuffer.destroy()
     for (const f of this.groupFrames) {
       f.buffer.destroy()
     }

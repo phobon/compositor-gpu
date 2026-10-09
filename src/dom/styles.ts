@@ -1,6 +1,7 @@
 import type {
   BorderStyle,
   BoxRecord,
+  ClipShape,
   Corners,
   Gradient,
   ImageRecord,
@@ -597,6 +598,59 @@ export function clipRectFor(s: CSSStyleDeclaration, r: Rect): Rect | null {
     y: r.y + bt,
     width: Math.max(0, r.width - bl - br),
     height: Math.max(0, r.height - bt - bb)
+  }
+}
+
+/**
+ * The exact clip shape for an element that clips overflow and is rounded
+ * or rotated/skewed (`place` is its border box's local frame in its
+ * space); null when its clip rect (clipRectFor) is already exact. Clips
+ * at the padding box, with the inner radii (outer radius minus the
+ * adjacent border, per axis), as CSS does.
+ */
+export function clipShapeFor(
+  s: CSSStyleDeclaration,
+  place: Placement
+): ClipShape | null {
+  const [a, b, c, d, e, f] = place.xform
+  const rotated = Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6
+  const { w: W, h: H } = place.local
+  const radii = readCornerRadii(s, { x: 0, y: 0, width: W, height: H })
+  const bl = px(s.borderLeftWidth)
+  const bt = px(s.borderTopWidth)
+  const br = px(s.borderRightWidth)
+  const bb = px(s.borderBottomWidth)
+  const rx: [number, number, number, number] = [
+    Math.max(0, radii.x[0] - bl),
+    Math.max(0, radii.x[1] - br),
+    Math.max(0, radii.x[2] - br),
+    Math.max(0, radii.x[3] - bl)
+  ]
+  const ry: [number, number, number, number] = [
+    Math.max(0, radii.y[0] - bt),
+    Math.max(0, radii.y[1] - bt),
+    Math.max(0, radii.y[2] - bb),
+    Math.max(0, radii.y[3] - bb)
+  ]
+  const rounded = rx.some((v, i) => v > 0 && (ry[i] ?? 0) > 0)
+  if (!rounded && !rotated) {
+    return null
+  }
+  const det = a * d - b * c
+  if (Math.abs(det) < 1e-9) {
+    return null
+  }
+  // Inverse of local -> space, then shift to the padding box's origin.
+  const ia = d / det
+  const ib = -b / det
+  const ic = -c / det
+  const id = a / det
+  return {
+    inv: [ia, ib, ic, id, -(ia * e + ic * f) - bl, -(ib * e + id * f) - bt],
+    w: Math.max(0, W - bl - br),
+    h: Math.max(0, H - bt - bb),
+    radius: rx,
+    radiusY: ry
   }
 }
 

@@ -65,6 +65,8 @@ function clamp(v: number, lo: number, hi: number): number {
 const FLOATS_PER_IMAGE = 40
 const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
+/** params.y bits 8+: the clip shape index (frame_clip_cov; 0 none). */
+const CLIP_SHIFT = 8
 /** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
 const FLAG_REPEAT = 1
 /** params.y bit 1: sample via `tile` (fit 'none') instead of the
@@ -153,7 +155,13 @@ var<private> mat_ddx : vec2f;
 var<private> mat_ddy : vec2f;
 var<private> mat_rec : u32;
 
+// The pass's output inside an exact (rounded/rotated) ancestor clip.
 fn base_fs(in : VOut) -> vec4f {
+  let shape = f32(u32(imgs[in.idx].params.y) >> ${CLIP_SHIFT}u);
+  return base_fs0(in) * frame_clip_cov(in.docp, shape);
+}
+
+fn base_fs0(in : VOut) -> vec4f {
   let im = imgs[in.idx];
   let cl = im.clip;
   if (in.docp.x < cl.x || in.docp.y < cl.y ||
@@ -776,7 +784,10 @@ export class ImagePass implements RenderPass {
       d[o + 6] = f.uv.u1
       d[o + 7] = f.uv.v1
       d[o + 8] = rec.opacity
-      const vflag = rec.space === 'viewport' ? FLAG_VIEWPORT : 0
+      // Flags in the low byte; the clip shape index above it.
+      const vflag =
+        (rec.space === 'viewport' ? FLAG_VIEWPORT : 0) |
+        (scene.clipIndex(rec.clip) << CLIP_SHIFT)
       const c = rec.clip
       d[o + 12] = c ? c.x : -1e9
       d[o + 13] = c ? c.y : -1e9

@@ -501,8 +501,9 @@ about the origin.
   and the texture lands about 1:1 on the screen. Without rotation its
   corner snaps to the device-pixel grid (a sub-pixel shift) so it doesn't
   blur; a rotated layer is resampled once.
-- The result is clipped by the element's ancestors' clips (their AABB:
-  rounded or rotated clips are not followed).
+- The result is clipped by the element's ancestors' clips, rounded or
+  rotated ones included (the innermost such ancestor's exact shape;
+  outer ones by their bounding box).
 - Toggling `enabled` (and creating or destroying one) isolates or
   releases the element, which schedules a full read; changing the
   numbers doesn't.

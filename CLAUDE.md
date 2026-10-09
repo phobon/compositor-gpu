@@ -239,7 +239,17 @@ the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
 `sd_round_box` exactly when circular. Shadows are elliptical too
 (`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
 `gt`), and reduce to the circular expressions when `radiusY` equals
-`radius`. The selection highlight (`dom/selection.ts`) is read
+`radius`. **Clip shapes:** a clip rect (`Rect`) can carry `shape`
+(`ClipShape`: record space → the clipping element's padding-box frame,
+size, inner radii), set by the reader (`clipShapeFor`) when a clipping
+ancestor is rounded or rotated, and inherited inside it (the innermost
+such ancestor wins; outer ones clip by their AABB). `Scene.clipIndex`
+numbers them per build (index 0 = none); the renderer uploads
+`scene.clipShapes` to a fixed table (`MAX_CLIP_SHAPES`) bound at group
+0 binding 1, and every pass writes the index into a spare instance
+lane and multiplies its output by `frame_clip_cov(docp, index)`
+(`FRAME_WGSL`, anti-aliased from `frame.dpr`, no derivatives); the
+group composite does the same for layer transforms. The selection highlight (`dom/selection.ts`) is read
 with the text: boxes at the front of `run.decorations`, re-read on
 `selectionchange` for the text parents the old and new selections touch
 (`selectedParents`; a full read past 256).

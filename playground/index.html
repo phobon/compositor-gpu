@@ -750,6 +750,23 @@
           changes.</p>
       </section>
 
+      <section data-vr="roundclip">
+        <h2>Rounded and rotated clips</h2>
+        <p>Children clipped by an ancestor's rounded or rotated overflow
+          clip, not its bounding box.</p>
+        <div class="imgrow">
+          <div style="position: relative; width: 180px; height: 120px; border-radius: 28px; overflow: hidden; background: #000;">
+            <img src="./test.png" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;" alt="" />
+          </div>
+          <div style="width: 180px; height: 120px; border-radius: 50% / 30%; border: 6px solid #a78bfa; overflow: hidden;">
+            <div style="width: 260px; height: 160px; margin: -20px; background: linear-gradient(135deg, #f59e0b, #ec4899);"></div>
+          </div>
+          <div style="width: 140px; height: 100px; margin: 10px 20px; transform: rotate(14deg); overflow: hidden; background: #1e1e26;">
+            <div style="width: 200px; height: 60px; margin: 20px -30px; background: #22c55e; color: #000; font-weight: 700; padding: 8px;">Overflowing text in a turned box</div>
+          </div>
+        </div>
+      </section>
+
       <section data-vr="png16">
         <h2>16-bit PNG</h2>
         <p>A 16-bit-per-channel PNG (left; uploaded through an 8-bit canvas,

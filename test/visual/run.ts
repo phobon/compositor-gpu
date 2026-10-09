@@ -57,6 +57,7 @@ const SECTIONS = [
   'bglayers',
   'selcolor',
   'png16',
+  'roundclip',
   'shapes',
   'overflow',
   'stacking',

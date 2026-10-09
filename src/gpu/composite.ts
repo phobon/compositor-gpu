@@ -26,7 +26,8 @@ ${FRAME_WGSL}
 struct Comp {
   c01  : vec4f,   // doc-space corners: top-left, top-right
   c23  : vec4f,   // bottom-left, bottom-right
-  uv   : vec4f,   // u, v extent of the used region; alpha; _
+  uv   : vec4f,   // u, v extent of the used region; alpha; clip shape
+                  // index (frame_clip_cov; 0 none)
 };
 @group(1) @binding(0) var<storage, read> comps : array<Comp>;
 @group(1) @binding(1) var src : texture_2d<f32>;
@@ -36,6 +37,8 @@ struct VOut {
   @builtin(position) pos : vec4f,
   @location(0) uv : vec2f,
   @location(1) @interpolate(flat) alpha : f32,
+  @location(2) @interpolate(flat) shape : f32,
+  @location(3) docp : vec2f,
 };
 
 @vertex
@@ -52,6 +55,8 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.pos = doc_to_clip(q[at[vi]]);
   out.uv = k * c.uv.xy;
   out.alpha = c.uv.z;
+  out.shape = c.uv.w;
+  out.docp = q[at[vi]];
   return out;
 }
 
@@ -59,7 +64,8 @@ fn vs(@builtin(vertex_index) vi : u32,
 fn fs(in : VOut) -> @location(0) vec4f {
   // The group texture is already premultiplied.
   let t = textureSample(src, samp, in.uv);
-  return vec4f(t.rgb * in.alpha, t.a * in.alpha);
+  let a = in.alpha * frame_clip_cov(in.docp, in.shape);
+  return vec4f(t.rgb * a, t.a * a);
 }
 `
 
@@ -222,7 +228,8 @@ export class GroupCompositor {
     quad: readonly number[],
     w: number,
     h: number,
-    alpha: number
+    alpha: number,
+    shape = 0
   ): void {
     const index = this.data.length / FLOATS_PER_COMP
     const buffer = this.buffer
@@ -230,7 +237,7 @@ export class GroupCompositor {
     if (!buffer || index >= this.capacity) {
       return
     }
-    this.data.push(...quad, w / target.width, h / target.height, alpha, 0)
+    this.data.push(...quad, w / target.width, h / target.height, alpha, shape)
     if (!target.bindGroup) {
       target.bindGroup = this.device.createBindGroup({
         layout: this.layout,

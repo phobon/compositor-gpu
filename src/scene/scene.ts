@@ -2,9 +2,11 @@ import type { Layer } from '../types'
 import { type Anchor, buildBatches, type DrawBatch, unionRect } from './batches'
 import type {
   BoxRecord,
+  ClipShape,
   CutoutRecord,
   GlyphRun,
   ImageRecord,
+  Rect,
   SceneRecord
 } from './records'
 import type { OpacityGroup } from './stacking'
@@ -47,8 +49,29 @@ export class Scene {
    * before every batch build. */
   assign: (() => void) | null = null
 
+  /** Exact clip shapes of this build, in first-seen order (index 0 is
+   * reserved for "none"; see clipIndex). Rebuilt with the records, so
+   * every pass uploads indices from the same table. */
+  clipShapes: ClipShape[] = []
+  private clipIds = new Map<ClipShape, number>()
+
   allocId(): number {
     return this.nextId++
+  }
+
+  /** The 1-based index of `clip`'s shape in clipShapes (0: none). */
+  clipIndex(clip: Rect | null | undefined): number {
+    const shape = clip?.shape
+    if (!shape) {
+      return 0
+    }
+    let i = this.clipIds.get(shape)
+    if (i === undefined) {
+      this.clipShapes.push(shape)
+      i = this.clipShapes.length
+      this.clipIds.set(shape, i)
+    }
+    return i
   }
 
   clear(): void {
@@ -57,6 +80,8 @@ export class Scene {
     this.runs = []
     this.cutouts = []
     this.groups = []
+    this.clipShapes = []
+    this.clipIds.clear()
     this.version++
     this.markAllDirty()
     this.hasDynamic = false
@@ -79,6 +104,8 @@ export class Scene {
   }
 
   add(record: SceneRecord): void {
+    // Number the shapes in paint-tree order, before any pass uploads.
+    this.clipIndex(record.clip)
     switch (record.kind) {
       case 'box':
         this.boxes.push(record)

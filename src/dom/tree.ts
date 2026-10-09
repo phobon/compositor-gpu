@@ -42,6 +42,7 @@ import { beginSelectionRead, colorSelected, selectionBoxes } from './selection'
 import {
   beginRead,
   clipRectFor,
+  clipShapeFor,
   readBox,
   readImageRecord,
   readOpacity,
@@ -575,6 +576,10 @@ export class SceneReader {
     scene.clear()
     if (this.tree) {
       scene.groups = flatten(this.tree, (r) => scene.add(r))
+      // Transformed groups composite inside their ancestors' clip shape.
+      for (const g of scene.groups) {
+        scene.clipIndex(g.clip)
+      }
     }
     scene.sort()
   }
@@ -773,7 +778,13 @@ export class SceneReader {
     // An element's own box is clipped by its ancestors; its content
     // (children and text) is additionally clipped by its own overflow.
     const ownClip = clipRectFor(s, rect)
-    const childClip = ownClip ? intersect(clip, ownClip) : clip
+    let childClip = ownClip ? intersect(clip, ownClip) : clip
+    if (ownClip && childClip) {
+      // A rounded or rotated clip carries its exact shape; otherwise the
+      // nearest ancestor's shape still applies inside this rect.
+      const shape = clipShapeFor(s, place) ?? clip?.shape
+      childClip = shape ? { ...childClip, shape } : childClip
+    }
     const cb =
       parentCb === null ||
       s.position !== 'static' ||
