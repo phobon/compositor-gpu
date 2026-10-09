@@ -225,7 +225,8 @@ Follow-ups, roughly in order:
     0.00. Found on the way: `timestampWrites: undefined` in a pass
     descriptor stalls SwiftShader's Dawn, so passes spread
     `timed(timer, label)` (present only when timing). First moves on the
-    Mac: `npm run test:profile -- --headed --save base`, then
+    Mac: `npm run test:profile -- --headed --save base` (the HUD shows
+    in the window; `--keep` leaves it open at the end), then
     `--url http://localhost:8000/duo --headed`, and the HUD on `/duo`
     while scrolling the bento.
 

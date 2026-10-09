@@ -11,7 +11,11 @@
 //   npm run test:profile -- --url http://localhost:8000/duo
 //       any page exposing its compositor as window.__gpu: scrolls it top to
 //       bottom and back (--speed px per frame, default 12).
-//   --headed   a visible window (the real GPU and display refresh)
+//   --headed   a visible window (the real GPU and display refresh), with
+//              the HUD on (--hud adds it headless, --no-hud drops it)
+//   --channel  with --headed: chrome (default), chrome-canary, msedge or
+//              chromium (Playwright's own)
+//   --keep     with --headed, leave the window open until you close it
 //   --frames 0.25   scale each scenario's frame count
 //   --viewport 1280x900
 //
@@ -52,6 +56,23 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string): boolean =>
   process.argv.slice(2).includes(`--${name}`)
+
+/** Stop with a clear message when the page's compositor didn't start
+ * (no WebGPU adapter in this browser). */
+async function requireActive(page: Page): Promise<void> {
+  const state = await page.evaluate(async () => ({
+    active: window.__gpu?.active === true,
+    gpu: 'gpu' in navigator,
+    adapter:
+      'gpu' in navigator && (await navigator.gpu.requestAdapter()) !== null
+  }))
+  if (!state.active) {
+    throw new Error(
+      `[profile] the compositor is inactive: navigator.gpu ${state.gpu ? 'present' : 'missing'}, adapter ${state.adapter ? 'found' : 'none'}. ` +
+        'Headed runs use installed Chrome (--channel chrome); try --channel chrome-canary, or open the page in your own Chrome and use __gpu.profile there.'
+    )
+  }
+}
 
 async function untilReady(page: Page, expr: string): Promise<void> {
   await page.waitForFunction(expr, null, { timeout: 60_000 })
@@ -142,11 +163,29 @@ async function main(): Promise<void> {
     }
     let usedSwiftshader = false
     if (flag('headed')) {
-      browser = await chromium.launch({
+      // Installed Chrome by default (Playwright's Chromium may come up
+      // without a WebGPU adapter); `--channel chromium` for the bundled one.
+      const channel = arg('channel') ?? 'chrome'
+      const opts = {
         headless: false,
-        executablePath: process.env.CHROMIUM_PATH || undefined,
-        args: GPU_TIMING_ARGS
-      })
+        args: ['--enable-unsafe-webgpu', ...GPU_TIMING_ARGS]
+      }
+      try {
+        browser = await chromium.launch({
+          ...opts,
+          ...(process.env.CHROMIUM_PATH
+            ? { executablePath: process.env.CHROMIUM_PATH }
+            : channel === 'chromium'
+              ? {}
+              : { channel })
+        })
+      } catch (e) {
+        console.log(
+          `[profile] couldn't launch channel ${channel} (${(e as Error).message.split('\n')[0]}); using Playwright's Chromium`
+        )
+        browser = await chromium.launch(opts)
+      }
+      console.log(`[profile] headed: ${browser.version()}`)
     } else {
       const l = await launchWithFallback(base, 'profile', GPU_TIMING_ARGS)
       browser = l.browser
@@ -160,10 +199,18 @@ async function main(): Promise<void> {
     await page.addInitScript('globalThis.__name = (f) => f')
     page.on('pageerror', (e) => console.error('[page]', e.message))
 
+    const hud = flag('hud') || (flag('headed') && !flag('no-hud'))
+    const showHud = async (): Promise<void> => {
+      if (hud) {
+        await page.evaluate(() => window.__gpu?.profile.hud(true))
+      }
+    }
     const reports: [string, ProfileReport][] = []
     if (url) {
       await page.goto(url, { waitUntil: 'load' })
-      await untilReady(page, 'window.__gpu?.active === true')
+      await untilReady(page, 'window.__gpu !== undefined')
+      await requireActive(page)
+      await showHud()
       // Let fonts, images and entrance animations settle.
       await page.waitForTimeout(2000)
       const r = await scrollPage(page, speed)
@@ -176,6 +223,8 @@ async function main(): Promise<void> {
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)
       console.log(`[profile] perf.html n=${n} ready`)
+      await requireActive(page)
+      await showHud()
       for (const name of SCENARIOS) {
         if (only && !only.includes(name)) {
           continue
@@ -186,7 +235,10 @@ async function main(): Promise<void> {
           [name, frames] as const
         )) as ProfileReport | null
         if (r) {
+          console.log(`[profile]   ${r.frames} frames`)
           reports.push([name, r])
+        } else {
+          console.log('[profile]   no report')
         }
       }
     }
@@ -211,6 +263,10 @@ async function main(): Promise<void> {
       console.log('')
     }
     console.log(`[profile] reports in ${outDir}`)
+    if (flag('headed') && flag('keep')) {
+      console.log('[profile] window left open; close it to exit')
+      await new Promise<void>((r) => browser?.once('disconnected', () => r()))
+    }
   } finally {
     await browser?.close()
     await server?.close()
