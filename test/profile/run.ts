@@ -18,6 +18,7 @@
 //   --keep     with --headed, leave the window open until you close it
 //   --frames 0.25   scale each scenario's frame count
 //   --viewport 1280x900
+//   --dpr 2        device pixel ratio (default 1; a Retina display is 2)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -193,7 +194,7 @@ async function main(): Promise<void> {
     }
     const page = await browser.newPage({
       viewport: { width: vw || 1280, height: vh || 900 },
-      deviceScaleFactor: 1
+      deviceScaleFactor: Number(arg('dpr') ?? 1)
     })
     // tsx keeps function names with an __name() helper the page lacks.
     await page.addInitScript('globalThis.__name = (f) => f')

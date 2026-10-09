@@ -229,6 +229,19 @@ Follow-ups, roughly in order:
     in the window; `--keep` leaves it open at the end), then
     `--url http://localhost:8000/duo --headed`, and the HUD on `/duo`
     while scrolling the bento.
+    First `/duo` run (Ben's Mac, 120 Hz, dpr 1 in the harness): 1053
+    frames, one late (192 ms at +4.3 s, nothing in the compositor and no
+    script or layout in the long frame: likely decode or the GPU
+    process). CPU p95 1.5 ms, reads all partial. GPU total p50 5.4 / p95
+    6.9 / p99 8.5 ms against 8.3 ms; the main pass alone is ~4.8 ms, the
+    bento's region blurs add ~1 ms. Per-label GPU times overlap on Apple
+    GPUs (their sum exceeds the total): read them as relative only.
+    Follow-ups: re-run at `--dpr 2` (4x the pixels); try `?margin=300`
+    (MDS-home) to see how much of the main pass is the canvas margin
+    (one viewport above and below by default). From the perf-page
+    `reveal` scenario: isolating 12 cards in one frame passed
+    `MAX_BOUNDARIES` (8) and escalated to a full read (151 ms on the
+    Mac); now 64, with the reason naming the count (uncommitted).
 
 9. **CI submodule access.** MDS-home CI clones submodules with
    `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not

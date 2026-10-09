@@ -100,8 +100,10 @@ import {
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
 
-/** More boundaries than this in one frame → a full read is cheaper. */
-export const MAX_BOUNDARIES = 8
+/** More boundaries than this in one frame → a full read. Was 8, but
+ * isolating 12 cards at once on the 400-card page then cost a full read
+ * (367 ms in the sandbox) instead of 12 subtree reads (69 ms). */
+export const MAX_BOUNDARIES = 64
 const RECT_EPSILON = 0.01
 
 type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
@@ -483,12 +485,18 @@ export class SceneReader {
       this.escalate('no tree')
       return
     }
-    const bounds = selectBoundaries<Element>(scopes, this.root, (e) => {
+    const usable = (e: Element): boolean => {
       const n = this.nodes.get(e)
       return n !== undefined && !n.fragmented
-    })
+    }
+    const bounds = selectBoundaries<Element>(scopes, this.root, usable)
     if (!bounds) {
-      this.escalate('no boundary')
+      const many = selectBoundaries(scopes, this.root, usable, Infinity)
+      this.escalate(
+        many
+          ? `${many.length} boundaries (max ${MAX_BOUNDARIES})`
+          : 'no boundary'
+      )
       return
     }
     if (bounds.length === 0) {
