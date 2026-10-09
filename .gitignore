@@ -13,3 +13,5 @@ test/fx/golden/
 test/perf/out/
 # site-parity harness output (captures + the injected bundle)
 test/site/out/
+# profile harness reports
+test/profile/out/

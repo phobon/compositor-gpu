@@ -1,6 +1,12 @@
 import { BoxPass } from './boxes/boxRenderer'
 import { CutoutPass } from './boxes/cutoutPass'
-import { Dirty, DomSync, HIDDEN_ATTR, IGNORE_ATTR } from './dom/observer'
+import {
+  Dirty,
+  DomSync,
+  describeEl,
+  HIDDEN_ATTR,
+  IGNORE_ATTR
+} from './dom/observer'
 import { textReadStats } from './dom/textRuns'
 import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
@@ -14,6 +20,12 @@ import type {
 import { materialPipelinesPending } from './gpu/material'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/imageRenderer'
+import {
+  type Profile,
+  type ProfileHost,
+  Profiler,
+  type ReadKind
+} from './profile/profiler'
 import type { Anchor } from './scene/batches'
 import type { GlyphRun } from './scene/records'
 import { Scene } from './scene/scene'
@@ -132,6 +144,11 @@ export async function createCompositor(
   let maxDtWindow = 0
   let maxDtAt = 0
   let readMs = 0
+  /** The last frame asked for the next one (profiler: its interval is
+   * pacing, not an idle gap). */
+  let continued = false
+  /** rAF time of the last rendered frame. */
+  let lastFrameAt = 0
   const paintOnly = new Set<Element>()
   let lastScrollAt = -Infinity
   let lastScrollX = window.scrollX
@@ -219,6 +236,7 @@ export async function createCompositor(
 
   const frame = (time: number, dt: number): void => {
     const t0 = performance.now()
+    const requestedAt = scheduler.requestedAt
     // Longest gap between frames over the last second: a hitch detector.
     if (time - maxDtAt >= 1000) {
       maxDtMs = maxDtWindow
@@ -278,14 +296,18 @@ export async function createCompositor(
       flags |= Dirty.MUTATION
     }
 
+    let read: ReadKind = 'none'
+    let frameReadMs = 0
     if (flags & (Dirty.LAYOUT | Dirty.STYLE | Dirty.CONTENT)) {
       const t0 = performance.now()
       reader.fullRead()
-      readMs = performance.now() - t0
+      readMs = frameReadMs = performance.now() - t0
+      read = 'full'
     } else if (flags & Dirty.MUTATION) {
       const t0 = performance.now()
       reader.partialRead(dirty.scopes, paintOnly)
-      readMs = performance.now() - t0
+      readMs = frameReadMs = performance.now() - t0
+      read = reader.lastRead.kind
     }
     // After the reads (layout is clean, so docSize() costs no extra
     // reflow when it doesn't toggle the canvas), and in the same task as
@@ -309,6 +331,7 @@ export async function createCompositor(
       canvasHeight: canvasH,
       pointer: null
     }
+    const hooksAt = performance.now()
     for (const h of hooks) {
       h.beforeFrame?.(ctx)
     }
@@ -328,6 +351,7 @@ export async function createCompositor(
       scene.markDirty('images')
     }
     options.onFrame?.(ctx)
+    const hooksMs = performance.now() - hooksAt
 
     // The swapchain texture can't be created at 0x0 (e.g. before the canvas
     // has laid out, when innerWidth is briefly 0). Skip the frame; a resize
@@ -351,18 +375,60 @@ export async function createCompositor(
     }
     renderer.render(scene, ctx, dpr)
     frameMs = performance.now() - t0
-    if (
+    const wasContinued = continued
+    continued =
       animating ||
       scene.hasDynamic ||
       cssAnimating ||
       isScrolling() ||
       hooksAlive()
-    ) {
+    if (continued) {
       scheduler.request()
     }
+    if (profiler.active) {
+      const upload = renderer.lastUploadMs
+      const encode = renderer.lastEncodeMs
+      const info = reader.lastRead
+      profiler.push({
+        id: renderer.frames,
+        t: time,
+        dt: dt * 1000,
+        continuous: wasContinued,
+        requested: wasContinued ? 0 : Math.max(0, requestedAt - lastFrameAt),
+        wait: Math.max(0, time - requestedAt),
+        cpu: {
+          total: frameMs,
+          read: frameReadMs,
+          hooks: hooksMs,
+          upload,
+          encode,
+          other: Math.max(0, frameMs - frameReadMs - hooksMs - upload - encode)
+        },
+        read,
+        cause:
+          read === 'full'
+            ? fullReadCause(flags, sync.diag.last)
+            : read === 'escalated'
+              ? `${info.reason}${info.el ? ` ${describeEl(info.el)}` : ''}`
+              : '',
+        readElements: read === 'none' ? 0 : reader.readElements,
+        uploads: renderer.lastUploadByLayer,
+        batches: renderer.lastBatches,
+        draws: renderer.lastDraws,
+        groups: renderer.lastGroups,
+        gpu: null
+      })
+    }
+    lastFrameAt = time
   }
 
   const scheduler = new FrameScheduler(frame)
+  const profileHost: ProfileHost = {
+    setGpuTiming: (cb) => renderer.setGpuTiming(cb),
+    gpuTimingPending: () => renderer.gpuTimingPending,
+    requestFrame: () => scheduler.request()
+  }
+  const profiler = new Profiler(profileHost)
   // The effects layer's hooks (gpu/graph.ts).
   const hooks = new Set<FrameHook>()
   const hooksAlive = (): boolean => {
@@ -773,6 +839,7 @@ export async function createCompositor(
     text,
     scene,
     graph,
+    profile: profiler,
     stats: () => ({
       active: true,
       boxes: scene.boxes.length,
@@ -834,12 +901,37 @@ export async function createCompositor(
       }
       destroyed = true
       stop()
+      profiler.destroy()
       reader.destroy()
       renderer.destroy()
       gpu.root.destroy()
       canvas.remove()
     }
   }
+}
+
+/** A full read's dirty flags and the last mutation's target. */
+function fullReadCause(flags: number, last: string): string {
+  const names: string[] = []
+  if (flags & Dirty.LAYOUT) {
+    names.push('layout')
+  }
+  if (flags & Dirty.STYLE) {
+    names.push('style')
+  }
+  if (flags & Dirty.CONTENT) {
+    names.push('content')
+  }
+  return `${names.join('+')}${last ? ` (last: ${last})` : ''}`
+}
+
+const inertProfile: Profile = {
+  start() {},
+  stop: () => Promise.resolve(null),
+  mark() {},
+  recording: false,
+  hud: () => false,
+  recent: () => []
 }
 
 function inert(): Compositor & { text: null; scene: null } {
@@ -849,6 +941,7 @@ function inert(): Compositor & { text: null; scene: null } {
     text: null,
     scene: null,
     graph: null,
+    profile: inertProfile,
     stats: () => ({
       active: false,
       boxes: 0,

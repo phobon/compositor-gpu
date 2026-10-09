@@ -92,6 +92,22 @@ Safari 18+).
 The bundled `playground/font.ttf` is **Inter** (SIL Open Font License) — used to
 feed real outlines to the Slug text pass.
 
+## Profiling
+
+`compositor.profile` records frames and explains slow ones:
+
+```ts
+compositor.profile.hud() // live graph: CPU by phase, GPU, late frames
+compositor.profile.start()
+compositor.profile.mark('scroll') // optional phases
+const report = await compositor.profile.stop()
+console.log(formatReport(report)) // percentiles, dropped frames, hitches
+```
+
+GPU pass timings need the `timestamp-query` feature (Chrome rounds them to
+100 µs unless run with `--enable-webgpu-developer-features`).
+`npm run test:profile` runs the scenario harness (`test/profile/run.ts`).
+
 ## Licence
 
 MIT. The Slug port is derived from public-domain / MIT reference code — see

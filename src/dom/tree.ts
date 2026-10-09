@@ -108,6 +108,17 @@ type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
 
 const NO_RECORDS: readonly OwnRecord[] = []
 
+/** The most recent read (SceneReader.lastRead). */
+export interface ReadInfo {
+  kind: 'none' | 'full' | 'partial' | 'escalated'
+  /** Why a partial read escalated ('' otherwise). */
+  reason: string
+  /** Scopes the partial read was asked for. */
+  scopes: number
+  /** The boundary that escalated, when one did. */
+  el: Element | null
+}
+
 export interface ElNode {
   kind: 'element'
   el: Element
@@ -377,6 +388,10 @@ export class SceneReader {
   readonly isolated = new Map<Element, number>()
   /** Partial reads that completed without escalating. */
   partialReads = 0
+  /** What the most recent read did (the profiler's hitch attribution):
+   * 'escalated' is a partial read that fell back to a full one, with why
+   * and on which boundary. */
+  lastRead: ReadInfo = { kind: 'none', reason: '', scopes: 0, el: null }
   /** Elements with computed `position: sticky` in the current tree. Their
    * offset depends on scroll, so the compositor re-reads them (paint-only)
    * on scroll. */
@@ -412,6 +427,18 @@ export class SceneReader {
     beginSelectionRead()
     this.readElements = 0
     this.ordinals.clear()
+    this.lastRead = { kind: 'full', reason: '', scopes: 0, el: null }
+    this.readAll()
+  }
+
+  /** A partial read falling back to a full one. */
+  private escalate(reason: string, el: Element | null = null): void {
+    this.lastRead = {
+      kind: 'escalated',
+      reason,
+      scopes: this.lastRead.scopes,
+      el
+    }
     this.readAll()
   }
 
@@ -445,9 +472,15 @@ export class SceneReader {
     beginSelectionRead()
     this.readElements = 0
     this.ordinals.clear()
+    this.lastRead = {
+      kind: 'partial',
+      reason: '',
+      scopes: scopes.size,
+      el: null
+    }
     const tree = this.tree
     if (!tree) {
-      this.readAll()
+      this.escalate('no tree')
       return
     }
     const bounds = selectBoundaries<Element>(scopes, this.root, (e) => {
@@ -455,7 +488,7 @@ export class SceneReader {
       return n !== undefined && !n.fragmented
     })
     if (!bounds) {
-      this.readAll()
+      this.escalate('no boundary')
       return
     }
     if (bounds.length === 0) {
@@ -473,7 +506,7 @@ export class SceneReader {
     for (const b of bounds) {
       const old = this.nodes.get(b)
       if (!old) {
-        this.readAll()
+        this.escalate('unread boundary', b)
         return
       }
       const p = old.parent
@@ -495,19 +528,25 @@ export class SceneReader {
       )
       this.inIgnored = false
       const trusted = paintOnly?.has(b) === true
-      if (
-        !fresh ||
-        fresh.fragmented ||
-        (!trusted &&
-          (!sameRect(old.rect, fresh.rect) || !sameFloats(old, fresh)))
-      ) {
-        this.readAll()
+      const why = !fresh
+        ? 'boundary gone'
+        : fresh.fragmented
+          ? 'boundary fragmented'
+          : trusted
+            ? ''
+            : !sameRect(old.rect, fresh.rect)
+              ? 'boundary moved'
+              : !sameFloats(old, fresh)
+                ? 'floats moved'
+                : ''
+      if (!fresh || why) {
+        this.escalate(why, b)
         return
       }
       if (p) {
         const i = p.kids.indexOf(old)
         if (i < 0) {
-          this.readAll()
+          this.escalate('detached boundary', b)
           return
         }
         p.kids[i] = fresh

@@ -6,6 +6,8 @@ export class FrameScheduler {
   private handle = 0
   private last = 0
   private running = false
+  /** performance.now() when the pending frame was requested. */
+  requestedAt = 0
 
   constructor(private readonly onFrame: (time: number, dt: number) => void) {}
 
@@ -13,6 +15,7 @@ export class FrameScheduler {
     if (this.handle || !this.running) {
       return
     }
+    this.requestedAt = performance.now()
     this.handle = requestAnimationFrame(this.tick)
   }
 

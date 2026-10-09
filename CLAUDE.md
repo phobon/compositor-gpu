@@ -48,6 +48,26 @@ spans whole paragraphs and blocked every merge), and shadow records use a
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
+**Frame profiler**: `compositor.profile` (`src/profile/`). While a
+recording runs (`start()` / `mark()` / `stop()`) or the HUD is shown
+(`hud()`), each frame records its CPU time split into read, hooks,
+upload, encode and other, the read kind (`none` / `partial` / `full` /
+`escalated`) with its cause (`SceneReader.lastRead`, the dirty flags),
+and GPU pass timings when the device has `timestamp-query`
+(`gpu/timer.ts`; labels `main`, `group`, `region`, `layer`, `post`,
+`fx:<pass>`). New render passes spread `timed(shared.timer, label)` into
+their descriptor; never `timestampWrites: undefined`, which stalls
+SwiftShader. A frame is paced when the previous one asked for it or it
+was requested within a refresh interval of it; lateness is its interval
+then, else its wait since the request. `stop()` reports percentiles,
+late/dropped frames, read causes and the worst hitches with a cause
+(compositor CPU, GPU, script from long animation frames, or outside).
+Off, it costs a few `performance.now()` calls a frame.
+`npm run test:profile` records scenarios on `perf.html` (`--only`,
+`--n`, `--frames`, `--viewport`, `--headed`, `--save`, `--baseline`) or
+scrolls any page exposing `window.__gpu` (`--url`). SwiftShader numbers
+are only meaningful for CPU.
+
 **Effects harness**: `npm run test:fx` (`test/fx/run.ts`, `-- --update`
 to rewrite goldens, `-- --only <shot>`) loads `playground/fx.html?vr`,
 pins time/elapsed/pointer through `fx.__override`, and captures each

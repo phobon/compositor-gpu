@@ -32,7 +32,11 @@ export async function initGpu(
   let root: { destroy(): void; device: GPUDevice } | null = null
   try {
     // TypeGPU owns adapter+device negotiation and hands us a typed root.
-    root = (await tgpu.init()) as unknown as {
+    // timestamp-query (when the adapter has it) lets the profiler time
+    // render passes (gpu/timer.ts); unused, it costs nothing.
+    root = (await tgpu.init({
+      device: { optionalFeatures: ['timestamp-query'] }
+    })) as unknown as {
       destroy(): void
       device: GPUDevice
     }

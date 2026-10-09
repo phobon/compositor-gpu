@@ -1,10 +1,16 @@
-import type { CompositorStats } from '@/types'
+import type { ProfileReport } from '@/profile/profiler'
+import type { Compositor, CompositorStats } from '@/types'
 
 export type MutateKind = 'text' | 'class' | 'append'
 
 declare global {
   interface Window {
+    /** The compositor (test/profile/run.ts drives its profiler). */
+    __gpu?: Compositor
     __perf?: {
+      /** Record scenario `name` (test/profile/run.ts SCENARIOS), its
+       * frame counts scaled by `frames` (default 1). */
+      scenario(name: string, frames?: number): Promise<ProfileReport | null>
       ready: Promise<void>
       stats(): CompositorStats
       mutate(kind: MutateKind): void

@@ -9,6 +9,20 @@ export type {
   PostFrame,
   RenderGraph
 } from './gpu/graph'
+export type { GpuFrameTiming, GpuSpan } from './gpu/timer'
+export {
+  type CpuBreakdown,
+  type FrameSample,
+  formatReport,
+  type Hitch,
+  type LongFrame,
+  type Pct,
+  type Profile,
+  type ProfileOptions,
+  type ProfileReport,
+  type ProfileSummary,
+  type ReadKind
+} from './profile/profiler'
 export type {
   BoxRecord,
   Glyph,

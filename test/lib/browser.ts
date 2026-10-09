@@ -31,14 +31,16 @@ async function waitForAdapter(page: Page): Promise<boolean> {
  */
 export async function launchWithFallback(
   url: string,
-  label = 'browser'
+  label = 'browser',
+  /** Added to both launches (e.g. GPU timing flags). */
+  extraArgs: string[] = []
 ): Promise<{ browser: Browser; usedSwiftshader: boolean }> {
   const executablePath = process.env.CHROMIUM_PATH || undefined
   const launchOpts = { executablePath } as const
 
   const probe = await chromium.launch({
     ...launchOpts,
-    args: ['--disable-lcd-text']
+    args: ['--disable-lcd-text', ...extraArgs]
   })
   try {
     const page = await probe.newPage()
@@ -59,7 +61,7 @@ export async function launchWithFallback(
   console.log(`[${label}] falling back to swiftshader (software WebGPU)`)
   const browser = await chromium.launch({
     ...launchOpts,
-    args: SWIFTSHADER_ARGS
+    args: [...SWIFTSHADER_ARGS, ...extraArgs]
   })
   return { browser, usedSwiftshader: true }
 }

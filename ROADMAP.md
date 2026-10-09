@@ -354,6 +354,10 @@ perspective transforms · culling · WebGL2 backend.
 - [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)
+- [x] Frame profiler (`compositor.profile`): per-frame CPU breakdown, read
+      kind and cause, GPU pass timings (`timestamp-query`), hitch blame,
+      long animation frames, live HUD; `npm run test:profile` scenarios
+      and `--url` page scrolls with baselines
 - [x] `FAST_TEXT_READ`: per-node `getClientRects()` + Canvas 2D suffix-width
       split, per-chunk and per-grapheme fallbacks, `stats().textRead`
       (Range queries 84k → 15k on the 400-card page, full read −26%)

@@ -1,6 +1,7 @@
 import type { SyncDiagnostics } from './dom/observer'
 import type { TextReadStats } from './dom/textRuns'
 import type { RenderGraph } from './gpu/graph'
+import type { Profile } from './profile/profiler'
 import type { Glyph } from './scene/records'
 
 /** Identifies a registered font face for per-run resolution. */
@@ -190,4 +191,7 @@ export interface Compositor {
   /** Extension surface for `compositor-gpu/fx` (gpu/graph.ts); null when
    * inert. */
   readonly graph: RenderGraph | null
+  /** Frame profiler: recordings (percentiles, dropped frames, hitch
+   * causes), GPU pass timings and a live HUD. No-ops when inert. */
+  readonly profile: Profile
 }

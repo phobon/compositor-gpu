@@ -23,6 +23,7 @@ import {
   type RegionFrame,
   type RegionHandler
 } from './graph'
+import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 
 interface FrameSlot {
   buffer: GPUBuffer
@@ -236,6 +237,11 @@ export class Renderer {
   /** Wall time from createCommandEncoder to submit in the most recent
    * render, ms. */
   lastEncodeMs = 0
+  /** Upload wall time per layer in the most recent render, ms (layers
+   * not re-uploaded are absent). */
+  lastUploadByLayer: Partial<Record<Layer, number>> = {}
+  /** Frames rendered (GpuFrameTiming.frame refers to it). */
+  frames = 0
   private readonly composite: GroupCompositor
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
@@ -295,7 +301,8 @@ export class Renderer {
       format: gpu.viewFormat,
       frameLayout,
       frameBindGroup,
-      dpr: 1
+      dpr: 1,
+      timer: null
     }
     this.composite = new GroupCompositor(this.shared)
   }
@@ -396,9 +403,11 @@ export class Renderer {
   private beginPass(
     encoder: GPUCommandEncoder,
     t: Target,
-    loadOp: GPULoadOp
+    loadOp: GPULoadOp,
+    label: string
   ): GPURenderPassEncoder {
     const rp = encoder.beginRenderPass({
+      ...timed(this.shared.timer, label),
       colorAttachments: [
         {
           view: t.view,
@@ -432,18 +441,25 @@ export class Renderer {
     // Upload only the layers that changed since they were last drawn.
     let uploads = 0
     let uploadMs = 0
+    const byLayer: Partial<Record<Layer, number>> = {}
     for (const pass of this.passes) {
       if (scene.isDirty(pass.layer)) {
         const t0 = performance.now()
         pass.upload(scene)
-        uploadMs += performance.now() - t0
+        const ms = performance.now() - t0
+        uploadMs += ms
+        byLayer[pass.layer] = ms
         scene.clearDirty(pass.layer)
         uploads++
       }
     }
     this.lastUploads = uploads
     this.lastUploadMs = uploadMs
+    this.lastUploadByLayer = byLayer
     const encodeStart = performance.now()
+    const timer = this.shared.timer
+    this.frames++
+    timer?.begin(this.frames)
     const encoder = this.device.createCommandEncoder()
     const texture = this.gpu.context.getCurrentTexture()
     const canvasView = texture.createView({ format: this.gpu.viewFormat })
@@ -600,7 +616,12 @@ export class Renderer {
         child.group = batch.group
         plan.set(i, child)
         prepare(child, i + 1, j)
-        const rp = this.beginPass(encoder, child, 'clear')
+        const rp = this.beginPass(
+          encoder,
+          child,
+          'clear',
+          region?.active() ? 'region' : t ? 'layer' : 'group'
+        )
         drawRange(rp, child, i + 1, j)
         rp.end()
         if (region?.active() && child.pooled) {
@@ -615,7 +636,7 @@ export class Renderer {
       this.growExtents(scene.groups, ctx, xfs, extents)
     }
     prepare(main, 0, list.length)
-    const rp = this.beginPass(encoder, main, 'clear')
+    const rp = this.beginPass(encoder, main, 'clear', 'main')
     drawRange(rp, main, 0, list.length)
     this.lastBatches = batches
     this.lastGroups = groups
@@ -625,7 +646,9 @@ export class Renderer {
       this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
     }
     this.composite.flush()
+    const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
+    readback?.()
     this.lastEncodeMs = performance.now() - encodeStart
   }
 
@@ -753,6 +776,7 @@ export class Renderer {
     view: GPUTextureView
   ): GPURenderPassEncoder {
     const rp = encoder.beginRenderPass({
+      ...timed(this.shared.timer, 'post'),
       colorAttachments: [
         {
           view,
@@ -1062,7 +1086,24 @@ export class Renderer {
     }
   }
 
+  /** Time render passes on the GPU (needs `timestamp-query`); results
+   * reach `onResult` a frame or two later. Returns whether timing runs. */
+  setGpuTiming(onResult: ((t: GpuFrameTiming) => void) | null): boolean {
+    this.shared.timer?.destroy()
+    this.shared.timer = null
+    if (onResult && GpuTimer.supported(this.device)) {
+      this.shared.timer = new GpuTimer(this.device, onResult)
+    }
+    return this.shared.timer !== null
+  }
+
+  /** GPU timing readbacks still in flight. */
+  get gpuTimingPending(): number {
+    return this.shared.timer?.pending ?? 0
+  }
+
   destroy(): void {
+    this.setGpuTiming(null)
     for (const pass of this.passes) {
       pass.destroy()
     }

@@ -195,12 +195,39 @@ Follow-ups, roughly in order:
     enter/exit started and ended with a full read (~9 / 6.5 ms) from the
     region passes isolating/releasing their tiles, plus GPU blur cost
     (32 taps a side at large radii, four large tiles). compositor-gpu,
-    uncommitted: isolation changes now queue a partial read of the
+    committed (`b55397e`): isolation changes now queue a partial read of the
     element (`isolationScopes` in `compositor.ts`) instead of a full
     one; `blur` caps taps at 16 a side (radii <= 16 device px
     unchanged). `test:fx` 0.00 everywhere (region/transform invariants
     exact). Re-measure after the submodule bump; the bento's saved dial
     blur (28) is double the default 14 and costs proportionally.
+11. **Frame profiler, 2026-10-09, compositor-gpu, uncommitted** (Ben:
+    frame recorder, GPU timestamps, live HUD, scenario harness).
+    `compositor.profile`: `start()`, `mark(label)`, `stop()` (a
+    `ProfileReport`: frame interval and CPU/GPU percentiles, late and
+    dropped frames, read counts and causes, the worst hitches with a
+    cause, per-mark phases, long animation frames), `hud()`, `recent()`.
+    From the console on `/duo`: `__gpu.profile.hud()`, or
+    `__gpu.profile.start()` ... `await __gpu.profile.stop()`.
+    Pieces: `src/profile/profiler.ts` (samples, summary, blame,
+    `formatReport`), `src/profile/hud.ts`, `src/gpu/timer.ts`
+    (`timestamp-query`, requested as an optional feature in `initGpu`),
+    `SceneReader.lastRead` (escalation reason and boundary),
+    `Renderer.lastUploadByLayer`, `FrameScheduler.requestedAt`.
+    `npm run test:profile` records scenarios on `perf.html` (idle,
+    scroll, mutate, full-read, css-transforms, fx-transforms, reveal,
+    blur-scroll) or scrolls any page with `--url` (e.g. the `/duo` dev
+    server); `--save`/`--baseline` compare runs. Checked in the
+    sandbox under SwiftShader (2 CPUs: frames take ~0.7 s of GPU, so
+    only small runs: `--n 40 --viewport 480x320 --frames 0.08`), all
+    scenarios report, GPU timing works there; `test:fx` (fx-blur,
+    fx-region, fx-transform-identity) 0.00, `test:visual --only boxes`
+    0.00. Found on the way: `timestampWrites: undefined` in a pass
+    descriptor stalls SwiftShader's Dawn, so passes spread
+    `timed(timer, label)` (present only when timing). First moves on the
+    Mac: `npm run test:profile -- --headed --save base`, then
+    `--url http://localhost:8000/duo --headed`, and the HUD on `/duo`
+    while scrolling the bento.
 
 9. **CI submodule access.** MDS-home CI clones submodules with
    `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not

@@ -5,6 +5,7 @@ import type {
   RegionHandler,
   RenderGraph
 } from '../gpu/graph'
+import { timed } from '../gpu/timer'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { createComposer } from './compose'
@@ -616,6 +617,7 @@ function buildEffects(compositor: Compositor): Effects {
         writeEffect(run.pass, run.stage, frame, src, { x: r.x, y: r.y })
         const rp = frame.encoder.beginRenderPass({
           label: `fx:${run.pass.name}`,
+          ...timed(graph.shared.timer, `fx:${run.pass.name}`),
           colorAttachments: [
             {
               view,
@@ -950,6 +952,7 @@ function buildEffects(compositor: Compositor): Effects {
         writeRegion(p, stage, f, src, { x: f.x, y: f.y }, 1)
         const rp = f.encoder.beginRenderPass({
           label: `fx:${p.name}`,
+          ...timed(graph.shared.timer, `fx:${p.name}`),
           colorAttachments: [
             {
               view: viewOf(out),

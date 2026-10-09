@@ -1,6 +1,7 @@
 import type { Scene } from '../scene/scene'
 import type { Layer } from '../types'
 import type { MaterialBinding } from './material'
+import type { GpuTimer } from './timer'
 
 /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
 export const FRAME_WGSL = /* wgsl */ `
@@ -113,4 +114,7 @@ export interface Shared {
   frameBindGroup: GPUBindGroup
   /** Device pixel ratio of the current frame (set by Renderer.render). */
   dpr: number
+  /** GPU pass timing while the profiler runs (gpu/timer.ts); a pass's
+   * descriptor spreads `timed(timer, label)`. */
+  timer: GpuTimer | null
 }

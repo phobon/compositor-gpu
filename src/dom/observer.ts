@@ -271,7 +271,7 @@ export interface SyncDiagnostics {
   last: string
 }
 
-const describeEl = (n: Node): string => {
+export const describeEl = (n: Node): string => {
   const el = n instanceof Element ? n : n.parentElement
   if (!el) {
     return String(n.nodeName)

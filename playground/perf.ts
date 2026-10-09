@@ -170,7 +170,115 @@ async function boot(): Promise<void> {
   const fx = createEffects(compositor)
   const blurPass = blur(fx, { enabled: false })
 
+  window.__gpu = compositor
+  const inView = (max: number): HTMLElement[] => {
+    const vh = window.innerHeight
+    return (Array.from(document.querySelectorAll('.pcard')) as HTMLElement[])
+      .filter((c) => {
+        const r = c.getBoundingClientRect()
+        return r.bottom > 0 && r.top < vh
+      })
+      .slice(0, max)
+  }
+  // Scenarios for test/profile/run.ts: each runs a fixed number of frames
+  // inside one recording.
+  let scale = 1
+  /** `n` frames, scaled by the scenario's `scale`. */
+  const k = (n: number): number => Math.max(2, Math.round(n * scale))
+  const scenarios: Record<string, () => Promise<void>> = {
+    // Nothing changes: any frame recorded is something invalidating.
+    async idle() {
+      await new Promise((r) => setTimeout(r, k(1500)))
+    },
+    // 8 px per frame down then back up.
+    async scroll() {
+      for (let f = 0, n = k(240); f < n; f++) {
+        window.scrollBy(0, f < n / 2 ? 8 : -8)
+        await raf()
+      }
+    },
+    // A text edit every frame (partial reads).
+    async mutate() {
+      for (let f = 0, n = k(120); f < n; f++) {
+        window.__perf?.mutate(f % 2 ? 'text' : 'class')
+        await raf()
+      }
+    },
+    // A full read every 10th frame (the worst case, spaced out).
+    async 'full-read'() {
+      for (let f = 0, n = k(120); f < n; f++) {
+        if (f % 10 === 0) {
+          compositor.invalidate()
+        }
+        await raf()
+      }
+    },
+    async 'css-transforms'() {
+      await window.__perf?.animate('dom', k(120))
+    },
+    async 'fx-transforms'() {
+      await window.__perf?.animate('gpu', k(120))
+    },
+    // The /duo bento reveal: cards in view fade and rise through
+    // fx.transform, staggered, each blurred by its own region pass whose
+    // radius falls to 0; then the passes go away.
+    async reveal() {
+      const cards = inView(12)
+      const tfs = cards.map((c) => fx.transform(c))
+      const blurs = cards.map((c) => blur(fx, { region: c, radius: 14 }))
+      const frames = k(72)
+      const stagger = Math.max(1, Math.round(4 * scale))
+      for (let f = 0; f < frames + stagger * cards.length; f++) {
+        cards.forEach((_, i) => {
+          const p = Math.min(1, Math.max(0, (f - i * stagger) / frames))
+          const e = 1 - (1 - p) ** 3
+          const t = tfs[i]
+          const b = blurs[i]
+          if (t) {
+            t.opacity = e
+            t.y = 40 * (1 - e)
+            t.scale = 0.92 + 0.08 * e
+          }
+          if (b) {
+            b.params.radius = 14 * (1 - e)
+            b.enabled = p < 1
+          }
+        })
+        await raf()
+      }
+      for (const b of blurs) {
+        b.destroy()
+      }
+      for (const t of tfs) {
+        t.destroy()
+      }
+      await raf2()
+    },
+    // A fullscreen blur pass while scrolling.
+    async 'blur-scroll'() {
+      blurPass.enabled = true
+      for (let f = 0, n = k(120); f < n; f++) {
+        window.scrollBy(0, f < n / 2 ? 8 : -8)
+        await raf()
+      }
+      blurPass.enabled = false
+      await raf2()
+    }
+  }
+
   window.__perf = {
+    async scenario(name: string, frames = 1) {
+      scale = frames
+      const run = scenarios[name]
+      if (!run) {
+        throw new Error(`unknown scenario ${name}`)
+      }
+      window.scrollTo(0, 0)
+      await raf2()
+      compositor.profile.start()
+      await run()
+      return compositor.profile.stop()
+    },
     ready: (async () => {
       if (!compositor.active) {
         return
