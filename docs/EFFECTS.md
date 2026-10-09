@@ -482,3 +482,42 @@ Built 2026-10-06.
   numbered, `MaterialEntry.glyphs`). Overlapping glyph materials: the
   later one's numbering wins, as it wins the runs. Boxes and images
   return the instance index.
+
+## Deviations (post-M3: transforms, presets, `hold`)
+
+Built 2026-10-06 to 2026-10-08, after the M3 milestones; not in the
+original spec.
+
+- **Layer transforms.** `fx.transform(el, { x, y, scale(X/Y), rotate,
+  opacity, originX/Y })` (`graph.transform`) composites an element's
+  subtree through a per-frame affine with no DOM writes and no re-reads.
+  The element is isolated like a region pass (one group, a stacking
+  context); at identity and opacity 1 it draws in place, pixel-identical.
+  Under a transform the group renders only the part that can land in its
+  parent, enclosing groups grow to where transformed descendants land,
+  and the result is scissored to the ancestors' clip AABB (rounded or
+  rotated clips are not followed). The texture renders at the
+  transform's axis scales (1/16..4 × the parent's resolution) and, when
+  not rotated, its quad snaps to the parent's pixel grid, so text stays
+  crisp scaled down or up (mipmaps were tried first and measured blurrier
+  than this against Chrome's own scaled rendering). M4 made it one
+  contribution among several per element (see Authoring) and removed its
+  DOM fallback.
+- **`progressiveBlur`.** A preset Pass (fullscreen or region): a
+  separable Gaussian whose radius grows toward weighted edges (`edges`,
+  per side), with ramp widths (`width`, uv fractions), `corners`
+  blending the union of the x and y ramps toward their product, and
+  `curve` shaping the amount. Each axis uses the radius at the pixel it
+  writes (the usual variable-blur approximation).
+- **`dissolve`.** A preset Material over the target's boxes, images and
+  glyphs: each pixel shows once `progress` passes a threshold from value
+  noise (feature size `scale`, fixed to the page) mixed with a sweep
+  along `direction`; `softness` is the fade width, `edge` a rim in
+  `edgeColor`. Progress 0 hides the target, 1 shows it as usual (exact).
+  Hides the target's DOM paint while enabled.
+- **Material `hold`.** Material pipelines compile asynchronously and
+  normally fall back to the default pipeline until ready; with `hold`
+  the material's records are not drawn at all until then, so a reveal
+  can't flash its finished state. Known gap: fallback-atlas glyphs (emoji)
+  in the target are held too.
+

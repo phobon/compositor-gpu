@@ -159,7 +159,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       accepted as is (Ben, 2026-10-08): text is at identity in the
       middle of the viewport, so selection is off only near the edges
       and mid-reveal. Details in `docs/HANDOFF.md` (Start here, 2).
-- [ ] Spec: Deviations entries in `docs/EFFECTS.md` for layer transforms,
+- [x] Spec: Deviations entries in `docs/EFFECTS.md` for layer transforms,
       `progressiveBlur`, `dissolve` and Material `hold`.
 - [x] Effect authoring API (M4, built 2026-10-08; spec `docs/EFFECTS.md`
       "Authoring", contract and recipes `src/fx/README.md`). Today a
@@ -190,7 +190,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       weighted viewport (or region) edges, bands or corners; shot
       `fx-progressive`. Used by the `/duo` app sections (MDS-home
       `Duo/AppScroll.jsx`): top/bottom edge bands.
-- [ ] 16-bit PNGs crash the tab under SwiftShader on upload
+- [x] 16-bit PNGs crash the tab under SwiftShader on upload (fixed
+      2026-10-08: `images/pngDepth.ts` reads the IHDR bit depth from the
+      cached source and uploads 16-bit PNGs through an 8-bit canvas; shot
+      `png16`). Was:
       (Chrome decodes them to a half-float bitmap; `copyExternalImage`
       into `rgba8unorm`). Untested on hardware. Fix candidates: detect
       via the IHDR bit depth when fetching, or redraw through a 2D canvas.

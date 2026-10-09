@@ -140,9 +140,15 @@ Follow-ups, roughly in order:
    upload (the `/duo` screenshots are webp now, so lower risk); `hold`
    also holds back fallback-atlas glyphs (emoji) in the target; a wipe
    or other reveal material if the dissolve isn't enough.
-8. **Spec docs.** `docs/EFFECTS.md` has no Deviations entries yet for
-   layer transforms, `progressiveBlur`, `dissolve` or Material `hold`
-   (they are in `src/fx/README.md`, `CLAUDE.md` and ROADMAP).
+8. **Spec docs: done 2026-10-08** (`docs/EFFECTS.md` "Deviations
+   (post-M3: transforms, presets, `hold`)"). Also fixed the 16-bit PNG
+   crash (`src/images/pngDepth.ts`: IHDR bit depth read from the cached
+   source, PNG URLs only; 16-bit ones uploaded through an 8-bit 2D
+   canvas). Reproduced under SwiftShader (tab crash), fixed, both images
+   mirror identically; new visual shot `png16` (write its golden on the
+   Mac: `npm run test:visual -- --update --only png16`). `test:visual`:
+   every existing shot within gate (0.01-0.05 % on sections that moved
+   down the page under the new one).
 9. **CI submodule access.** MDS-home CI clones submodules with
    `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not
    `phobon/compositor-gpu` (likely a fine-grained token: one owner only);

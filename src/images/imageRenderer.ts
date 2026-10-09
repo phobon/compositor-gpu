@@ -19,6 +19,7 @@ import {
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './imageAtlas'
+import { isPng16, to8Bit } from './pngDepth'
 import {
   concreteSize,
   requestSvgMarkup,
@@ -482,20 +483,24 @@ export class ImagePass implements RenderPass {
       return
     }
     this.pendingBitmaps.add(key)
-    createImageBitmap(img)
-      .then((bitmap) => {
+    Promise.all([createImageBitmap(img), isPng16(img.currentSrc || img.src)])
+      .then(([bitmap, deep]) => {
         this.pendingBitmaps.delete(key)
         const w = bitmap.width
         const h = bitmap.height
+        // A 16-bit PNG decodes to a half-float bitmap whose upload into
+        // rgba8unorm crashes some GPUs/drivers: copy it through an 8-bit
+        // canvas instead (pngDepth.ts).
+        const source = deep ? (to8Bit(bitmap) ?? bitmap) : bitmap
         if (w > 0 && h > 0) {
           const spot =
             Math.max(w, h) <= MAX_ENTRY_SIZE
-              ? this.atlas.add(bitmap, w, h, key, img)
+              ? this.atlas.add(source, w, h, key, img)
               : null
           // Oversized, or the atlas is full (`add` already logs that once) —
           // same fallback the generic non-bitmap path takes.
           if (!spot) {
-            this.cacheBitmapTexture(img, bitmap, w, h, key)
+            this.cacheBitmapTexture(img, source, w, h, key)
           }
         }
         bitmap.close()
@@ -514,7 +519,7 @@ export class ImagePass implements RenderPass {
    * so there is no per-frame re-copy once cached. */
   private cacheBitmapTexture(
     img: HTMLImageElement,
-    bitmap: ImageBitmap,
+    bitmap: ImageBitmap | OffscreenCanvas | HTMLCanvasElement,
     w: number,
     h: number,
     key: string
