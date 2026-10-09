@@ -182,6 +182,25 @@ Follow-ups, roughly in order:
     the canvas at half size, so look on the Mac at
     `/duo?gpu=1&dials=1`. Parallax inside the rounded cards needs the
     rounded-clip work (item 7) in the submodule.
+    Later the same day (Ben): kept the blur/stagger reveal; dropped the
+    section scale on scroll and the whole-screen edge blur
+    (`Duo/AppScroll.jsx` deleted; `AppSections` renders the sections
+    directly). `useReveal` gained `exit: true` (with `end`, default
+    `'bottom 20%'`): plays in on enter/enterBack, back out (blur
+    included) on leave/leaveBack, from wherever it is; in-band at load
+    starts shown. The bento uses it; other reveals still play once.
+    Checked at an emulated 1280 px: tile opacity 0 below, 1 entered,
+    0 past the top, 1 entered back, 0 below again.
+    Perf (Ben: regressed with the blur). Measured in the pane: each bento
+    enter/exit started and ended with a full read (~9 / 6.5 ms) from the
+    region passes isolating/releasing their tiles, plus GPU blur cost
+    (32 taps a side at large radii, four large tiles). compositor-gpu,
+    uncommitted: isolation changes now queue a partial read of the
+    element (`isolationScopes` in `compositor.ts`) instead of a full
+    one; `blur` caps taps at 16 a side (radii <= 16 device px
+    unchanged). `test:fx` 0.00 everywhere (region/transform invariants
+    exact). Re-measure after the submodule bump; the bento's saved dial
+    blur (28) is double the default 14 and costs proportionally.
 
 9. **CI submodule access.** MDS-home CI clones submodules with
    `secrets.BONOBO_WEB_TOKEN`, which can read Bonobolabs repos but not

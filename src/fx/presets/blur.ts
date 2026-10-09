@@ -4,9 +4,10 @@ import type { Target } from '../target'
 // Separable Gaussian blur: a horizontal then a vertical stage sharing one
 // `radius` param (CSS px, the kernel's reach; σ = radius / 3). Taps are
 // capped at MAX_TAPS per side and spread evenly past that, with the
-// sampler's bilinear filter covering the gaps.
+// sampler's bilinear filter covering the gaps (radii up to MAX_TAPS
+// device px sample every texel).
 
-const MAX_TAPS = 32
+const MAX_TAPS = 16
 
 const axis = (dir: string): string => /* wgsl */ `
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {

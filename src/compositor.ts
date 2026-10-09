@@ -121,6 +121,9 @@ export async function createCompositor(
   )
   reader.canvasZ = options.zIndex ?? 2147483646
   let pendingReadFlags = Dirty.ALL
+  /** Elements whose isolation changed (a region pass or layer transform
+   * started or ended): re-read as partial-read scopes on the next frame. */
+  const isolationScopes = new Set<Element>()
   const animating = Boolean(options.onGlyph || options.onFrame)
   /** Render times in the last second (stats().fps counts them). */
   const frameTimes: number[] = []
@@ -231,6 +234,13 @@ export async function createCompositor(
     // the next take()).
     let cssAnimating = false
     const scopes = dirty.scopes as Set<Element>
+    if (isolationScopes.size > 0) {
+      for (const el of isolationScopes) {
+        scopes.add(el)
+      }
+      isolationScopes.clear()
+      flags |= Dirty.MUTATION
+    }
     // Paint-only animation scopes skip the partial read's rect check,
     // except when a mutation in the same frame lies inside one (it could
     // change its layout size). A mutation outside one is covered by its
@@ -479,7 +489,10 @@ export async function createCompositor(
       reader.isolated.delete(el)
       regionIds.delete(el)
     }
-    pendingReadFlags |= Dirty.STYLE
+    // Only the element's own node changes (it becomes, or stops being, a
+    // stacking context): a partial read of it, then the scene re-flattens.
+    // A partial read escalates to a full one if anything moved.
+    isolationScopes.add(el)
     scheduler.request()
   }
   const rebatch = (): void => {
