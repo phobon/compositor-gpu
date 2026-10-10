@@ -25,6 +25,15 @@ const ANIM_START = ['transitionrun', 'transitionstart', 'animationstart']
 const TRANSITION_END = ['transitionend', 'transitioncancel']
 const ANIMATION_END = ['animationend', 'animationcancel']
 
+/** `el`'s own animations and its pseudo-elements' (`::before`/`::after`
+ * transitions fire their events on `el` but aren't in `getAnimations()`),
+ * not its descendants'. */
+function ownAnimations(el: Element): Animation[] {
+  return el
+    .getAnimations({ subtree: true })
+    .filter((a) => (a.effect as KeyframeEffect | null)?.target === el)
+}
+
 /** Does `el` still have an unfinished (running or paused) CSS transition
  * or animation of the given kind? `getAnimations()` includes finished
  * animations that are still filling, so check playState. Without the Web
@@ -33,7 +42,7 @@ function hasPending(el: Element, kind: 'transition' | 'animation'): boolean {
   if (typeof el.getAnimations !== 'function') {
     return false
   }
-  for (const a of el.getAnimations()) {
+  for (const a of ownAnimations(el)) {
     if (a.playState === 'finished' || a.playState === 'idle') {
       continue
     }
@@ -52,7 +61,7 @@ function isAdvancing(el: Element): boolean {
   if (typeof el.getAnimations !== 'function') {
     return true
   }
-  for (const a of el.getAnimations()) {
+  for (const a of ownAnimations(el)) {
     if (a.playState === 'running') {
       return true
     }
@@ -114,7 +123,7 @@ function paintOnlyAnimations(el: Element): boolean {
   if (typeof el.getAnimations !== 'function') {
     return false
   }
-  for (const a of el.getAnimations()) {
+  for (const a of ownAnimations(el)) {
     if (a.playState === 'finished' || a.playState === 'idle') {
       continue
     }

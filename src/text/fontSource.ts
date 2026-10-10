@@ -60,9 +60,56 @@ function parseSrcUrls(src: string, baseHref: string | null): SrcRef[] {
   return out
 }
 
-/** Read every @font-face rule reachable from the document's stylesheets. */
+/** Read every @font-face rule reachable from the document's stylesheets,
+ * including those nested in `@layer` blocks, `@import`ed sheets, and
+ * `@media` / `@supports` rules whose condition currently holds. */
 function collectFaceRules(): FaceRule[] {
   const out: FaceRule[] = []
+  const walk = (rules: CSSRuleList, baseHref: string | null): void => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSFontFaceRule) {
+        const st = rule.style
+        const family = unquote(st.getPropertyValue('font-family')).toLowerCase()
+        if (!family) {
+          continue
+        }
+        const srcs = parseSrcUrls(st.getPropertyValue('src'), baseHref)
+        if (srcs.length === 0) {
+          continue
+        }
+        out.push({
+          family,
+          weight: numWeight(st.getPropertyValue('font-weight')),
+          italic: isItalic(st.getPropertyValue('font-style')),
+          srcs
+        })
+      } else if (rule instanceof CSSImportRule) {
+        const sheet = rule.styleSheet
+        if (
+          sheet &&
+          (!rule.media.mediaText ||
+            window.matchMedia(rule.media.mediaText).matches)
+        ) {
+          try {
+            walk(sheet.cssRules, sheet.href)
+          } catch {
+            // cross-origin import
+          }
+        }
+      } else if (rule instanceof CSSMediaRule) {
+        if (window.matchMedia(rule.media.mediaText).matches) {
+          walk(rule.cssRules, baseHref)
+        }
+      } else if (rule instanceof CSSSupportsRule) {
+        if (CSS.supports(rule.conditionText)) {
+          walk(rule.cssRules, baseHref)
+        }
+      } else if ('cssRules' in rule && !(rule instanceof CSSStyleRule)) {
+        // @layer blocks (and other grouping rules): always in effect.
+        walk((rule as CSSGroupingRule).cssRules, baseHref)
+      }
+    }
+  }
   for (const sheet of Array.from(document.styleSheets)) {
     let rules: CSSRuleList
     try {
@@ -70,26 +117,7 @@ function collectFaceRules(): FaceRule[] {
     } catch {
       continue
     }
-    for (const rule of Array.from(rules)) {
-      if (rule.type !== CSSRule.FONT_FACE_RULE) {
-        continue
-      }
-      const st = (rule as CSSFontFaceRule).style
-      const family = unquote(st.getPropertyValue('font-family')).toLowerCase()
-      if (!family) {
-        continue
-      }
-      const srcs = parseSrcUrls(st.getPropertyValue('src'), sheet.href)
-      if (srcs.length === 0) {
-        continue
-      }
-      out.push({
-        family,
-        weight: numWeight(st.getPropertyValue('font-weight')),
-        italic: isItalic(st.getPropertyValue('font-style')),
-        srcs
-      })
-    }
+    walk(rules, sheet.href)
   }
   return out
 }

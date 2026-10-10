@@ -76,18 +76,21 @@ function selectedTextColor(el: Element, own: RGBA): RGBA | null {
   }
   const cs = getComputedStyle(el, '::selection')
   let out: RGBA | null = parseColor(cs.color)
-  if (sameColor(out, own)) {
+  fallbackText ??= parseColor('HighlightText')
+  // No ::selection rule: a transparent background, and the colour is the
+  // element's own or `HighlightText` (Chrome on macOS computes the latter
+  // but paints the text in its own colour).
+  const noRule =
+    parseColor(cs.backgroundColor).a <= 0.001 &&
+    (sameColor(out, own) || sameColor(out, fallbackText))
+  if (noRule) {
+    keepsColour ??= /Mac|iPhone|iPad/.test(
+      (navigator as { userAgentData?: { platform?: string } }).userAgentData
+        ?.platform ?? navigator.platform
+    )
+    out = keepsColour || sameColor(fallbackText, own) ? null : fallbackText
+  } else if (sameColor(out, own)) {
     out = null
-    if (parseColor(cs.backgroundColor).a <= 0.001) {
-      keepsColour ??= /Mac|iPhone|iPad/.test(
-        (navigator as { userAgentData?: { platform?: string } }).userAgentData
-          ?.platform ?? navigator.platform
-      )
-      if (!keepsColour) {
-        fallbackText ??= parseColor('HighlightText')
-        out = sameColor(fallbackText, own) ? null : fallbackText
-      }
-    }
   }
   textCache.set(el, out)
   return out

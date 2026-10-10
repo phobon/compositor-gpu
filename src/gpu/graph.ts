@@ -134,6 +134,9 @@ export interface MaterialEntry extends MaterialBinding {
   active(): boolean
   /** Glyphs numbered by the last batch build (mat_index's range). */
   glyphs?: number
+  /** A core material (gpu/blend.ts): records are tagged by the reader,
+   * not by `target`'s subtree. */
+  builtin?: boolean
 }
 
 /** Per-frame participant registered through RenderGraph.addHook. */

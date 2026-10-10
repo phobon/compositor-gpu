@@ -10,6 +10,7 @@ import {
 import { textReadStats } from './dom/textRuns'
 import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
+import { blendMaterials } from './gpu/blend'
 import { initGpu } from './gpu/device'
 import type {
   FrameHook,
@@ -94,6 +95,10 @@ export async function createCompositor(
   const dpr = options.devicePixelRatio ?? window.devicePixelRatio ?? 1
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
+  // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
+  for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
+    renderer.materials.set(m.id, m)
+  }
   renderer.shared.dpr = dpr
   if (layers.has('boxes')) {
     renderer.addPass(new BoxPass(renderer.shared))
@@ -601,9 +606,10 @@ export async function createCompositor(
   }
   // Materials: tag the records of each active material's target subtree
   // (registration order, so a later material wins on overlap). Tags from
-  // the previous build are cleared first; records rebuilt by a read have
-  // none.
-  let tagged: { material?: number }[] = []
+  // the previous build are undone first (back to the reader's own tag, a
+  // mix-blend-mode material, or none); records rebuilt by a read have only
+  // the reader's.
+  let tagged: [{ material?: number }, number | undefined][] = []
   /** Glyph runs' bases from this build (a later material overwrites an
    * earlier one's, as it wins the run). */
   const bases = new Map<GlyphRun, number>()
@@ -613,8 +619,8 @@ export async function createCompositor(
     glyphs: { n: number }
   ): void => {
     const tag = (r: { material?: number }): void => {
+      tagged.push([r, r.material])
       r.material = m.id
-      tagged.push(r)
     }
     for (const r of node.own) {
       if (
@@ -649,12 +655,19 @@ export async function createCompositor(
     }
   }
   scene.assign = () => {
-    for (const r of tagged) {
-      delete r.material
+    // Undo in reverse, so overlapping tags unwind to the reader's.
+    for (let i = tagged.length - 1; i >= 0; i--) {
+      const [r, prev] = tagged[i] as [{ material?: number }, number | undefined]
+      if (prev === undefined) {
+        delete r.material
+      } else {
+        r.material = prev
+      }
     }
     tagged = []
     for (const m of renderer.materials.values()) {
-      const node = m.active() ? reader.nodeOf(m.target) : undefined
+      const node =
+        m.active() && !m.builtin ? reader.nodeOf(m.target) : undefined
       if (node) {
         const glyphs = { n: 0 }
         tagSubtree(node, m, glyphs)

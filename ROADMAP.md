@@ -312,6 +312,13 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
 - [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)
+- [x] `mix-blend-mode` per record (2026-10-10, `scene/blend.ts`,
+      `gpu/blend.ts`): `multiply`, `screen`, `plus-lighter`, `exclusion`
+      exact, `difference` as exclusion (exact for black/white sources);
+      built-in materials whose pipeline variant carries the blend state,
+      tagged by the reader (elements' subtrees and pseudo-elements). Each
+      record blends on its own rather than as an isolated group; visual
+      shot `blend`
 - [x] `overflow` clipping (per-instance clip rects; rounded-corner clip is a follow-up)
 - [x] `replace` mode: hide DOM paint while preserving hit-testing & a11y (+ scroll tracking)
 - [x] Per-layer dirty tracking (upload only changed layers; `uploads` stat)
@@ -400,7 +407,12 @@ perspective transforms · culling · WebGL2 backend.
       numbered/custom markers, string/attr() content as inline, block or
       absolutely positioned boxes)
 - [ ] Pseudo content gaps: `counter()`, quotes, `url()` images,
-      `list-style-image`, multi-line pseudo text, pseudo `transform`
+      `list-style-image`, multi-line pseudo text (pseudo `transform` /
+      `translate` / `rotate` / `scale`: done 2026-10-10, `boxAffine` in
+      `dom/transform.ts`; a pseudo scaled to nothing paints nothing)
+- [x] Font discovery reads `@font-face` inside `@layer`, `@import`ed
+      sheets and matching `@media` / `@supports` (2026-10-10; phobon.io's
+      faces live in an `@layer`)
 - [ ] Optional WebGL2 backend behind the renderer interface
 - [x] 2D transforms on boxes, images and text (per-instance affine; nested
       transforms; synthetic oblique) + CSS transition/animation tracking
@@ -410,6 +422,6 @@ perspective transforms · culling · WebGL2 backend.
       clips (AABB now)
 
 ## Non-goals (for now)
-CSS filters/blend modes, print, nested independent scrollers,
+CSS filters, the other blend modes, print, nested independent scrollers,
 `background-attachment: fixed`, native COLR/CBDT rasterisation inside Slug
 (emoji go through the fallback atlas).

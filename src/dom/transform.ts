@@ -95,7 +95,7 @@ function angleRad(tok: string): number | null {
  * `1 1 0 30deg`), or null for none/identity/unparsable. A rotation about
  * any axis is projected to its 2D part, like matrix3d in parseTransform.
  */
-function parseRotate(v: string | undefined): Mat2 | null {
+export function parseRotate(v: string | undefined): Mat2 | null {
   if (!set(v)) {
     return null
   }
@@ -152,7 +152,7 @@ function scaleFactor(tok: string | undefined): number {
 
 /** Linear part of a computed `scale` value (`1.2`, `1.2 0.8`, with an
  * optional z factor that is dropped), or null for none/identity. */
-function parseScale(v: string | undefined): Mat2 | null {
+export function parseScale(v: string | undefined): Mat2 | null {
   if (!set(v)) {
     return null
   }
@@ -330,4 +330,71 @@ export function placementAabb(p: Placement): {
   const minY = Math.min(0, b * w) + Math.min(0, d * h)
   const maxY = Math.max(0, b * w) + Math.max(0, d * h)
   return { x: tx + minX, y: ty + minY, width: maxX - minX, height: maxY - minY }
+}
+
+/** `p · a`: affine `a` (in p's local space) followed by `p`. */
+export function composeAffine(p: Affine, a: Affine): Affine {
+  const [pa, pb, pc, pd, ptx, pty] = p
+  const [aa, ab, ac, ad, atx, aty] = a
+  return [
+    pa * aa + pc * ab,
+    pb * aa + pd * ab,
+    pa * ac + pc * ad,
+    pb * ac + pd * ad,
+    pa * atx + pc * aty + ptx,
+    pb * atx + pd * aty + pty
+  ]
+}
+
+/** One length of a computed `translate` / `transform-origin`: px, or a
+ * percentage of `ref`. */
+function lengthOf(tok: string | undefined, ref: number): number {
+  if (!tok) {
+    return 0
+  }
+  const n = Number.parseFloat(tok)
+  if (!Number.isFinite(n)) {
+    return 0
+  }
+  return tok.endsWith('%') ? (n / 100) * ref : n
+}
+
+/**
+ * The full transform of a box whose geometry isn't measurable (a
+ * pseudo-element): `translate`, `rotate`, `scale` and `transform` about
+ * `transform-origin`, for a border box at (x, y) of size w × h in some
+ * local frame, as an affine in that frame. Null at identity. Unlike real
+ * elements (whose translation is solved from getBoundingClientRect), the
+ * translations come from the computed style.
+ */
+export function boxAffine(
+  s: TransformStyle & { transformOrigin: string },
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Affine | null {
+  const rs = composeLinear(parseRotate(s.rotate), parseScale(s.scale))
+  const lin = composeLinear(rs, parseTransform(s.transform))
+  const tr = set(s.translate) ? (s.translate as string).trim().split(/\s+/) : []
+  let tx = lengthOf(tr[0], w)
+  let ty = lengthOf(tr[1], h)
+  // A matrix()'s translation applies after rotate and scale.
+  const m = /^matrix\(([^)]+)\)$/.exec((s.transform ?? '').trim())
+  if (m) {
+    const v = (m[1] ?? '').split(',').map((t) => Number.parseFloat(t))
+    const e = v[4] ?? 0
+    const f = v[5] ?? 0
+    const [a, b, c, d] = rs ?? [1, 0, 0, 1]
+    tx += a * e + c * f
+    ty += b * e + d * f
+  }
+  if (!lin && tx === 0 && ty === 0) {
+    return null
+  }
+  const [a, b, c, d] = lin ?? [1, 0, 0, 1]
+  const o = s.transformOrigin.trim().split(/\s+/)
+  const ox = x + lengthOf(o[0], w)
+  const oy = y + lengthOf(o[1], h)
+  return [a, b, c, d, ox + tx - (a * ox + c * oy), oy + ty - (b * ox + d * oy)]
 }

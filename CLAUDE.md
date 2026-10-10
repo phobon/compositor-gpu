@@ -315,6 +315,16 @@ Conventions each pass must follow:
   are used when present; text is measured with Canvas 2D and anchored to the
   element's first/last glyph line. They become BoxRecords/GlyphRuns in
   `node.kids` (marker, ::before, kids, ::after) in the element's local frame.
+  A pseudo's own `transform`/`translate`/`rotate`/`scale` (about its
+  `transform-origin`) is applied from computed style (`boxAffine`), since
+  there's no rect to solve a translation from.
+- **Blend modes** (`scene/blend.ts`, `gpu/blend.ts`): `mix-blend-mode`
+  `multiply`/`screen`/`plus-lighter`/`exclusion`/`difference` (the last as
+  exclusion) are built-in materials with no hooks and their own blend
+  state (`MaterialBinding.blend`), registered at init (`builtin`, skipped by
+  `Scene.assign`). The reader tags records directly (`ElNode.blend`,
+  inherited; pseudo items), per record rather than as an isolated group. An
+  `/fx` Material's tag replaces it and is undone back to it.
 - **Image atlas.** Static `<img>`/background sources ≤1024px are packed into
   one mipmapped `rgba8unorm` atlas (`images/imageAtlas.ts`, 4px gutters, UVs
   clamped by a half texel in the shader); canvas/video and larger images keep

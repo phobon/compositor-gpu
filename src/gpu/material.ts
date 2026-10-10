@@ -80,6 +80,9 @@ export interface MaterialBinding {
   /** Until a pass's pipeline for it has compiled, its records aren't
    * drawn there (instead of drawing with the default pipeline). */
   readonly hold?: boolean
+  /** Blend state of its pipelines (default PREMUL_BLEND): the built-in
+   * `mix-blend-mode` materials (gpu/blend.ts). */
+  readonly blend?: GPUBlendState
   /** Called when a pass's pipeline for it has finished compiling (the
    * records draw with the default pipeline until then). */
   ready?(): void
@@ -198,6 +201,10 @@ export class MaterialPipelines {
       mat.layout,
       wrap
     )
+    const target = desc.fragment?.targets?.[0]
+    if (mat.blend && target) {
+      target.blend = mat.blend
+    }
     if (bad) {
       log.error(`${label}: raw program: the pass shader has no vs/fs`)
       this.cache.set(id, 'failed')

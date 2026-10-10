@@ -20,10 +20,12 @@
 //
 // Gaps: `counter()` / `counters()` / quotes / `url()` content pieces are
 // dropped; `list-style-image` and `disclosure-*` markers are not drawn;
-// pseudo `transform`, `float`, `text-transform` and multi-line pseudo text
-// are ignored; right-to-left and vertical writing modes are laid out as
+// `float`, `text-transform` and multi-line pseudo text are ignored (a
+// pseudo's `transform` / `translate` / `rotate` / `scale` apply, except
+// matrix3d's translation); right-to-left and vertical writing modes are laid out as
 // horizontal LTR; a `position: fixed` pseudo uses the containing block of an
 // absolute one.
+import { blendMaterialId } from '../scene/blend'
 import type { BoxRecord, Glyph, GlyphRun, Rect } from '../scene/records'
 import { contextZIndex, createsStackingContext } from '../scene/stacking'
 import type { Layer } from '../types'
@@ -43,6 +45,8 @@ import {
 } from './textRuns'
 import {
   applyAffine,
+  boxAffine,
+  composeAffine,
   type Placement,
   placementAabb,
   subPlacement
@@ -831,9 +835,21 @@ export function readBeforeAfter(
     inlineBaseline = baseline
   }
 
-  const items: (BoxRecord | GlyphRun)[] = []
   const bw = cw + padX
   const bh = ch + padY
+  // The pseudo's own transform, about its border box (CSS doesn't
+  // transform non-atomic inline boxes). Scaled to nothing, it paints
+  // nothing (a `scale: 0 1` wipe at rest).
+  if (positioned || display !== 'inline') {
+    const a = boxAffine(ps, bx, by, bw, bh)
+    if (a) {
+      if (Math.abs(a[0] * a[3] - a[1] * a[2]) < 1e-6) {
+        return null
+      }
+      frame = { xform: composeAffine(frame.xform, a), local: frame.local }
+    }
+  }
+  const items: (BoxRecord | GlyphRun)[] = []
   if (host.boxes) {
     items.push(...boxRecords(ps, frame, bx, by, bw, bh, clip, alloc))
   }
@@ -869,6 +885,17 @@ export function readBeforeAfter(
   }
   if (items.length === 0) {
     return null
+  }
+  const blend = blendMaterialId(ps.mixBlendMode)
+  if (blend !== undefined) {
+    for (const it of items) {
+      it.material = blend
+      if (it.kind === 'text') {
+        for (const d of it.decorations ?? []) {
+          d.material = blend
+        }
+      }
+    }
   }
   const context = createsStackingContext(ps, display !== 'inline')
     ? {

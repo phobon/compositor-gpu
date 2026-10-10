@@ -1,3 +1,4 @@
+import { blendMaterialId } from '../scene/blend'
 import type {
   BoxRecord,
   CutoutRecord,
@@ -123,6 +124,9 @@ export interface ReadInfo {
 
 export interface ElNode {
   kind: 'element'
+  /** Built-in `mix-blend-mode` material of this element or its nearest
+   * blended ancestor (scene/blend.ts), or undefined. */
+  blend?: number
   el: Element
   parent: ElNode | null
   /** Child elements, direct text-node runs and pseudo-element records
@@ -177,6 +181,34 @@ export interface ElNode {
 }
 
 export type ElKid = ElNode | GlyphRun | BoxRecord
+
+/** Tag `node`'s records (own and subtree) with blend material `id`, except
+ * records a nested blended element (read first) already tagged. */
+function tagBlend(node: ElNode, id: number): void {
+  const tag = (r: { material?: number }): void => {
+    r.material ??= id
+  }
+  for (const r of node.own) {
+    if (r.kind !== 'cutout') {
+      tag(r)
+    }
+  }
+  for (const kid of node.kids) {
+    if (kid.kind === 'element') {
+      tagBlend(kid, id)
+    } else {
+      tag(kid)
+      if (kid.kind === 'text') {
+        for (const d of kid.decorations ?? []) {
+          tag(d)
+        }
+        for (const d of kid.decorationsOver ?? []) {
+          tag(d)
+        }
+      }
+    }
+  }
+}
 
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
   if (!a) {
@@ -871,6 +903,10 @@ export class SceneReader {
       node.region = region
       node.regionClip = clip
     }
+    const blend = blendMaterialId(s.mixBlendMode) ?? parent?.blend
+    if (blend !== undefined) {
+      node.blend = blend
+    }
     this.nodes.set(el, node)
 
     if (!svgRoot) {
@@ -947,6 +983,9 @@ export class SceneReader {
     }
     if (space === 'viewport') {
       tagViewport(node)
+    }
+    if (node.blend !== undefined) {
+      tagBlend(node, node.blend)
     }
     return node
   }
