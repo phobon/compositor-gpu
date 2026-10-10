@@ -163,6 +163,13 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       and mid-reveal. Details in `docs/HANDOFF.md` (Start here, 2).
 - [ ] Spec: Deviations entries in `docs/EFFECTS.md` for layer transforms,
       `progressiveBlur`, `dissolve` and Material `hold`.
+- [x] Pointer trails (`fx.trail`, 2026-10-10): a viewport-space field
+      faded and deposited by a compute pass, read by passes, materials
+      and layers (`trail_at`, `trail_cell`, `trail_snap`, `trail(uv)`,
+      `trail_page`); `stroke()` for scripted trails;
+      `playground/trail.html`. Deviations in `docs/EFFECTS.md`. No
+      harness shot yet (needs a pinned stroke + `decay: 1`, as the
+      playground's `?stroke&hold`).
 - [x] Effect authoring API (M4, built 2026-10-08; spec `docs/EFFECTS.md`
       "Authoring", contract and recipes `src/fx/README.md`). Today a
       `/duo` reveal takes data attributes in the markup, a lookup inside

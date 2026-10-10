@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu trail playground</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter Play', system-ui, sans-serif;
+        background: #f4f4f2;
+        color: #151517;
+      }
+      main { padding: 64px; }
+      h1 { font-size: 72px; letter-spacing: -0.03em; margin: 0 0 16px; }
+      p { max-width: 52ch; font-size: 20px; line-height: 1.5; }
+      .row { display: flex; gap: 24px; margin-top: 32px; }
+      .row img {
+        width: 320px; height: 320px; object-fit: cover; display: block;
+        border-radius: 12px;
+      }
+      #panel {
+        position: fixed; top: 12px; right: 12px; z-index: 2147483647;
+        font: 13px/1.4 system-ui; background: #fff; padding: 8px 10px;
+        border-radius: 8px; box-shadow: 0 2px 10px #0002;
+      }
+      #panel label { display: block; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Pointer trails</h1>
+      <p>Move the pointer: one trail field feeds a page-wide pass
+        (displace, or pixellate along the trail), a light layer and an
+        image material.</p>
+      <div class="row">
+        <img id="img-a" src="./test.png" alt="" />
+        <img id="img-b" src="./test.png" alt="" />
+      </div>
+      <p>The field is viewport-space, one cell per 16 CSS px, faded and
+        deposited by a compute pass every frame while it holds
+        anything.</p>
+    </main>
+    <div id="panel" data-gpu-ignore>
+      <label><input type="radio" name="mode" value="displace" checked />
+        displace</label>
+      <label><input type="radio" name="mode" value="pixel" /> pixellate</label>
+      <label><input type="checkbox" id="light" checked /> light</label>
+      <label><input type="checkbox" id="mat" checked /> image material</label>
+    </div>
+    <script type="module" src="./trail.ts"></script>
+  </body>
+</html>

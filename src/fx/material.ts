@@ -11,6 +11,7 @@ import {
 import { POINTER_WGSL } from './pointer'
 import { readsTime } from './shader'
 import type { Target } from './target'
+import { type Trail, trailState, trailWgsl } from './trail'
 
 // Materials: re-shade a Target's mirrored records with author hooks
 // (docs/EFFECTS.md "Material"). The record passes compile a variant of
@@ -33,6 +34,15 @@ struct MaterialFx {
 @group(2) @binding(0) var<uniform> fx : MaterialFx;
 @group(2) @binding(1) var<uniform> params : Params;
 @group(2) @binding(2) var<uniform> pointer : Pointer;
+`
+
+// With `trail`: the field (bindings 3 and 4) and trail_page(p).
+const TRAIL_WGSL = /* wgsl */ `
+${trailWgsl(2, 3)}
+// The trail at p, page CSS px (MatIn.page outside fixed subtrees).
+fn trail_page(p : vec2f) -> vec4f {
+  return trail_at(p - fx.scroll);
+}
 `
 
 const IDENTITY_VERTEX = /* wgsl */ `
@@ -94,6 +104,9 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
   hold?: boolean
   /** Called every frame while enabled. `time` is the page clock, s. */
   update?: (material: Material<S>, time: number, ctx: FrameContext) => void
+  /** Read this trail's field in the hooks: `trail_at(p)` (viewport CSS
+   * px), `trail_page(p)`, `trail_cell(p)`, `trail_snap(p)`. */
+  trail?: Trail
 }
 
 export interface Material<S extends ParamSchema = ParamSchema> {
@@ -183,22 +196,37 @@ export function createMaterial<S extends ParamSchema>(
       [o.vertex ?? IDENTITY_VERTEX, MATERIAL_HOOKS.vertex],
       [o.fragment ?? IDENTITY_FRAGMENT, MATERIAL_HOOKS.fragment]
     ]) ?? `${IDENTITY_VERTEX}\n${IDENTITY_FRAGMENT}`
+  const trail = trailState(o.trail)
   const code = [
     block.wgsl,
     POINTER_WGSL,
     UNIFORMS_WGSL,
+    trail ? TRAIL_WGSL : '',
     hooks,
     HOOKS_WGSL
   ].join('\n')
+  const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT
   const layout = device.createBindGroupLayout({
     label,
-    entries: [0, 1, 2].map(
-      (binding): GPUBindGroupLayoutEntry => ({
-        binding,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-        buffer: { type: 'uniform' }
-      })
-    )
+    entries: [
+      ...[0, 1, 2].map(
+        (binding): GPUBindGroupLayoutEntry => ({
+          binding,
+          visibility: VF,
+          buffer: { type: 'uniform' }
+        })
+      ),
+      ...(trail
+        ? [
+            {
+              binding: 3,
+              visibility: VF,
+              buffer: { type: 'read-only-storage' as const }
+            },
+            { binding: 4, visibility: VF, buffer: { type: 'uniform' as const } }
+          ]
+        : [])
+    ]
   })
   const fxBuf = device.createBuffer({
     label: `${label}:fx`,
@@ -211,18 +239,31 @@ export function createMaterial<S extends ParamSchema>(
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   })
   device.queue.writeBuffer(paramsBuf, 0, block.pack())
-  const bindGroup = device.createBindGroup({
-    label,
-    layout,
-    entries: [
-      { binding: 0, resource: { buffer: fxBuf } },
-      { binding: 1, resource: { buffer: paramsBuf } },
-      { binding: 2, resource: { buffer: deps.pointerBuf } }
-    ]
-  })
+  /** Group 2; rebuilt (frame()) when the trail's field is replaced. */
+  let bound = -1
+  const makeGroup = (): GPUBindGroup => {
+    const t = trail?.binding()
+    bound = t?.version ?? -1
+    return device.createBindGroup({
+      label,
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: fxBuf } },
+        { binding: 1, resource: { buffer: paramsBuf } },
+        { binding: 2, resource: { buffer: deps.pointerBuf } },
+        ...(t
+          ? [
+              { binding: 3, resource: { buffer: t.field } },
+              { binding: 4, resource: { buffer: t.info } }
+            ]
+          : [])
+      ]
+    })
+  }
+  const bindGroup = makeGroup()
   const fxData = new Float32Array(MATERIAL_FX_BYTES / 4)
 
-  const entry: MaterialEntry = {
+  const entry: MaterialEntry & { bindGroup: GPUBindGroup } = {
     id,
     label,
     code,
@@ -295,6 +336,9 @@ export function createMaterial<S extends ParamSchema>(
     frame(ctx) {
       if (!state.enabled) {
         return
+      }
+      if (trail && trail.binding().version !== bound) {
+        entry.bindGroup = makeGroup()
       }
       enabledAt ??= ctx.time
       const time = deps.time()

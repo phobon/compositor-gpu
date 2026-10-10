@@ -79,6 +79,24 @@ export const gpu = {
   elapsed: snippet('fx.elapsed', d.f32),
   dpr: snippet('fx.dpr', d.f32),
   pointer,
+  /** With `trail` (any kind): the field at p, viewport CSS px. */
+  trail: {
+    at: call('fx_trail_at', [d.vec2f], d.vec4f, 'p', 'return trail_at(p);'),
+    cell: call(
+      'fx_trail_cell_at',
+      [d.vec2f],
+      d.vec4f,
+      'p',
+      'return trail_cell(p);'
+    ),
+    snap: call(
+      'fx_trail_snap',
+      [d.vec2f],
+      d.vec2f,
+      'p',
+      'return trail_snap(p);'
+    )
+  },
   /** Typed accessors for a Params schema: `gpu.params(schema).strength.$`. */
   params<S extends ParamSchema>(schema: S): ParamSnippets<S> {
     const out: Record<string, unknown> = {}

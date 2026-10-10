@@ -85,6 +85,13 @@ export {
   type TgpuFnLike
 } from './shader'
 export type { Target, TargetGlyphs, TargetImage } from './target'
+export {
+  TRAIL_INFO_BYTES,
+  type Trail,
+  type TrailOptions,
+  type TrailSchema,
+  trailWgsl
+} from './trail'
 export type {
   Transform,
   TransformOptions,

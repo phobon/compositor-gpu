@@ -2,6 +2,7 @@ import tgpu from 'typegpu'
 import { FRAME_WGSL } from '../gpu/frame'
 import { log } from '../util/log'
 import { POINTER_WGSL } from './pointer'
+import { trailWgsl } from './trail'
 
 // Shader assembly for fullscreen passes. The author supplies
 //   fn effect(uv: vec2f, src: texture_2d<f32>, smp: sampler) -> vec4f
@@ -62,6 +63,14 @@ fn viewport_to_uv(p : vec2f) -> vec2f {
 fn page_to_uv(p : vec2f) -> vec2f {
   return (p - fx.scroll) * fx.dpr / fx.viewport;
 }
+
+// uv -> page / viewport CSS px (the inverses of the two above).
+fn uv_to_page(uv : vec2f) -> vec2f {
+  return fx.scroll + uv * fx.viewport / fx.dpr;
+}
+fn uv_to_viewport(uv : vec2f) -> vec2f {
+  return uv_to_page(uv) - fx.page_scroll;
+}
 `
 
 const ENTRY_WGSL = /* wgsl */ `
@@ -115,6 +124,15 @@ fn image_size() -> vec2f {
 
 /** Bytes in the FxImage uniform. */
 export const FX_IMAGE_BYTES = 32
+
+// With `trail`: the field (group 2, bindings 3 and 4) and trail(uv).
+const TRAIL_WGSL = /* wgsl */ `
+${trailWgsl(2, 3)}
+// The trail at uv (viewport, or the element's box in a region pass).
+fn trail(uv : vec2f) -> vec4f {
+  return trail_at(uv_to_viewport(uv));
+}
+`
 
 const PASSTHROUGH = /* wgsl */ `
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
@@ -190,7 +208,8 @@ export function effectSource(fragment: Fragment, name: string): string | null {
 export function stageSource(
   effect: string | null,
   paramsWgsl: string,
-  image = false
+  image = false,
+  trail = false
 ): string {
   return [
     FRAME_WGSL,
@@ -199,6 +218,7 @@ export function stageSource(
     POINTER_WGSL,
     BINDINGS_WGSL,
     image ? IMAGE_WGSL : '',
+    trail ? TRAIL_WGSL : '',
     effect ?? PASSTHROUGH,
     ENTRY_WGSL
   ].join('\n')

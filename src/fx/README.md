@@ -611,15 +611,74 @@ animate(m, { progress: 1 }, { type: 'spring', bounce: 0.3 })
 
 Manual (tabs, buttons): set `m.progress`, or `m.play()` / `m.reverse()`.
 
+## Trails
+
+```ts
+const trail = fx.trail({
+  cell: 16,          // CSS px per field cell
+  radius: 80,        // brush radius, CSS px
+  decay: 0.92,       // fraction kept per 60 Hz frame
+  strength: 1,       // deposit gain
+  speed: 1500,       // CSS px/s that deposits `strength` per frame
+  gamma: 1,          // response curve on speed / `speed`
+  pointer: true,     // follow the pointer (false: only stroke())
+  enabled: true
+}) -> Trail { name, params, schema, cell, enabled, pointer, active,
+              stroke(a, b, speed?), clear(), destroy() }
+
+fx.pass({ name: 'warp', trail, fragment })      // and fx.material,
+fx.layer({ name: 'glow', trail, vertex, fragment }) // fx.layer
+```
+
+A field of the pointer's recent motion over the visible viewport, one
+cell per `cell` CSS px, kept in a storage buffer on the GPU. Each frame a
+compute pass multiplies every cell by `decay^(dt·60)` and deposits the
+pointer's movement since the previous frame along that segment (so fast
+moves leave no gaps) with a smooth falloff out to `radius`. The deposit
+is `strength × min(speed / params.speed, 4)^gamma`, scaled to the
+frame's length. A cell holds
+
+- `xy`: the stroke's unit direction × amount, summed (y down),
+- `z`: the amount, summed, at most 4,
+- `w`: presence, 1 under the brush while it moved, whatever the speed.
+
+The field follows the viewport (scrolling doesn't move it) and is
+cleared when the viewport's cell count changes. While it holds nothing
+no compute pass runs; while it fades the frame loop is kept alive.
+`stroke(a, b, speed)` deposits a segment (viewport CSS px) on the next
+frame, for scripted or touch trails; `clear()` empties it. `params` are
+live (`radius`, `decay`, `strength`, `speed`, `gamma`). After `destroy()`
+consumers read zeros. Inert runtime: a working handle, nothing renders.
+
+A pass, material or layer given `trail` gets these, `p` in viewport CSS
+px:
+
+```wgsl
+fn trail_at(p : vec2f) -> vec4f    // bilinear between cell centres
+fn trail_cell(p : vec2f) -> vec4f  // the cell containing p, unfiltered
+fn trail_snap(p : vec2f) -> vec2f  // that cell's top-left corner
+fn trail_cell_size() -> f32        // CSS px per cell
+fn trail(uv : vec2f) -> vec4f      // pass: at uv (viewport or region box)
+fn trail_page(p : vec2f) -> vec4f  // material, layer: at page CSS px
+```
+
+Passes also get `uv_to_page(uv)` and `uv_to_viewport(uv)` (with or
+without a trail). Layers can read it in `simulate` too. tgpu.fn hooks
+reach it through `gpu.trail.at(p)` / `.cell(p)` / `.snap(p)`. One trail
+can feed any number of effects; `playground/trail.html` has a pass
+(displace, or pixellate one block per cell), a light Layer and an image
+Material on one field.
+
 ## Wake rules
 
 The compositor idles unless something asks for frames. `/fx` requests one
 on: a param write to an enabled pass, layer or material; `enabled` toggling;
 `continuous` changing; creation (enabled) and destruction; a layer's
 `markDirty()` or `count` change; a pointer event while any pass, layer or
-material is enabled; a material pipeline finishing its compile. It keeps
-the loop alive while any enabled pass, layer or material is
-`continuous`, or while anything is enabled and the pointer follower is
+material is enabled (or a trail is); a material pipeline finishing its
+compile; a trail's `stroke()` or `clear()`. It keeps the loop alive while
+an enabled trail still holds anything, while any enabled pass, layer or
+material is `continuous`, or while anything is enabled and the pointer follower is
 more than 0.1 px from the pointer (or velocity hasn't decayed below
 1 px/s). `continuous` defaults to true when a WGSL hook (a pass
 fragment, a layer's or material's vertex/fragment) reads `fx.time` or

@@ -15,6 +15,7 @@ import {
 import { POINTER_WGSL } from './pointer'
 import { readsTime } from './shader'
 import { type Target, targetRuns } from './target'
+import { type Trail, type TrailState, trailState, trailWgsl } from './trail'
 
 // Layers: instanced quads with no DOM counterpart, drawn at a place in the
 // scene's paint order (docs/EFFECTS.md "Layer"). The author owns a
@@ -159,6 +160,16 @@ fn glyph_coverage(k : u32, uv : vec2f) -> f32 {
 }
 `
 
+// With `trail`: the field and trail_page(p) (draw: group 1, bindings 10
+// and 11; simulate: group 0, bindings 4 and 5).
+const trailHelpers = (group: number, binding: number): string => `
+${trailWgsl(group, binding)}
+// The trail at p, page CSS px.
+fn trail_page(p : vec2f) -> vec4f {
+  return trail_at(p - fx.scroll);
+}
+`
+
 const HELPERS_WGSL = /* wgsl */ `
 // Float k of instance i.
 fn data(i : u32, k : u32) -> f32 {
@@ -276,6 +287,9 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
   /** Called every frame while enabled, before upload: update `data`
    * (call markDirty) or params. `time` is the page clock, s. */
   update?: (layer: Layer<S>, time: number, ctx: FrameContext) => void
+  /** Read this trail's field in the hooks and `simulate`: `trail_at(p)`
+   * (viewport CSS px), `trail_page(p)`, `trail_cell(p)`, `trail_snap(p)`. */
+  trail?: Trail
 }
 
 export interface Layer<S extends ParamSchema = ParamSchema> {
@@ -350,6 +364,7 @@ function layerSource(
     BINDINGS_WGSL,
     o.image ? IMAGE_WGSL : '',
     o.glyphs ? GLYPHS_WGSL : '',
+    o.trail ? trailHelpers(1, 10) : '',
     HELPERS_WGSL,
     hooks,
     ENTRY_WGSL
@@ -368,6 +383,7 @@ function simulateSource(
     POINTER_WGSL,
     `const FX_STRIDE : u32 = ${stride}u;`,
     SIM_BINDINGS_WGSL,
+    o.trail ? trailHelpers(0, 4) : '',
     HELPERS_WGSL,
     hooks,
     SIM_ENTRY_WGSL
@@ -481,6 +497,7 @@ export function createLayer<S extends ParamSchema>(
     x === undefined ? null : x instanceof Element ? x : x.el
   const imageEl = elOf(o.image)
   const glyphEl = elOf(o.glyphs)
+  const trail: TrailState | null = trailState(o.trail)
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({
     binding,
     visibility: VF,
@@ -502,7 +519,17 @@ export function createLayer<S extends ParamSchema>(
             { binding: 5, visibility: VF, sampler: {} }
           ]
         : []),
-      ...(glyphEl ? [6, 7, 8, 9].map(storage) : [])
+      ...(glyphEl ? [6, 7, 8, 9].map(storage) : []),
+      ...(trail
+        ? [
+            storage(10),
+            {
+              binding: 11,
+              visibility: VF,
+              buffer: { type: 'uniform' as const }
+            }
+          ]
+        : [])
     ]
   })
   const res = sideResources(device, label, imageEl !== null, glyphEl !== null)
@@ -571,7 +598,21 @@ export function createLayer<S extends ParamSchema>(
             visibility: GPUShaderStage.COMPUTE,
             buffer: { type: 'uniform' }
           })
-        )
+        ),
+        ...(trail
+          ? [
+              {
+                binding: 4,
+                visibility: GPUShaderStage.COMPUTE,
+                buffer: { type: 'read-only-storage' as const }
+              },
+              {
+                binding: 5,
+                visibility: GPUShaderStage.COMPUTE,
+                buffer: { type: 'uniform' as const }
+              }
+            ]
+          : [])
       ]
     })
     simPipeline = device.createComputePipeline({
@@ -608,18 +649,35 @@ export function createLayer<S extends ParamSchema>(
       markRange(0, Number.POSITIVE_INFINITY)
     }
     old?.destroy()
-    if (simLayout) {
+    simGroup = null
+    bindGroup = null
+  }
+  /** The simulate group, rebuilt when the data or trail buffer changes. */
+  let simBound = -1
+  const currentSimGroup = (): GPUBindGroup | null => {
+    if (!simLayout || !dataBuf) {
+      return null
+    }
+    const t = trail?.binding()
+    if (!simGroup || (t && t.version !== simBound)) {
+      simBound = t?.version ?? -1
       simGroup = device.createBindGroup({
         layout: simLayout,
         entries: [
           { binding: 0, resource: { buffer: dataBuf } },
           { binding: 1, resource: { buffer: fxBuf } },
           { binding: 2, resource: { buffer: paramsBuf } },
-          { binding: 3, resource: { buffer: deps.pointerBuf } }
+          { binding: 3, resource: { buffer: deps.pointerBuf } },
+          ...(t
+            ? [
+                { binding: 4, resource: { buffer: t.field } },
+                { binding: 5, resource: { buffer: t.info } }
+              ]
+            : [])
         ]
       })
     }
-    bindGroup = null
+    return simGroup
   }
   // The bind group's inputs; rebuilt when one changes (draw time: an
   // image atlas grow or a text buffer grow replaces them).
@@ -665,6 +723,14 @@ export function createLayer<S extends ParamSchema>(
         { binding: 9, resource: { buffer: idx.buffer } }
       )
       key.push(g.glyphs, g.bands, g.curves, idx.buffer)
+    }
+    if (trail) {
+      const t = trail.binding()
+      entries.push(
+        { binding: 10, resource: { buffer: t.field } },
+        { binding: 11, resource: { buffer: t.info } }
+      )
+      key.push(t.field)
     }
     if (imageEl || glyphEl) {
       device.queue.writeBuffer(fxBuf, 48, side)
@@ -824,11 +890,12 @@ export function createLayer<S extends ParamSchema>(
       f[9] = steps
       lastTime = time
       device.queue.writeBuffer(fxBuf, 0, f)
-      if (simPipeline && simGroup && drawn > 0) {
+      const sg = currentSimGroup()
+      if (simPipeline && sg && drawn > 0) {
         const enc = device.createCommandEncoder({ label: `${label}:simulate` })
         const cp = enc.beginComputePass({ label: `${label}:simulate` })
         cp.setPipeline(simPipeline)
-        cp.setBindGroup(0, simGroup)
+        cp.setBindGroup(0, sg)
         const groups = Math.ceil(drawn / 64)
         cp.dispatchWorkgroups(
           Math.min(groups, 65535),

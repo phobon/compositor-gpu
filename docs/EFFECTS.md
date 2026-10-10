@@ -522,3 +522,26 @@ original spec.
   can't flash its finished state. Known gap: fallback-atlas glyphs (emoji)
   in the target are held too.
 
+## Deviations (trails)
+
+Built 2026-10-10 for phobon.io; not in the original spec.
+
+- **`fx.trail()`.** A viewport-space field of the pointer's recent motion
+  (one `vec4f` per `cell` CSS px: direction × amount, amount, presence)
+  in a storage buffer, faded and deposited by a compute pass in the
+  runtime's `beforeFrame`, before any layer, material or pass reads it.
+  Deposits run along the segment the pointer moved this frame. Ported
+  from fragments.supply's `useGridTrailTexture`, which does the same on
+  the CPU into an N×N DataTexture re-uploaded every frame (square cells
+  stretched to the canvas, a 1/distance falloff at the current point
+  only); here cells are square in CSS px and the falloff is smooth.
+- **A shared resource binding.** Passes (group 2, bindings 3 and 4),
+  materials (group 2, 3 and 4) and layers (group 1, 10 and 11; simulate
+  group 0, 4 and 5) take `trail` and read it through `trail_at` and
+  friends. Bind groups are rebuilt when the field's buffer is replaced
+  (it grows by doubling on a viewport resize). This is the first input
+  shared between effects other than the pointer uniform; a general
+  "shared texture/buffer" binding was not built.
+- Not built: a page-space mode (a field that scrolls with the
+  document), and click impulses (use `stroke()`).
+

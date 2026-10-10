@@ -47,6 +47,14 @@ import {
 } from './shader'
 import { createTarget, type Target } from './target'
 import {
+  createTrail,
+  inertTrail,
+  type Trail,
+  type TrailOptions,
+  type TrailState,
+  trailState
+} from './trail'
+import {
   createTransform,
   type Transform,
   type TransformOptions
@@ -75,6 +83,9 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Sample this element's image record in the fragment: `image(uv)`,
    * `image_level(uv, lod)` (premultiplied), `image_size()`. */
   image?: Target | Element
+  /** Read this trail's field in the fragment: `trail(uv)`,
+   * `trail_at(p)`, `trail_cell(p)`, `trail_snap(p)` (see Trail). */
+  trail?: Trail
 }
 
 export interface Pass<S extends ParamSchema = ParamSchema> {
@@ -124,6 +135,10 @@ export interface Effects {
   /** An element's layer transform from `from` to `to` as `progress` goes
    * 0 -> 1 (see MotionOptions). Nothing renders without WebGPU. */
   motion(el: Target | Element, opts?: MotionOptions): Motion
+  /** A field of the pointer's recent motion, faded and deposited on the
+   * GPU each frame, for passes, materials and layers to read (see
+   * TrailOptions). */
+  trail(opts?: TrailOptions): Trail
   /** Give up this caller's use of the runtime (createEffects returns the
    * same runtime per compositor, counting callers): the last release
    * destroys it. Destroy your own passes, motions etc. first. */
@@ -142,7 +157,8 @@ interface Stage {
   /** Region passes' last stage: blended over the parent target. */
   over: GPURenderPipeline | null
   effect: GPUBuffer
-  bindGroup: GPUBindGroup
+  /** Group 2 (rebuilt when a trail's field is replaced). */
+  group(): GPUBindGroup
   /** Binds group 3 (the pass's `image`), when it has one. */
   bindImage: ((rp: GPURenderPassEncoder) => void) | null
 }
@@ -262,6 +278,7 @@ function inertEffects(): Effects {
     target: (el) => targetOf(el, cache, null),
     transform: (el, opts) => createTransform(inertComposer, false, el, opts),
     motion: (el, opts) => createMotion(inertComposer, false, el, opts),
+    trail: (opts) => inertTrail(opts),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
@@ -350,12 +367,16 @@ function buildEffects(compositor: Compositor): Effects {
   const materials: MaterialState[] = []
   const transforms: Transform[] = []
   const motions: Motion[] = []
+  const trails: TrailState[] = []
+  /** Destroyed trails, kept until teardown (consumers bind them). */
+  const retired: TrailState[] = []
   const composer = createComposer(graph)
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
 
   const anyEnabled = (): boolean =>
+    trails.some((t) => t.enabled) ||
     passes.some((p) => p.enabled) ||
     layers.some((l) => l.enabled) ||
     materials.some((m) => m.enabled)
@@ -388,6 +409,20 @@ function buildEffects(compositor: Compositor): Effects {
   const effectLayout = device.createBindGroupLayout({
     entries: [uniform(0), uniform(1), uniform(2)]
   })
+  // With `trail`: its field and info after the usual three.
+  const effectTrailLayout = device.createBindGroupLayout({
+    entries: [
+      uniform(0),
+      uniform(1),
+      uniform(2),
+      {
+        binding: 3,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'read-only-storage' }
+      },
+      uniform(4)
+    ]
+  })
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectLayout]
   })
@@ -400,6 +435,12 @@ function buildEffects(compositor: Compositor): Effects {
   })
   const imagePipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectLayout, imageLayout]
+  })
+  const trailPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [frameLayout, srcLayout, effectTrailLayout]
+  })
+  const trailImagePipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [frameLayout, srcLayout, effectTrailLayout, imageLayout]
   })
   const imageSampler = device.createSampler({
     magFilter: 'linear',
@@ -672,7 +713,7 @@ function buildEffects(compositor: Compositor): Effects {
   ): void => {
     rp.setPipeline(stage.pipeline)
     rp.setBindGroup(1, srcGroup(src))
-    rp.setBindGroup(2, stage.bindGroup)
+    rp.setBindGroup(2, stage.group())
     stage.bindImage?.(rp)
     rp.draw(3)
   }
@@ -686,6 +727,10 @@ function buildEffects(compositor: Compositor): Effects {
         ? applyOverride(tracker.state, o, ctx.scrollX, ctx.scrollY)
         : tracker.state
       ctx.pointer = pointerNow
+      // Before anything that reads a field this frame.
+      for (const t of trails) {
+        t.frame(ctx, pointerNow)
+      }
       let chainLive = false
       let any = false
       for (const p of passes) {
@@ -698,7 +743,10 @@ function buildEffects(compositor: Compositor): Effects {
           freePing(p)
         }
       }
-      any ||= layers.some((l) => l.enabled) || materials.some((m) => m.enabled)
+      any ||=
+        trails.some((t) => t.enabled) ||
+        layers.some((l) => l.enabled) ||
+        materials.some((m) => m.enabled)
       // Before the layers' frames: a simulate dispatch is submitted there
       // and must see this frame's pointer.
       if (any) {
@@ -716,6 +764,9 @@ function buildEffects(compositor: Compositor): Effects {
       }
     },
     keepAlive() {
+      if (trails.some((t) => t.live())) {
+        return true
+      }
       let any = false
       for (const e of [...passes, ...layers, ...materials]) {
         if (e.enabled) {
@@ -737,15 +788,23 @@ function buildEffects(compositor: Compositor): Effects {
     paramsBuf: GPUBuffer,
     index: number,
     over: boolean,
-    bindImage: ((rp: GPURenderPassEncoder) => void) | null
+    bindImage: ((rp: GPURenderPassEncoder) => void) | null,
+    trail: TrailState | null
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
     const code = stageSource(
       effectSource(fragment, name),
       block.wgsl,
-      bindImage !== null
+      bindImage !== null,
+      trail !== null
     )
-    const layout = bindImage ? imagePipelineLayout : pipelineLayout
+    const layout = trail
+      ? bindImage
+        ? trailImagePipelineLayout
+        : trailPipelineLayout
+      : bindImage
+        ? imagePipelineLayout
+        : pipelineLayout
     const module = device.createShaderModule({ label, code })
     reportShaderErrors(module, label)
     const pipeline = device.createRenderPipeline({
@@ -778,15 +837,32 @@ function buildEffects(compositor: Compositor): Effects {
       size: EFFECT_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     })
-    const bindGroup = device.createBindGroup({
-      layout: effectLayout,
-      entries: [
-        { binding: 0, resource: { buffer: effect } },
-        { binding: 1, resource: { buffer: paramsBuf } },
-        { binding: 2, resource: { buffer: pointerBuf } }
-      ]
-    })
-    return { pipeline, over: overPipeline, effect, bindGroup, bindImage }
+    const entries: GPUBindGroupEntry[] = [
+      { binding: 0, resource: { buffer: effect } },
+      { binding: 1, resource: { buffer: paramsBuf } },
+      { binding: 2, resource: { buffer: pointerBuf } }
+    ]
+    let bindGroup: GPUBindGroup | null = null
+    let bound = -1
+    const group = (): GPUBindGroup => {
+      const t = trail?.binding()
+      if (!bindGroup || (t && t.version !== bound)) {
+        bound = t?.version ?? -1
+        bindGroup = device.createBindGroup({
+          label,
+          layout: t ? effectTrailLayout : effectLayout,
+          entries: t
+            ? [
+                ...entries,
+                { binding: 3, resource: { buffer: t.field } },
+                { binding: 4, resource: { buffer: t.info } }
+              ]
+            : entries
+        })
+      }
+      return bindGroup
+    }
+    return { pipeline, over: overPipeline, effect, group, bindImage }
   }
 
   const freePing = (s: PassState): void => {
@@ -966,7 +1042,7 @@ function buildEffects(compositor: Compositor): Effects {
         rp.setScissorRect(0, 0, f.width, f.height)
         rp.setPipeline(stage.pipeline)
         rp.setBindGroup(1, regionSrcGroup(src.view))
-        rp.setBindGroup(2, stage.bindGroup)
+        rp.setBindGroup(2, stage.group())
         stage.bindImage?.(rp)
         rp.draw(3)
         rp.end()
@@ -982,7 +1058,7 @@ function buildEffects(compositor: Compositor): Effects {
       writeRegion(p, stage, f, src, { x: 0, y: 0 }, f.alpha)
       rp.setPipeline(stage.over)
       rp.setBindGroup(1, regionSrcGroup(src.view))
-      rp.setBindGroup(2, stage.bindGroup)
+      rp.setBindGroup(2, stage.group())
       stage.bindImage?.(rp)
       rp.draw(3)
     }
@@ -1055,6 +1131,7 @@ function buildEffects(compositor: Compositor): Effects {
           )
         }
         const bind = state.image?.bind ?? null
+        const trail = trailState(opts.trail)
         state.stages = frags.map((f, i) =>
           buildStage(
             opts.name,
@@ -1063,7 +1140,8 @@ function buildEffects(compositor: Compositor): Effects {
             paramsBuf,
             i,
             handler !== null && i === frags.length - 1,
-            bind
+            bind,
+            trail
           )
         )
         passes.push(state)
@@ -1132,6 +1210,21 @@ function buildEffects(compositor: Compositor): Effects {
       motions.push(m)
       return m
     },
+    trail(opts = {}) {
+      if (destroyed) {
+        return inertTrail(opts)
+      }
+      const t = createTrail(opts, { device, wake: layerDeps.wake }, (st) => {
+        // Consumers may still bind its (zeroed) field: freed at teardown.
+        retired.push(st)
+        const i = trails.indexOf(st)
+        if (i !== -1) {
+          trails.splice(i, 1)
+        }
+      })
+      trails.push(t)
+      return t.handle
+    },
     release() {
       if (lastUser(compositor, fx)) {
         fx.destroy()
@@ -1175,6 +1268,13 @@ function buildEffects(compositor: Compositor): Effects {
         m.handle.destroy()
       }
       materials.length = 0
+      for (const t of [...trails]) {
+        t.handle.destroy()
+      }
+      for (const t of retired) {
+        t.free()
+      }
+      retired.length = 0
       releaseTargets()
       pointerBuf.destroy()
       noImage?.destroy()
