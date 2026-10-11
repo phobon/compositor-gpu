@@ -94,6 +94,16 @@ export interface CompositorOptions {
    * when the viewport leaves it; a larger margin means fewer re-anchors
    * and a larger canvas. */
   canvasMargin?: number
+  /** 'page' (default): the canvas is part of the document and the browser
+   * scrolls it with the page on its compositor thread, so content never
+   * lags the scroll; anything drawn fixed to the viewport (a viewport-space
+   * post pass, a hole for fixed chrome) trails it by a frame during fast
+   * scrolls. 'viewport': the canvas is `position: fixed` and redrawn at
+   * the new scroll position each frame, so viewport-anchored effects stay
+   * locked and the whole page trails the scroll by up to a frame instead
+   * (evenly in replace mode, where nothing else paints). `canvasMargin`
+   * is ignored. */
+  canvasPin?: 'page' | 'viewport'
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */

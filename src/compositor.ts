@@ -72,8 +72,11 @@ export async function createCompositor(
   // lockstep with the page (no frame of lag). It
   // covers the viewport plus `canvasMargin` above and below, and frame()
   // moves it (the anchor) when the viewport scrolls out of it.
+  // `canvasPin: 'viewport'`: fixed to the viewport instead, at the viewport's
+  // size, its origin moved to the scroll position every frame (see place()).
+  const pinned = options.canvasPin === 'viewport'
   Object.assign(canvas.style, {
-    position: 'absolute',
+    position: pinned ? 'fixed' : 'absolute',
     left: '0',
     top: '0',
     pointerEvents: 'none',
@@ -205,6 +208,23 @@ export async function createCompositor(
     vh: number,
     force: boolean
   ): void => {
+    if (pinned) {
+      // The canvas is the viewport: its document origin is the scroll.
+      if (scrollX !== anchorX || scrollY !== anchorY) {
+        anchorX = scrollX
+        anchorY = scrollY
+        reanchors++
+      }
+      if (vw !== canvasW || vh !== canvasH) {
+        canvasW = vw
+        canvasH = vh
+        canvas.style.width = `${vw}px`
+        canvas.style.height = `${vh}px`
+        canvas.width = Math.min(Math.floor(vw * dpr), maxDim)
+        canvas.height = Math.min(Math.floor(vh * dpr), maxDim)
+      }
+      return
+    }
     if (
       !force &&
       scrollX >= anchorX &&

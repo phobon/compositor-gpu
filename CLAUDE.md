@@ -201,6 +201,12 @@ margin) or on resize, `frame()` moves it to `anchorY = clamp(scrollY - margin,
 `scrollX/Y`/`width/height` stay the real viewport. The Frame uniform's
 `viewport`/`scroll` are the canvas size and anchor.
 
+`canvasPin: 'viewport'` swaps this for a `position: fixed`, viewport-sized
+canvas whose anchor is the scroll position every frame (`place()`), for
+pages with effects fixed to the viewport (a viewport-space post pass
+would otherwise ride a frame with the page during fast scrolls); the
+whole page then trails the scroll by up to a frame instead.
+
 The one exception is `position: fixed` on the viewport: the reader walks
 that subtree with `setReadSpace('viewport')` (no scroll offset in
 `toDocRect`) and tags its records `space: 'viewport'`; every vertex shader
