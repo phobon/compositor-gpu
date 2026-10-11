@@ -249,7 +249,10 @@ perspective transforms · culling · WebGL2 backend.
       DOM capture is grayscale-AA like macOS; every text section moved.
 - [x] `data-gpu-ignore` is honoured by `mode: 'replace'`: paint is hidden on
       the outermost elements that contain no ignored subtree, so excluded
-      site chrome (nav, footer) keeps painting itself. `stats().frameMs` /
+      site chrome (nav, footer) keeps painting itself. The split follows the
+      DOM while hidden: elements added later are hidden, and ignored elements
+      added or marked after the handoff get their ancestors split (a
+      MutationObserver on childList + `data-gpu-ignore`). `stats().frameMs` /
       `maxDtMs` (worst inter-frame gap in the last second) for hitch hunting.
 - [x] Overlay mode lags the compositor-thread scroll by one frame (the GPU
       layer is repositioned from the `scroll` event, the DOM underneath by

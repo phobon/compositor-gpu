@@ -68,8 +68,9 @@ export interface Trail {
   /** Something is left in the field (it still fades). */
   readonly active: boolean
   /** Deposit a stroke from `a` to `b` (viewport CSS px) on the next
-   * frame, as if the pointer had moved there at `speed` CSS px/s
-   * (default `params.speed`, a full-strength stroke). */
+   * frame, as if the pointer had moved there at `speed` CSS px/s for one
+   * 60 Hz frame, whatever the frame rate (default `params.speed`, a
+   * full-strength stroke). */
   stroke(
     a: { x: number; y: number },
     b: { x: number; y: number },
@@ -297,7 +298,14 @@ export function createTrail(
   /** The field was zeroed since it last held anything. */
   let empty = true
   let prev: { x: number; y: number } | null = null
-  let pending: { a: [number, number]; b: [number, number]; s: number }[] = []
+  // `t`: the frame length the deposit is scaled to (stroke() uses a fixed
+  // 1/60 s so a scripted stroke deposits the same at any frame rate).
+  let pending: {
+    a: [number, number]
+    b: [number, number]
+    s: number
+    t: number
+  }[] = []
   let destroyed = false
 
   const writeInfo = (): void => {
@@ -418,7 +426,12 @@ export function createTrail(
       if (destroyed) {
         return
       }
-      pending.push({ a: [a.x, a.y], b: [b.x, b.y], s: speed ?? p.speed })
+      pending.push({
+        a: [a.x, a.y],
+        b: [b.x, b.y],
+        s: speed ?? p.speed,
+        t: 1 / 60
+      })
       deps.wake()
     },
     clear() {
@@ -461,7 +474,7 @@ export function createTrail(
         const from: [number, number] = prev ? [prev.x, prev.y] : cur
         const moved = Math.hypot(cur[0] - from[0], cur[1] - from[1]) > 0.01
         if (moved || speed > 1) {
-          strokes.push({ a: from, b: cur, s: speed })
+          strokes.push({ a: from, b: cur, s: speed, t: dt })
         }
       }
       prev = ptr.seen ? { x: cur[0], y: cur[1] } : null
@@ -478,7 +491,7 @@ export function createTrail(
       }
       // The first stroke carries the frame's fade; any others only add.
       strokes.forEach((s, i) => {
-        const amount = amountAt(s.s, dt > 0 ? dt : 1 / 60)
+        const amount = amountAt(s.s, s.t)
         energy += amount
         dispatch(i === 0 ? keep : 1, s.a, s.b, amount)
       })

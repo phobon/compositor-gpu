@@ -5,7 +5,8 @@ import {
   DomSync,
   describeEl,
   HIDDEN_ATTR,
-  IGNORE_ATTR
+  IGNORE_ATTR,
+  isIgnored
 } from './dom/observer'
 import { textReadStats } from './dom/textRuns'
 import type { ElNode } from './dom/tree'
@@ -770,7 +771,8 @@ export async function createCompositor(
   // ignored element instead of on the root. An ancestor of an ignored
   // element therefore keeps painting its own background/borders (its text
   // and other children are still hidden) — keep ignored elements under
-  // paint-free wrappers.
+  // paint-free wrappers. The split follows the DOM while hidden (see
+  // reconcileHidden).
   let sourceHidden = false
   // Replace mode's handoff: the page keeps its own paint (the canvas draws
   // the same thing over it) until the mirror is complete — fonts resolved,
@@ -827,39 +829,120 @@ export async function createCompositor(
     el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
     el.style.opacity = '0'
   }
-  const hideUnder = (el: Element): void => {
-    for (const child of Array.from(el.children)) {
-      if (!(child instanceof HTMLElement) || child.hasAttribute(IGNORE_ATTR)) {
-        continue
+  const unhide = (el: HTMLElement): void => {
+    const saved = hiddenEls.get(el)
+    if (saved === undefined) {
+      return
+    }
+    hiddenEls.delete(el)
+    if (fxWanted.has(el)) {
+      fxHidden.set(el, saved)
+      return
+    }
+    el.style.opacity = saved
+    el.removeAttribute(HIDDEN_ATTR)
+  }
+  /** The elements replace mode hides: the root, or (when it holds ignored
+   * elements) the outermost descendants that hold none. */
+  const hideTargets = (): Set<HTMLElement> => {
+    const out = new Set<HTMLElement>()
+    const walk = (el: Element): void => {
+      for (const child of Array.from(el.children)) {
+        if (
+          !(child instanceof HTMLElement) ||
+          child.hasAttribute(IGNORE_ATTR)
+        ) {
+          continue
+        }
+        if (child.querySelector(`[${IGNORE_ATTR}]`)) {
+          walk(child)
+        } else {
+          out.add(child)
+        }
       }
-      if (child.querySelector(`[${IGNORE_ATTR}]`)) {
-        hideUnder(child)
-      } else {
-        hide(child)
+    }
+    if (root.querySelector(`[${IGNORE_ATTR}]`)) {
+      walk(root)
+    } else {
+      out.add(root as HTMLElement)
+    }
+    return out
+  }
+  /** Bring the hidden set in line with the DOM: elements added beside the
+   * hidden ones are hidden, and ignored elements added (or marked) after
+   * the handoff get their ancestors split so they paint. */
+  const reconcileHidden = (): void => {
+    const want = hideTargets()
+    for (const el of [...hiddenEls.keys()]) {
+      if (!want.has(el)) {
+        unhide(el)
+      }
+    }
+    for (const el of want) {
+      if (!hiddenEls.has(el)) {
+        hide(el)
       }
     }
   }
+  const insideHidden = (n: Node): boolean => {
+    for (
+      let a = n instanceof Element ? n : n.parentElement;
+      a;
+      a = a.parentElement
+    ) {
+      if (hiddenEls.has(a as HTMLElement)) {
+        return true
+      }
+    }
+    return false
+  }
+  const holdsIgnored = (nodes: NodeList): boolean => {
+    for (const n of nodes) {
+      if (
+        n instanceof Element &&
+        (n.hasAttribute(IGNORE_ATTR) || n.querySelector(`[${IGNORE_ATTR}]`))
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+  // Runs as a microtask after the mutation, so the change and the new
+  // hiding land in the same paint.
+  const hiddenMo = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type !== 'attributes' && isIgnored(r.target)) {
+        continue
+      }
+      if (
+        r.type === 'attributes' ||
+        !insideHidden(r.target) ||
+        holdsIgnored(r.addedNodes) ||
+        holdsIgnored(r.removedNodes)
+      ) {
+        reconcileHidden()
+        return
+      }
+    }
+  })
   const setSourceHidden = (hidden: boolean): void => {
     if (hidden === sourceHidden || !(root instanceof HTMLElement)) {
       return
     }
     sourceHidden = hidden
     if (hidden) {
-      if (root.querySelector(`[${IGNORE_ATTR}]`)) {
-        hideUnder(root)
-      } else {
-        hide(root)
-      }
+      reconcileHidden()
+      hiddenMo.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: [IGNORE_ATTR]
+      })
     } else {
-      for (const [el, saved] of hiddenEls) {
-        if (fxWanted.has(el)) {
-          fxHidden.set(el, saved)
-          continue
-        }
-        el.style.opacity = saved
-        el.removeAttribute(HIDDEN_ATTR)
+      hiddenMo.disconnect()
+      for (const el of [...hiddenEls.keys()]) {
+        unhide(el)
       }
-      hiddenEls.clear()
     }
   }
 

@@ -1,4 +1,6 @@
 /// <reference path="../../playground/fx.d.ts" />
+/// <reference path="../../playground/perf.d.ts" />
+/// <reference path="../../playground/trail.d.ts" />
 // Effects harness: loads playground/fx.html?vr (time and pointer pinned via
 // fx.__override), captures each `section[data-vr]` GPU-only with its
 // effect state, and diffs against local goldens (regression gate 0.5%;
@@ -57,6 +59,12 @@
 //                 at rest); must equal fx-motion-ref, the same states as
 //                 single transforms, exactly
 //   fx-motion-then-off  motions off: equal to fx-transform-off exactly
+//   fx-trail-off  playground/trail.html, no stroke (replace mode)
+//   fx-trail      a scripted stroke, held: displace pass, light layer and
+//                 image material
+//   fx-trail-pixel  the same stroke through the pixellate pass
+//   fx-trail-clear  stroke, then trail.clear(): equal to fx-trail-off
+//                 exactly
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -639,6 +647,94 @@ async function main(): Promise<void> {
     }
     await pinPlain()
     await setEffect(page, 'none')
+
+    // Trails: playground/trail.html in replace mode (the source is hidden
+    // once ready, so the page shows the GPU output; the clip stops short of
+    // the data-gpu-ignore panel). `stroke` deposits a scripted stroke and
+    // `hold` keeps it (decay 1).
+    const trailShot = async (
+      shot: string,
+      query: string,
+      act?: (p: Page) => Promise<void>
+    ): Promise<PNG | null> => {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1,
+        reducedMotion: 'reduce'
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`${shot}: ${m.text()}`)
+        }
+      })
+      try {
+        await p.goto(`${url}trail.html?${query}`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__trail), null, {
+          timeout: 30_000
+        })
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await p.evaluate(() => window.__gpu?.ready)
+        await frames(10)
+        if (act) {
+          await act(p)
+          await frames(10)
+        }
+        const panel = await p.evaluate(
+          () => document.getElementById('panel')?.getBoundingClientRect().left
+        )
+        const clip = {
+          x: 0,
+          y: 0,
+          width: Math.floor(panel ?? VW) - 8,
+          height: VH
+        }
+        const path = resolve(outDir, `${shot}-gpu.png`)
+        await p.screenshot({ path, clip })
+        const png = PNG.sync.read(readFileSync(path))
+        results.push(judge(shot, png))
+        return png
+      } finally {
+        await p.close()
+      }
+    }
+    const trailInv = ['fx-trail-clear']
+    let trailOff: PNG | null = null
+    if (want('fx-trail-off') || trailInv.some(want)) {
+      trailOff = await trailShot('fx-trail-off', 'vr')
+    }
+    if (want('fx-trail')) {
+      await trailShot('fx-trail', 'vr&stroke&hold')
+    }
+    if (want('fx-trail-pixel')) {
+      await trailShot('fx-trail-pixel', 'vr&stroke&hold&pixel')
+    }
+    if (want('fx-trail-clear')) {
+      const post = await trailShot(
+        'fx-trail-clear',
+        'vr&stroke&hold',
+        async (p) => {
+          await p.evaluate(() => window.__trail?.clear())
+        }
+      )
+      if (trailOff && post) {
+        const n = exactDiff(trailOff, post)
+        results.push({
+          name: 'fx-trail-clear (= off)',
+          regressionPct: diffPng(
+            trailOff,
+            post,
+            resolve(outDir, 'fx-trail-clear-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
     if (errors.length > 0) {
       console.log(`\n[fx] console errors:\n  ${errors.join('\n  ')}`)
     }

@@ -94,7 +94,10 @@ pass on an arc of images), and on the transform section
 transforms, one past the row's clip), `fx-transform-identity` and
 `fx-transform-then-off` (both must equal `fx-transform-off` exactly),
 `fx-dissolve` (the row half dissolved) and `fx-dissolve-full` (progress
-1: must equal `fx-transform-off` exactly). Material pipelines compile asynchronously:
+1: must equal `fx-transform-off` exactly), and on `playground/trail.html`
+(replace mode, a scripted stroke held at decay 1) `fx-trail-off`,
+`fx-trail`, `fx-trail-pixel` and `fx-trail-clear` (must equal
+`fx-trail-off` exactly). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -392,7 +395,10 @@ Conventions each pass must follow:
   itself re-read its parent, so class/style toggles move the hole. Not
   covered: its CSS transitions/animations and size changes driven by its
   own content (a fixed element doesn't resize the root), until the next
-  read of its parent. Replace mode leaves ignored elements painting. An
+  read of its parent. Replace mode leaves ignored elements painting,
+  including ones added or marked after the handoff (`reconcileHidden` in
+  `compositor.ts` re-splits the hidden set on childList and
+  `data-gpu-ignore` changes). An
   ignored element whose outermost stacking context has a z-index above
   the canvas's (`CompositorOptions.zIndex`, `SceneReader.canvasZ`) gets no
   hole: the page paints it over the canvas anyway, and a hole for a fixed

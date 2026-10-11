@@ -646,7 +646,8 @@ The field follows the viewport (scrolling doesn't move it) and is
 cleared when the viewport's cell count changes. While it holds nothing
 no compute pass runs; while it fades the frame loop is kept alive.
 `stroke(a, b, speed)` deposits a segment (viewport CSS px) on the next
-frame, for scripted or touch trails; `clear()` empties it. `params` are
+frame, for scripted or touch trails; its amount is one 60 Hz frame's
+worth at `speed`, independent of the frame rate. `clear()` empties it. `params` are
 live (`radius`, `decay`, `strength`, `speed`, `gamma`). After `destroy()`
 consumers read zeros. Inert runtime: a working handle, nothing renders.
 
