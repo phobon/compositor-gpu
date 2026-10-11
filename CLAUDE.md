@@ -241,6 +241,14 @@ the mutated element's border-box rect changed (siblings could move); inline and
 anything downstream of the reader** — per-glyph rects are already a
 forced-reflow hazard.
 
+**Replace-mode handoff:** `start()` doesn't hide the source. The canvas
+draws over the page's own paint until the mirror is complete (fonts
+resolved, `ImagePass.pending` 0, no material pipeline compiling) or
+`handoffTimeout` (1500 ms) passes; then `frame()` hides the source right
+after `render()`, so both land in one paint, discards its own mutation
+records (`DomSync.discardPending`) and resolves `compositor.ready`. A
+`setSourceHidden()` call meanwhile cancels the automatic hide.
+
 Backgrounds (gradients and images) are read in `dom/gradient.ts` and
 `dom/backgrounds.ts`; they resolve colours and image URLs from the computed
 style and paint as part of the box pass. Every `background-image` layer

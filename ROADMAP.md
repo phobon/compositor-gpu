@@ -410,6 +410,10 @@ perspective transforms · culling · WebGL2 backend.
       `list-style-image`, multi-line pseudo text (pseudo `transform` /
       `translate` / `rotate` / `scale`: done 2026-10-10, `boxAffine` in
       `dom/transform.ts`; a pseudo scaled to nothing paints nothing)
+- [x] Replace-mode handoff (2026-10-11): the source stays painted until
+      the mirror is complete (fonts, image uploads, pipelines; capped by
+      `handoffTimeout`), then is hidden in the same task as a render;
+      `compositor.ready`. Fixes the flash of a half-built mirror on load
 - [x] Font discovery reads `@font-face` inside `@layer`, `@import`ed
       sheets and matching `@media` / `@supports` (2026-10-10; phobon.io's
       faces live in an `@layer`)

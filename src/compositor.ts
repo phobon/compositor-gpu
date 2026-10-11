@@ -116,6 +116,8 @@ export async function createCompositor(
     renderer.addPass(imagePass)
   }
   let text: SlugText | null = null
+  /** No font bytes still being fetched for the text pass. */
+  let fontsReady = true
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)
     renderer.addPass(text)
@@ -379,6 +381,26 @@ export async function createCompositor(
       frameTimes.shift()
     }
     renderer.render(scene, ctx, dpr)
+    if (handoffAt !== null) {
+      const complete =
+        fontsReady &&
+        (imagePass?.pending ?? 0) === 0 &&
+        materialPipelinesPending() === 0
+      if (complete || performance.now() >= handoffAt) {
+        handoffAt = null
+        if (handoffHide) {
+          handoffHide = false
+          setSourceHidden(true)
+          // Our own opacity/attribute writes, in the same task as this
+          // frame's read: nothing to re-read (the reader uses HIDDEN_ATTR).
+          sync.discardPending()
+        }
+        resolveReady()
+      } else {
+        // Wake again to check (uploads and compiles also request frames).
+        scheduler.request()
+      }
+    }
     frameMs = performance.now() - t0
     const wasContinued = continued
     continued =
@@ -706,10 +728,16 @@ export async function createCompositor(
     const fonts = options.fonts ?? 'auto'
     const faces = fonts === 'auto' ? Array.from(document.fonts) : fonts
     if (faces.length > 0) {
-      void text.prepare(faces).then(() => {
-        pendingReadFlags |= Dirty.STYLE
-        scheduler.request()
-      })
+      fontsReady = false
+      void text
+        .prepare(faces)
+        .then(() => {
+          pendingReadFlags |= Dirty.STYLE
+        })
+        .finally(() => {
+          fontsReady = true
+          scheduler.request()
+        })
     }
   }
   const onResize = (): void => {
@@ -744,6 +772,20 @@ export async function createCompositor(
   // and other children are still hidden) — keep ignored elements under
   // paint-free wrappers.
   let sourceHidden = false
+  // Replace mode's handoff: the page keeps its own paint (the canvas draws
+  // the same thing over it) until the mirror is complete — fonts resolved,
+  // visible images uploaded, material pipelines compiled — then hides it in
+  // the same task as a render, so the two swap in one paint. Hiding it at
+  // start() showed a frame of half-built mirror (no images, fallback text).
+  // `handoffTimeout` caps the wait.
+  let handoffAt: number | null = null
+  /** The handoff hides the source (replace mode, unless setSourceHidden
+   * was called meanwhile). */
+  let handoffHide = false
+  let resolveReady: () => void = () => {}
+  const ready = new Promise<void>((r) => {
+    resolveReady = r
+  })
   const hiddenEls = new Map<HTMLElement, string>()
   // graph.hideSource (displacing materials): the elements materials want
   // hidden, and those this code hid (with the inline opacity to restore).
@@ -828,6 +870,8 @@ export async function createCompositor(
     sync.stop()
     window.removeEventListener('resize', onResize)
     window.removeEventListener('scroll', onScroll)
+    handoffAt = null
+    handoffHide = false
     setSourceHidden(false)
     stopped = true
     for (const el of [...fxHidden.keys()]) {
@@ -895,12 +939,16 @@ export async function createCompositor(
       }
       window.addEventListener('resize', onResize)
       window.addEventListener('scroll', onScroll, { passive: true })
-      if (mode === 'replace' && hideSource) {
-        setSourceHidden(true)
-      }
+      handoffAt = performance.now() + (options.handoffTimeout ?? 1500)
+      handoffHide = mode === 'replace' && hideSource
+      scheduler.request()
     },
     stop,
-    setSourceHidden,
+    ready,
+    setSourceHidden(hidden) {
+      handoffHide = false
+      setSourceHidden(hidden)
+    },
     invalidate() {
       if (destroyed || lost) {
         return
@@ -993,6 +1041,7 @@ function inert(): Compositor & { text: null; scene: null } {
     }),
     start() {},
     stop() {},
+    ready: Promise.resolve(),
     invalidate() {},
     setSourceHidden() {},
     destroy() {}

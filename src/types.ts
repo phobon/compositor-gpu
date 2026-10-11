@@ -94,6 +94,10 @@ export interface CompositorOptions {
    * when the viewport leaves it; a larger margin means fewer re-anchors
    * and a larger canvas. */
   canvasMargin?: number
+  /** ms to wait after start() for the mirror to be complete (see
+   * `Compositor.ready`) before replace mode hides the page's paint anyway.
+   * Default 1500. */
+  handoffTimeout?: number
   /** z-index of the canvas (default: 2147483646, above everything). Site
    * chrome that is `position: fixed` and `data-gpu-ignore`d is better put
    * ABOVE the canvas than shown through a hole: the canvas scrolls with
@@ -194,4 +198,9 @@ export interface Compositor {
   /** Frame profiler: recordings (percentiles, dropped frames, hitch
    * causes), GPU pass timings and a live HUD. No-ops when inert. */
   readonly profile: Profile
+  /** Resolves once the mirror is complete after the first start(): fonts
+   * resolved, visible images uploaded, material pipelines compiled (or
+   * `handoffTimeout` passed). In replace mode that is when the page's own
+   * paint is hidden. Resolved at once when inert. */
+  readonly ready: Promise<void>
 }

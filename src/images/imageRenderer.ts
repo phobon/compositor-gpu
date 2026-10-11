@@ -329,6 +329,11 @@ export class ImagePass implements RenderPass {
 
   /** Source keys with a `createImageBitmap()` in flight — fetched once. */
   private pendingBitmaps = new Set<string>()
+
+  /** Image decodes/uploads in flight (the compositor's handoff waits). */
+  get pending(): number {
+    return this.pendingBitmaps.size
+  }
   /** Source keys whose `createImageBitmap()` rejected (tainted/cross-origin)
    * — logged once, never retried. */
   private failedBitmaps = new Set<string>()

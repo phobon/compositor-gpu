@@ -612,6 +612,13 @@ export class DomSync {
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
   }
 
+  /** Drop mutation records not yet delivered: the compositor's own
+   * writes (replace mode hiding the source) when nothing else can have
+   * changed since the read. */
+  discardPending(): void {
+    this.mo.takeRecords()
+  }
+
   stop(): void {
     if (!this.started) {
       return
