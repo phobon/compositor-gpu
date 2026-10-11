@@ -77,7 +77,9 @@ export async function createCompositor(
     left: '0',
     top: '0',
     pointerEvents: 'none',
-    zIndex: String(options.zIndex ?? 2147483646)
+    zIndex: String(options.zIndex ?? 2147483646),
+    // Replace mode: transparent until the handoff (see handoffAt).
+    opacity: mode === 'replace' && hideSource ? '0' : ''
   } satisfies Partial<CSSStyleDeclaration>)
   canvas.setAttribute('aria-hidden', 'true')
   // Mount on <html>, not <body>: replace mode hides the mirrored root's
@@ -386,12 +388,14 @@ export async function createCompositor(
       const complete =
         fontsReady &&
         (imagePass?.pending ?? 0) === 0 &&
-        materialPipelinesPending() === 0
+        materialPipelinesPending() === 0 &&
+        !imagesLoading()
       if (complete || performance.now() >= handoffAt) {
         handoffAt = null
         if (handoffHide) {
           handoffHide = false
           setSourceHidden(true)
+          unveil()
           // Our own opacity/attribute writes, in the same task as this
           // frame's read: nothing to re-read (the reader uses HIDDEN_ATTR).
           sync.discardPending()
@@ -535,7 +539,9 @@ export async function createCompositor(
       }
       if (hidden) {
         fxWanted.add(el)
-        if (!stopped) {
+        // Before the handoff the page paints itself and the canvas is
+        // transparent: hiding the element now would leave a hole.
+        if (!stopped && !handoffHide) {
           applyFx(el)
         }
       } else {
@@ -774,13 +780,33 @@ export async function createCompositor(
   // paint-free wrappers. The split follows the DOM while hidden (see
   // reconcileHidden).
   let sourceHidden = false
-  // Replace mode's handoff: the page keeps its own paint (the canvas draws
-  // the same thing over it) until the mirror is complete — fonts resolved,
-  // visible images uploaded, material pipelines compiled — then hides it in
-  // the same task as a render, so the two swap in one paint. Hiding it at
-  // start() showed a frame of half-built mirror (no images, fallback text).
-  // `handoffTimeout` caps the wait.
+  // Replace mode's handoff: the page keeps its own paint and the canvas
+  // renders at opacity 0 until the mirror is complete — fonts resolved,
+  // visible images loaded and uploaded, material pipelines compiled — then
+  // the canvas is shown and the source hidden in the same task as a render,
+  // so the two swap in one paint. Hiding the source at start() showed a
+  // frame of half-built mirror (no images, fallback text); drawing the
+  // canvas over the page meanwhile doubled the text (Slug and the browser
+  // anti-alias differently). Materials that hide their element
+  // (graph.hideSource) wait for the handoff too. `handoffTimeout` caps the
+  // wait.
   let handoffAt: number | null = null
+  /** An `<img>` in the viewport that hasn't finished loading: the reader
+   * skips it until its load event, so ImagePass doesn't count it yet. */
+  const imagesLoading = (): boolean => {
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    for (const img of root.querySelectorAll('img')) {
+      if (img.complete || isIgnored(img)) {
+        continue
+      }
+      const r = img.getBoundingClientRect()
+      if (r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw) {
+        return true
+      }
+    }
+    return false
+  }
   /** The handoff hides the source (replace mode, unless setSourceHidden
    * was called meanwhile). */
   let handoffHide = false
@@ -803,6 +829,16 @@ export async function createCompositor(
     fxHidden.set(el, el.style.opacity)
     el.setAttribute(HIDDEN_ATTR, getComputedStyle(el).opacity)
     el.style.opacity = '0'
+  }
+  /** Show the canvas and apply the hides materials asked for meanwhile. */
+  const unveil = (): void => {
+    canvas.style.opacity = ''
+    if (stopped) {
+      return
+    }
+    for (const el of fxWanted) {
+      applyFx(el)
+    }
   }
   const releaseFx = (el: HTMLElement): void => {
     const saved = fxHidden.get(el)
@@ -955,6 +991,7 @@ export async function createCompositor(
     window.removeEventListener('scroll', onScroll)
     handoffAt = null
     handoffHide = false
+    canvas.style.opacity = ''
     setSourceHidden(false)
     stopped = true
     for (const el of [...fxHidden.keys()]) {
@@ -1017,19 +1054,22 @@ export async function createCompositor(
       scheduler.start()
       sync.start()
       stopped = false
-      for (const el of fxWanted) {
-        applyFx(el)
+      handoffAt = performance.now() + (options.handoffTimeout ?? 1500)
+      handoffHide = mode === 'replace' && hideSource
+      if (handoffHide) {
+        canvas.style.opacity = '0'
+      } else {
+        unveil()
       }
       window.addEventListener('resize', onResize)
       window.addEventListener('scroll', onScroll, { passive: true })
-      handoffAt = performance.now() + (options.handoffTimeout ?? 1500)
-      handoffHide = mode === 'replace' && hideSource
       scheduler.request()
     },
     stop,
     ready,
     setSourceHidden(hidden) {
       handoffHide = false
+      unveil()
       setSourceHidden(hidden)
     },
     invalidate() {

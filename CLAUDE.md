@@ -245,12 +245,16 @@ anything downstream of the reader** — per-glyph rects are already a
 forced-reflow hazard.
 
 **Replace-mode handoff:** `start()` doesn't hide the source. The canvas
-draws over the page's own paint until the mirror is complete (fonts
-resolved, `ImagePass.pending` 0, no material pipeline compiling) or
-`handoffTimeout` (1500 ms) passes; then `frame()` hides the source right
-after `render()`, so both land in one paint, discards its own mutation
-records (`DomSync.discardPending`) and resolves `compositor.ready`. A
-`setSourceHidden()` call meanwhile cancels the automatic hide.
+renders at opacity 0 (drawn over the page it doubled the text) until the
+mirror is complete (fonts resolved, no `<img>` in the viewport still
+loading, `ImagePass.pending` 0, no material pipeline compiling) or
+`handoffTimeout` (1500 ms) passes; then `frame()` shows the canvas and
+hides the source right after `render()`, so both land in one paint,
+applies the hides materials asked for meanwhile (`graph.hideSource` waits
+for the handoff), discards its own mutation records
+(`DomSync.discardPending`) and resolves `compositor.ready`. A
+`setSourceHidden()` call meanwhile cancels the automatic hide and shows
+the canvas.
 
 Backgrounds (gradients and images) are read in `dom/gradient.ts` and
 `dom/backgrounds.ts`; they resolve colours and image URLs from the computed
