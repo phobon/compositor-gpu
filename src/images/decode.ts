@@ -1,0 +1,42 @@
+// Decoding an <img> for upload. createImageBitmap(img) decodes on the main
+// thread, synchronously inside the call (54 ms of phobon.io's first frame
+// for its six project webps; a 2400px webp ~250 ms headless), and img.decode()
+// first doesn't change that. createImageBitmap(blob) decodes off the main
+// thread, so the source is re-read from the HTTP cache (the <img> already
+// loaded it) and decoded from the Blob. Sources fetch can't read
+// (cross-origin without CORS, a failed request) take the element path.
+
+import { isPng16, isPng16Header, maybePng } from './pngDepth'
+
+export interface Decoded {
+  bitmap: ImageBitmap
+  /** A 16-bit PNG (see pngDepth.ts). */
+  deep: boolean
+}
+
+async function fromBlob(url: string, img: HTMLImageElement): Promise<Decoded> {
+  const res = await fetch(url, {
+    cache: 'force-cache',
+    credentials:
+      img.crossOrigin === 'use-credentials' ? 'include' : 'same-origin'
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`)
+  }
+  const blob = await res.blob()
+  const deep =
+    maybePng(url) &&
+    isPng16Header(new Uint8Array(await blob.slice(0, 26).arrayBuffer()))
+  return { bitmap: await createImageBitmap(blob), deep }
+}
+
+/** Decode `img`'s current source to an ImageBitmap, off the main thread
+ * when its bytes can be fetched. */
+export function decodeImage(img: HTMLImageElement): Promise<Decoded> {
+  const url = img.currentSrc || img.src
+  return fromBlob(url, img).catch(() =>
+    Promise.all([createImageBitmap(img), isPng16(url)]).then(
+      ([bitmap, deep]) => ({ bitmap, deep })
+    )
+  )
+}

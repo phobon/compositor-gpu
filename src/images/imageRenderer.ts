@@ -13,13 +13,14 @@ import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { log, reportShaderErrors } from '../util/log'
+import { decodeImage } from './decode'
 import {
   type AtlasRect,
   type AtlasSource,
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './imageAtlas'
-import { isPng16, to8Bit } from './pngDepth'
+import { to8Bit } from './pngDepth'
 import {
   concreteSize,
   requestSvgMarkup,
@@ -483,7 +484,8 @@ export class ImagePass implements RenderPass {
     return entry
   }
 
-  /** Kick off `createImageBitmap(img)` for `key` if it isn't already pending
+  /** Kick off a decode of `img` (`decodeImage`, off the main thread when
+   * its bytes can be fetched) for `key` if it isn't already pending
    * or known to fail — deduped by source key, so a source seen again before
    * the first fetch resolves is a no-op. On resolve, packs/uploads the
    * bitmap's *own* pixel size (never `img.naturalWidth/Height`, which can be
@@ -496,8 +498,8 @@ export class ImagePass implements RenderPass {
       return
     }
     this.pendingBitmaps.add(key)
-    Promise.all([createImageBitmap(img), isPng16(img.currentSrc || img.src)])
-      .then(([bitmap, deep]) => {
+    decodeImage(img)
+      .then(({ bitmap, deep }) => {
         this.pendingBitmaps.delete(key)
         const w = bitmap.width
         const h = bitmap.height

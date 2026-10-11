@@ -356,7 +356,11 @@ Conventions each pass must follow:
   content as the browser does (canvas drawImage would stretch Chrome's
   default 300×150; `images/svgRaster.ts`). Plain `<img>` sources go
   through `createImageBitmap` because `naturalWidth` is density-corrected for
-  `srcset` images while the decoded bitmap is not. Borders are per side
+  `srcset` images while the decoded bitmap is not. They are decoded from a
+  Blob re-fetched from the HTTP cache (`images/decode.ts`):
+  `createImageBitmap(img)` decodes synchronously on the main thread
+  (`img.decode()` first doesn't help), the Blob path off it; sources fetch
+  can't read fall back to the element. Borders are per side
   (`border.widths`/`colors`, mitred in the shader).
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
