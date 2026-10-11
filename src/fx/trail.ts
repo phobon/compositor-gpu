@@ -435,6 +435,8 @@ export function createTrail(
       deps.wake()
     },
     clear() {
+      // Strokes queued for the next frame go too, or they'd refill it.
+      pending = []
       if (!destroyed && cols > 0) {
         zero()
         deps.wake()
