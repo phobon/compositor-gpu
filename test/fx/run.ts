@@ -34,6 +34,11 @@
 //                     paint must be hidden while on and restored after
 //   fx-mat-stripes    box fragment hook
 //   fx-mat-then-off   all four on, then off: equal to fx-materials exactly
+//   fx-waapi      a geometry-section box faded by element.animate() (fill: forwards):
+//                 equal exactly to the same opacity set as a style
+//                 (fx-waapi-style)
+//   fx-mat-shared  two materials with the same hooks, warmed while
+//                 disabled: one pipeline compile, none more when enabled
 //   fx-m3b            the M3b section, nothing enabled
 //   fx-layer-glyphs   a Layer drawing the heading's glyphs through Slug
 //   fx-layer-image    a Layer sampling the <img> Target as four tiles
@@ -65,6 +70,9 @@
 //   fx-trail-pixel  the same stroke through the pixellate pass
 //   fx-trail-clear  stroke, then trail.clear(): equal to fx-trail-off
 //                 exactly
+//   fx-trail-reuse  the stroke through the page pass alone: the scene is
+//                 still, so frames reuse it (stats().sceneReused); equal
+//                 exactly to fx-trail-reuse-off (sceneReuse: false)
 //
 // Usage: npm run test:fx [-- --update] [-- --only fx-blur]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -502,6 +510,137 @@ async function main(): Promise<void> {
         })
       }
     }
+    if (want('fx-waapi')) {
+      // The same end state through a style write (a mutation) and through
+      // element.animate() with fill: forwards (no mutation, no CSS event):
+      // the mirror must show both identically. GPU-only for the whole run:
+      // toggling the page's paint is itself a mutation and would re-read.
+      const sel = '[data-vr="fx-geometry"] .overlap .b2'
+      const clip = await sectionClip(page, 'fx-geometry')
+      await setEffect(page, 'none')
+      await setMode(page, 'gpu')
+      const settle = (): Promise<void> =>
+        page.evaluate(async () => {
+          for (let i = 0; i < 4; i++) {
+            await window.__fx?.raf2()
+          }
+        })
+      await page.evaluate((q) => {
+        const el = document.querySelector<HTMLElement>(q)
+        if (el) {
+          el.style.opacity = '0.4'
+        }
+      }, sel)
+      await settle()
+      const viaStyle = clip ? await shoot(page, 'fx-waapi-style', clip) : null
+      await page.evaluate((q) => {
+        const el = document.querySelector<HTMLElement>(q)
+        if (el) {
+          el.style.opacity = ''
+        }
+      }, sel)
+      await settle()
+      await page.evaluate(async (q) => {
+        const el = document.querySelector<HTMLElement>(q)
+        const a = el?.animate([{ opacity: 1 }, { opacity: 0.4 }], {
+          duration: 200,
+          fill: 'forwards'
+        })
+        await a?.finished
+      }, sel)
+      await settle()
+      const viaAnimate = clip ? await shoot(page, 'fx-waapi', clip) : null
+      await page.evaluate((q) => {
+        for (const a of document.querySelector(q)?.getAnimations() ?? []) {
+          a.cancel()
+        }
+      }, sel)
+      await settle()
+      await setMode(page, 'both')
+      if (viaStyle && viaAnimate) {
+        results.push(judge('fx-waapi', viaAnimate))
+        const n = exactDiff(viaStyle, viaAnimate)
+        results.push({
+          name: 'fx-waapi (= style)',
+          regressionPct: diffPng(
+            viaStyle,
+            viaAnimate,
+            resolve(outDir, 'fx-waapi-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+    }
+    if (want('fx-mat-shared')) {
+      // Two materials with the same hooks on different elements, created
+      // disabled: warming both compiles one pipeline, and enabling them
+      // compiles nothing more.
+      const fragment = /* wgsl */ `
+        fn fragment(m : MatIn) -> vec4f {
+          return m.color * vec4f(0.6, 0.9, 1.0, 1.0);
+        }`
+      const settle = (): Promise<void> =>
+        page.evaluate(async () => {
+          const h = window.__fx
+          for (let i = 0; h && i < 600 && h.fx.__pending() > 0; i++) {
+            await h.raf2()
+          }
+        })
+      const compiled = (): Promise<number> =>
+        page.evaluate(() => window.__fx?.fx.__compiled() ?? -1)
+      await settle()
+      const before = await compiled()
+      await page.evaluate((frag) => {
+        const h = window.__fx
+        const w = window as unknown as Record<string, unknown>
+        const mats = []
+        for (const id of ['mat-box', 'mat-heading']) {
+          const el = document.getElementById(id)
+          if (h && el) {
+            mats.push(
+              h.fx.material({
+                name: `shared-${id}`,
+                target: el,
+                kinds: ['box'],
+                fragment: frag,
+                enabled: false
+              })
+            )
+          }
+        }
+        for (const m of mats) {
+          m.warm()
+        }
+        w.__shared = mats
+      }, fragment)
+      await settle()
+      const warmed = (await compiled()) - before
+      await page.evaluate(async () => {
+        const w = window as unknown as Record<string, unknown>
+        for (const m of w.__shared as { enabled: boolean }[]) {
+          m.enabled = true
+        }
+        await window.__fx?.raf2()
+        await window.__fx?.raf2()
+      })
+      await settle()
+      const enabled = (await compiled()) - before
+      await page.evaluate(async () => {
+        const w = window as unknown as Record<string, unknown>
+        for (const m of w.__shared as { destroy(): void }[]) {
+          m.destroy()
+        }
+        await window.__fx?.raf2()
+      })
+      const r = { warmed, enabled }
+      results.push({
+        name: 'fx-mat-shared',
+        regressionPct: null,
+        status: r?.warmed === 1 && r.enabled === 1 ? 'ok' : 'fail',
+        note: `compiles: warm ${r?.warmed}, after enable ${r?.enabled} (want 1, 1)`
+      })
+    }
     const m3b = 'fx-m3b'
     let m3bPre: PNG | null = null
     if (want(m3b) || want('fx-m3b-then-off')) {
@@ -712,6 +851,42 @@ async function main(): Promise<void> {
     }
     if (want('fx-trail-pixel')) {
       await trailShot('fx-trail-pixel', 'vr&stroke&hold&pixel')
+    }
+    if (want('fx-trail-reuse')) {
+      const reusedIn = async (p: Page): Promise<void> => {
+        const r = await p.evaluate(() => window.__gpu?.stats().sceneReused)
+        reused.push(r === true)
+      }
+      const reused: boolean[] = []
+      const on = await trailShot(
+        'fx-trail-reuse',
+        'vr&stroke&hold&passonly',
+        reusedIn
+      )
+      const off = await trailShot(
+        'fx-trail-reuse-off',
+        'vr&stroke&hold&passonly&noreuse',
+        reusedIn
+      )
+      results.push({
+        name: 'fx-trail-reuse (reused)',
+        regressionPct: null,
+        status: reused[0] === true && reused[1] === false ? 'ok' : 'fail',
+        note: `sceneReused on=${reused[0]} off=${reused[1]}`
+      })
+      if (on && off) {
+        const n = exactDiff(off, on)
+        results.push({
+          name: 'fx-trail-reuse (= off)',
+          regressionPct: diffPng(
+            off,
+            on,
+            resolve(outDir, 'fx-trail-reuse-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
     }
     if (want('fx-trail-clear')) {
       const post = await trailShot(

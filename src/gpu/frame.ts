@@ -103,6 +103,8 @@ export interface RenderPass {
   /** Forget a destroyed material's cached pipeline (passes that support
    * materials). */
   dropMaterial?(id: number): void
+  /** Start compiling `mat`'s pipeline before its records are drawn. */
+  warmMaterial?(mat: MaterialBinding): void
   destroy(): void
 }
 

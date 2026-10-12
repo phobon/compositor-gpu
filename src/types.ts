@@ -104,6 +104,11 @@ export interface CompositorOptions {
    * (evenly in replace mode, where nothing else paints). `canvasMargin`
    * is ignored. */
   canvasPin?: 'page' | 'viewport'
+  /** While a post pass runs over an unchanged scene (a trail or a lens
+   * over a still page), run it on the previous frame's scene instead of
+   * redrawing (`stats().sceneReused`). Default true; false always
+   * redraws (for comparing). */
+  sceneReuse?: boolean
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
@@ -151,6 +156,9 @@ export interface CompositorStats {
   draws: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
+  /** The last frame ran the post chain on the previous frame's scene
+   * instead of redrawing it (nothing feeding the scene had changed). */
+  sceneReused: boolean
   /** Elements whose style/geometry the most recent DOM read visited. */
   readElements: number
   /** Running count of mutation-scoped (non-full) DOM reads. */

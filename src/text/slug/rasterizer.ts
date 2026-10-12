@@ -1143,6 +1143,10 @@ export class SlugText implements TextBackend {
     this.materials.drop(id)
   }
 
+  warmMaterial(mat: MaterialBinding): void {
+    this.materials.warm(mat)
+  }
+
   destroy(): void {
     this.glyphBuf?.destroy()
     this.quadBuf?.destroy()

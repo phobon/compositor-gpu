@@ -101,6 +101,7 @@ export async function createCompositor(
   const dpr = options.devicePixelRatio ?? window.devicePixelRatio ?? 1
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
+  renderer.reuseScene = options.sceneReuse ?? true
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
   for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
     renderer.materials.set(m.id, m)
@@ -551,6 +552,7 @@ export async function createCompositor(
         }
       }
     },
+    warmMaterial: (entry) => renderer.warmMaterial(entry),
     nextMaterialId: () => nextMaterial++,
     materialsPending: () => materialPipelinesPending(),
     hideSource(el, hidden) {
@@ -1051,6 +1053,7 @@ export async function createCompositor(
       batches: renderer.lastBatches,
       draws: renderer.lastDraws,
       groups: renderer.lastGroups,
+      sceneReused: renderer.lastReused,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
       sync: { ...sync.diag },
@@ -1160,6 +1163,7 @@ function inert(): Compositor & { text: null; scene: null } {
       batches: 0,
       draws: 0,
       groups: 0,
+      sceneReused: false,
       readElements: 0,
       partialReads: 0,
       sync: {

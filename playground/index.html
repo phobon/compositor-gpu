@@ -556,6 +556,24 @@
       .blendbox.mul > span { mix-blend-mode: multiply; }
       .blendbox.scr > span { mix-blend-mode: screen; }
       .blendbox.exc > span { mix-blend-mode: exclusion; background: #fff; }
+      .filterdemo { display: grid; grid-template-columns: repeat(5, 120px); gap: 20px; }
+      .filterdemo > div { height: 80px; border-radius: 10px; background: url(./test.png) center/cover; }
+      .filterdemo > div > b { display: block; padding: 8px; font: 600 15px/1 system-ui; color: #fff; }
+      .f-gray { filter: grayscale(1); }
+      .f-sepia { filter: sepia(0.8); }
+      .f-hue { filter: hue-rotate(90deg); }
+      .f-bc { filter: brightness(1.4) contrast(0.7); }
+      .f-inv { filter: invert(1); }
+      .f-sat { filter: saturate(3); }
+      .f-op { filter: opacity(0.5); }
+      .f-blur { filter: blur(4px); }
+      .f-blurgray { filter: blur(2px) grayscale(1); }
+      .f-card { filter: blur(1.5px); background: #fff !important; border: 1px solid #ccd; }
+      .f-card > b { color: #223 !important; }
+      .isodemo { display: flex; gap: 24px; margin-top: 20px; background: linear-gradient(90deg, #f6c, #3cf); padding: 16px; }
+      .isodemo > div { width: 160px; height: 60px; border: 2px solid #fff; position: relative; }
+      .isodemo > div.iso { isolation: isolate; }
+      .isodemo > div > span { position: absolute; inset: 12px 30px; background: #08f; mix-blend-mode: screen; }
     </style>
   </head>
   <body>
@@ -1076,6 +1094,26 @@
           <div class="blendbox mul"><span></span></div>
           <div class="blendbox scr"><span></span></div>
           <div class="blendbox exc"><span></span></div>
+        </div>
+      </section>
+
+      <section data-vr="filters">
+        <h2>CSS filters and isolation</h2>
+        <div class="filterdemo">
+          <div class="f-gray"><b>gray</b></div>
+          <div class="f-sepia"><b>sepia</b></div>
+          <div class="f-hue"><b>hue</b></div>
+          <div class="f-bc"><b>bright/con</b></div>
+          <div class="f-inv"><b>invert</b></div>
+          <div class="f-sat"><b>saturate</b></div>
+          <div class="f-op"><b>opacity</b></div>
+          <div class="f-blur"><b>blur</b></div>
+          <div class="f-blurgray"><b>blur+gray</b></div>
+          <div class="f-card"><b>blurred text</b></div>
+        </div>
+        <div class="isodemo">
+          <div><span></span></div>
+          <div class="iso"><span></span></div>
         </div>
       </section>
 

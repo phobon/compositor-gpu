@@ -137,6 +137,11 @@ export interface MaterialEntry extends MaterialBinding {
   /** A core material (gpu/blend.ts): records are tagged by the reader,
    * not by `target`'s subtree. */
   builtin?: boolean
+  /** Whether its records can draw differently from the previous frame
+   * (params, time, a trail, the pointer). The renderer reuses the last
+   * frame's scene only while every active material says false; absent,
+   * an active non-builtin material counts as changing. */
+  changed?(): boolean
 }
 
 /** Per-frame participant registered through RenderGraph.addHook. */
@@ -174,6 +179,9 @@ export interface RenderGraph {
    * the material; returns its removal. On overlap the later wins. Call
    * replace() after `active()` changes. */
   addMaterial(entry: MaterialEntry): () => void
+  /** Compile `entry`'s pipelines now rather than on first draw (the
+   * handoff waits for compiles in flight). */
+  warmMaterial(entry: MaterialEntry): void
   /** A material id unique for this compositor (for MaterialEntry.id). */
   nextMaterialId(): number
   /** Material pipelines still compiling (test harnesses wait on 0). */

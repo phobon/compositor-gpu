@@ -1,4 +1,5 @@
 import { blendMaterialId } from '../scene/blend'
+import { type GroupFilter, parseFilter } from '../scene/filter'
 import type {
   BoxRecord,
   CutoutRecord,
@@ -155,6 +156,10 @@ export interface ElNode {
    * alpha < 1 is a context and becomes an opacity group; its records keep
    * opacity 1 and the group applies alpha once. */
   alpha: number
+  /** A context's CSS `filter` (scene/filter.ts). */
+  filter?: GroupFilter
+  /** A context with `isolation: isolate`. */
+  isolate?: boolean
   /** `display: inline | contents`: the box is fragmented (or absent), so
    * its bounding rect doesn't bound its effect on layout outside it. */
   fragmented: boolean
@@ -289,6 +294,12 @@ export function flatten(
         items: [],
         ownCount: node.own.length,
         alpha: node.alpha
+      }
+      if (node.filter) {
+        c.filter = node.filter
+      }
+      if (node.isolate) {
+        c.isolate = true
       }
       if (node.region !== undefined) {
         c.region = node.region
@@ -902,6 +913,15 @@ export class SceneReader {
     if (region !== undefined) {
       node.region = region
       node.regionClip = clip
+    }
+    if (isContext) {
+      const filter = parseFilter(s.filter)
+      if (filter) {
+        node.filter = filter
+      }
+      if (s.isolation === 'isolate') {
+        node.isolate = true
+      }
     }
     const blend = blendMaterialId(s.mixBlendMode) ?? parent?.blend
     if (blend !== undefined) {

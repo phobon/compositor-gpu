@@ -9,6 +9,8 @@
 // child contexts (incl. positioned z-index:auto, step 6) in tree order, then
 // positive z-index child contexts (ascending).
 import { hasTransform } from '../dom/transform'
+import { BLEND_BASE } from './blend'
+import { filterSpread, type GroupFilter } from './filter'
 import type { Glyph, GlyphRun, Rect, SceneRecord } from './records'
 
 export interface StackingContext {
@@ -22,6 +24,12 @@ export interface StackingContext {
   /** The element's own opacity when < 1: the context is then an opacity
    * group (rendered offscreen, composited once). Absent/1 otherwise. */
   alpha?: number
+  /** CSS `filter` (scene/filter.ts): the context becomes a group whose
+   * composite applies it. */
+  filter?: GroupFilter
+  /** `isolation: isolate`: a group when anything inside blends
+   * (`mix-blend-mode`), so it blends against the group, not the page. */
+  isolate?: boolean
   /** Isolated for a region effect (gpu/graph.ts `isolate`) or a layer
    * transform (`transform`): the context becomes a group even at alpha 1,
    * composited by the region's handler or through the transform. */
@@ -44,6 +52,9 @@ export interface OpacityGroup {
   /** Exclusive. */
   last: number
   alpha: number
+  /** Applied when compositing (colour matrix, blur). `bounds`/`vbounds`
+   * already include the blur's spread. */
+  filter?: GroupFilter
   /** Doc-space union of the doc-space members' AABBs (nested groups
    * included); zero-size when there are none. */
   bounds: Rect
@@ -284,6 +295,32 @@ function growByRecord(es: Extents, r: SceneRecord): void {
  * Returns the opacity groups (contexts with `alpha < 1`) that contain at
  * least one record, sorted by `first` (a parent precedes its children).
  */
+function inflate(r: Rect | null, d: number): Rect | null {
+  return r && d > 0
+    ? {
+        x: r.x - d,
+        y: r.y - d,
+        width: r.width + 2 * d,
+        height: r.height + 2 * d
+      }
+    : r
+}
+
+/** Does anything in `ctx` (nested contexts included) blend
+ * (`mix-blend-mode`, scene/blend.ts)? */
+function blends(ctx: StackingContext): boolean {
+  for (const item of ctx.items) {
+    if (isContext(item)) {
+      if (blends(item)) {
+        return true
+      }
+    } else if (item.kind !== 'cutout' && (item.material ?? 0) >= BLEND_BASE) {
+      return true
+    }
+  }
+  return false
+}
+
 export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
   let counter = 0
   const groups: OpacityGroup[] = []
@@ -300,7 +337,12 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
 
   const visit = (ctx: StackingContext): void => {
     const alpha = ctx.alpha ?? 1
-    if (alpha < 1 || ctx.region !== undefined) {
+    if (
+      alpha < 1 ||
+      ctx.region !== undefined ||
+      ctx.filter !== undefined ||
+      (ctx.isolate === true && blends(ctx))
+    ) {
       const g: OpacityGroup = {
         first: counter,
         last: counter,
@@ -308,6 +350,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
         bounds: { x: 0, y: 0, width: 0, height: 0 },
         vbounds: null,
         depth: open.length
+      }
+      if (ctx.filter) {
+        g.filter = ctx.filter
       }
       if (ctx.region !== undefined) {
         g.region = ctx.region
@@ -322,14 +367,16 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       open.pop()
       g.last = counter
       const parent = open[open.length - 1]
-      const doc = extentRect(e.doc)
+      // A blur paints past its records.
+      const spread = filterSpread(ctx.filter)
+      const doc = inflate(extentRect(e.doc), spread)
       if (doc) {
         g.bounds = doc
         if (parent) {
           growExtent(parent.doc, doc)
         }
       }
-      g.vbounds = extentRect(e.vp)
+      g.vbounds = inflate(extentRect(e.vp), spread)
       if (g.vbounds && parent) {
         growExtent(parent.vp, g.vbounds)
       }

@@ -437,6 +437,13 @@ vertex hook can bend. Also in scope: `fx : MaterialFx` (time, elapsed,
 dpr, glyphs (the glyphs `mat_index` numbers), scroll,
 viewport in CSS px), `params`, `pointer`.
 
+Materials with the same hooks, params layout, trail use, `kinds`
+subdivisions and `raw` programs share pipelines (one compile for any
+number of copies). `material.warm()` compiles them before the records
+are first drawn enabled, for a material created disabled; the
+replace-mode handoff waits for compiles in flight, so warm after
+`compositor.ready`.
+
 The pipeline compiles asynchronously the first time the records are
 drawn; until then (and for good if the WGSL fails, with the error in the
 console under `fx:<name>:<kind>`) they draw as usual, or, with `hold`,

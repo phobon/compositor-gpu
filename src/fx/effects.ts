@@ -5,6 +5,7 @@ import type {
   RegionHandler,
   RenderGraph
 } from '../gpu/graph'
+import { materialPipelinesSettled } from '../gpu/material'
 import { timed } from '../gpu/timer'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
@@ -150,6 +151,8 @@ export interface Effects {
   __override(o: FxOverride | null): void
   /** Test hook: material pipelines still compiling. */
   __pending(): number
+  /** Test hook: material pipeline compiles finished so far. */
+  __compiled(): number
 }
 
 interface Stage {
@@ -309,7 +312,8 @@ function inertEffects(): Effects {
     release() {},
     destroy() {},
     __override() {},
-    __pending: () => 0
+    __pending: () => 0,
+    __compiled: () => 0
   }
 }
 
@@ -718,6 +722,10 @@ function buildEffects(compositor: Compositor): Effects {
     rp.draw(3)
   }
 
+  // Whether the pointer uniform changed this frame (materials that read
+  // `pointer` then count as changed; see MaterialEntry.changed).
+  let lastPointer: Float32Array | null = null
+  let pointerMoved = true
   const removeHook = graph.addHook({
     beforeFrame(ctx: FrameContext) {
       timeMs = ctx.time
@@ -750,7 +758,13 @@ function buildEffects(compositor: Compositor): Effects {
       // Before the layers' frames: a simulate dispatch is submitted there
       // and must see this frame's pointer.
       if (any) {
-        device.queue.writeBuffer(pointerBuf, 0, tracker.pack(pointerNow))
+        const packed = tracker.pack(pointerNow)
+        pointerMoved =
+          lastPointer === null ||
+          packed.length !== lastPointer.length ||
+          packed.some((v, i) => v !== lastPointer?.[i])
+        lastPointer = packed.slice()
+        device.queue.writeBuffer(pointerBuf, 0, packed)
       }
       for (const l of layers) {
         l.frame(ctx)
@@ -1073,6 +1087,7 @@ function buildEffects(compositor: Compositor): Effects {
     time: () => override?.time ?? timeMs / 1000,
     elapsedOverride: () => override?.elapsed ?? null,
     dtOverride: () => override?.dt ?? null,
+    pointerMoved: () => pointerMoved,
     wake: () => graph.requestFrame()
   }
 
@@ -1283,7 +1298,8 @@ function buildEffects(compositor: Compositor): Effects {
       override = o
       graph.requestFrame()
     },
-    __pending: () => graph.materialsPending()
+    __pending: () => graph.materialsPending(),
+    __compiled: () => materialPipelinesSettled()
   }
   return fx
 }

@@ -117,6 +117,12 @@ export interface Material<S extends ParamSchema = ParamSchema> {
   readonly target: Target
   enabled: boolean
   continuous: boolean
+  /** Compile the pipelines now instead of when its records are first
+   * drawn enabled, so a material created disabled is ready when it turns
+   * on. Materials with the same hooks share pipelines, so warming one
+   * warms its copies. The replace-mode handoff waits for compiles in
+   * flight: warm after `compositor.ready` to keep it out of the way. */
+  warm(): void
   destroy(): void
 }
 
@@ -127,6 +133,8 @@ export interface MaterialDeps {
   pointerBuf: GPUBuffer
   time(): number
   elapsedOverride(): number | null
+  /** The pointer uniform differs from the previous frame's. */
+  pointerMoved(): boolean
   wake(): void
 }
 
@@ -163,6 +171,7 @@ export function inertMaterial<S extends ParamSchema>(
     target,
     enabled: o.enabled ?? true,
     continuous: materialContinuous(o as unknown as MaterialOptions),
+    warm() {},
     destroy() {}
   }
 }
@@ -197,6 +206,14 @@ export function createMaterial<S extends ParamSchema>(
       [o.fragment ?? IDENTITY_FRAGMENT, MATERIAL_HOOKS.fragment]
     ]) ?? `${IDENTITY_VERTEX}\n${IDENTITY_FRAGMENT}`
   const trail = trailState(o.trail)
+  // entry.changed's inputs (see frame()).
+  const usesPointer = [hooks, ...Object.values(o.raw ?? {})].some(
+    (c) => typeof c === 'string' && /\bpointer\s*\./.test(c)
+  )
+  let changedNow = true
+  let fresh = true
+  let trailWasLive = false
+  const lastFx: number[] = []
   const code = [
     block.wgsl,
     POINTER_WGSL,
@@ -275,6 +292,7 @@ export function createMaterial<S extends ParamSchema>(
     bindGroup,
     target: target.el,
     active: () => state.enabled && !destroyed,
+    changed: () => changedNow,
     // A pipeline finished compiling: draw with it.
     ready: () => {
       if (state.enabled) {
@@ -305,6 +323,7 @@ export function createMaterial<S extends ParamSchema>(
       state.enabled = on
       if (on) {
         enabledAt = null
+        fresh = true
       }
       apply()
       wake()
@@ -318,6 +337,11 @@ export function createMaterial<S extends ParamSchema>(
       }
       state.continuous = on
       wake()
+    },
+    warm() {
+      if (!destroyed) {
+        graph.warmMaterial(entry)
+      }
     },
     destroy() {
       if (destroyed) {
@@ -337,8 +361,22 @@ export function createMaterial<S extends ParamSchema>(
       if (!state.enabled) {
         return
       }
+      // Whether this frame's draw can differ from the last one's
+      // (entry.changed: the renderer reuses an unchanged scene).
+      const trailLive = trail?.live() ?? false
+      let changed =
+        fresh ||
+        state.continuous ||
+        o.update !== undefined ||
+        block.dirty ||
+        trailLive ||
+        trailWasLive ||
+        (usesPointer && deps.pointerMoved())
+      fresh = false
+      trailWasLive = trailLive
       if (trail && trail.binding().version !== bound) {
         entry.bindGroup = makeGroup()
+        changed = true
       }
       enabledAt ??= ctx.time
       const time = deps.time()
@@ -360,6 +398,15 @@ export function createMaterial<S extends ParamSchema>(
       f[5] = ctx.scrollY
       f[6] = ctx.width
       f[7] = ctx.height
+      // dpr, glyph count, scroll and viewport (time is covered by
+      // `continuous`).
+      for (let i = 2; i < 8; i++) {
+        if (f[i] !== lastFx[i]) {
+          changed = true
+          lastFx[i] = f[i] ?? 0
+        }
+      }
+      changedNow = changed
       device.queue.writeBuffer(fxBuf, 0, f)
     },
     destroy() {

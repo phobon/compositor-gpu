@@ -23,6 +23,8 @@ import {
   type RegionFrame,
   type RegionHandler
 } from './graph'
+import { GroupBlur } from './groupBlur'
+import { materialPipelinesSettled } from './material'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 
 interface FrameSlot {
@@ -232,6 +234,11 @@ export class Renderer {
    * debug/stats) — lower than `lastBatches` when a pass collapses several
    * instances into one draw (e.g. atlas-backed images). */
   lastDraws = 0
+  /** The most recent render ran the post chain on the previous frame's
+   * scene texture instead of redrawing the scene (see reuseKey). */
+  lastReused = false
+  /** CompositorOptions.sceneReuse. */
+  reuseScene = true
   /** Wall time spent in pass uploads in the most recent render, ms. */
   lastUploadMs = 0
   /** Wall time from createCommandEncoder to submit in the most recent
@@ -243,6 +250,8 @@ export class Renderer {
   /** Frames rendered (GpuFrameTiming.frame refers to it). */
   frames = 0
   private readonly composite: GroupCompositor
+  /** CSS `filter: blur()` on groups (made on first use). */
+  private groupBlur: GroupBlur | null = null
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
    * submit). Reused across frames. */
@@ -262,6 +271,10 @@ export class Renderer {
   readonly materials = new Map<number, MaterialEntry>()
   private sceneTexture: GPUTexture | null = null
   private sceneView: GPUTextureView | null = null
+  /** What `sceneTexture` holds: the reuseKey and batch list it was drawn
+   * from (null: nothing reusable). */
+  private sceneKey: string | null = null
+  private sceneBatches: readonly DrawBatch[] | null = null
   private copy: CopyThrough | null = null
 
   constructor(private readonly gpu: GpuContext) {
@@ -312,6 +325,13 @@ export class Renderer {
     this.materials.delete(id)
     for (const pass of this.passes) {
       pass.dropMaterial?.(id)
+    }
+  }
+
+  /** Start compiling material `mat`'s pipelines in every pass. */
+  warmMaterial(mat: MaterialEntry): void {
+    for (const pass of this.passes) {
+      pass.warmMaterial?.(mat)
     }
   }
 
@@ -422,6 +442,67 @@ export class Renderer {
   }
 
   /**
+   * Everything the scene texture depends on beyond the scene's records,
+   * or null when something drawing into it changes every frame. While the
+   * post chain runs and neither the key nor the records change, the scene
+   * is not redrawn: the chain reads last frame's texture (a trail or a lens
+   * over a still page). Conservative: an active layer or region pass, or
+   * an active material that doesn't report `changed() === false`, forces a
+   * redraw; so does a material pipeline finishing (records switch
+   * pipelines) and any move of the canvas or the scroll.
+   */
+  private reuseKey(ctx: FrameContext, dpr: number): string | null {
+    for (const layer of this.extras.values()) {
+      if (layer.active()) {
+        return null
+      }
+    }
+    for (const region of this.regions.values()) {
+      if (region.active()) {
+        return null
+      }
+    }
+    const mats: number[] = []
+    for (const [id, m] of this.materials) {
+      if (!m.active() || m.builtin) {
+        continue
+      }
+      if (m.changed?.() ?? true) {
+        return null
+      }
+      mats.push(id)
+    }
+    const xf: number[] = []
+    for (const [id, t] of this.transforms) {
+      xf.push(
+        id,
+        t.x,
+        t.y,
+        t.scaleX,
+        t.scaleY,
+        t.rotate,
+        t.opacity,
+        t.originX,
+        t.originY
+      )
+    }
+    return [
+      ctx.canvasX,
+      ctx.canvasY,
+      ctx.canvasWidth,
+      ctx.canvasHeight,
+      ctx.scrollX,
+      ctx.scrollY,
+      ctx.width,
+      ctx.height,
+      dpr,
+      materialPipelinesSettled(),
+      mats.join(','),
+      xf.join(',')
+    ].join('|')
+  }
+
+  /**
    * Walk scene.batches in order. A push ends the current render pass and
    * begins one on a pooled offscreen target (cleared) whose Frame uniform
    * maps the group's viewport-clipped doc rect onto the texture (and, via
@@ -432,6 +513,22 @@ export class Renderer {
    */
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
     this.scene = scene
+    const chain = this.postChain?.active() ? this.postChain : null
+    const key = chain && this.reuseScene ? this.reuseKey(ctx, dpr) : null
+    const texture = this.gpu.context.getCurrentTexture()
+    if (
+      chain &&
+      key !== null &&
+      key === this.sceneKey &&
+      scene.batches === this.sceneBatches &&
+      this.sceneTexture?.width === texture.width &&
+      this.sceneTexture.height === texture.height &&
+      !this.passes.some((p) => scene.isDirty(p.layer))
+    ) {
+      this.renderPostOnly(chain, texture, ctx, dpr)
+      return
+    }
+    this.lastReused = false
     this.writeFrame(ctx, dpr)
     if (scene.version !== this.clipVersion) {
       this.clipVersion = scene.version
@@ -461,9 +558,7 @@ export class Renderer {
     this.frames++
     timer?.begin(this.frames)
     const encoder = this.device.createCommandEncoder()
-    const texture = this.gpu.context.getCurrentTexture()
     const canvasView = texture.createView({ format: this.gpu.viewFormat })
-    const chain = this.postChain?.active() ? this.postChain : null
     if (!chain && this.sceneTexture) {
       this.releaseScene()
     }
@@ -486,6 +581,7 @@ export class Renderer {
       xf: null
     }
     this.composite.begin(scene.groups.length)
+    this.groupBlur?.begin()
     let batches = 0
     let groups = 0
     let draws = 0
@@ -588,7 +684,7 @@ export class Renderer {
             : undefined
         const tAlpha = t ? layerAlpha(t) : 1
         const xf = xfs[batch.group] ?? null
-        if (t && g && !xf && tAlpha === 1 && g.alpha === 1) {
+        if (t && g && !xf && tAlpha === 1 && g.alpha === 1 && !g.filter) {
           // A layer transform at rest: its records draw in place.
           plan.set(i, 'in-place')
           prepare(parent, i + 1, j)
@@ -624,6 +720,10 @@ export class Renderer {
         )
         drawRange(rp, child, i + 1, j)
         rp.end()
+        const blur = g?.filter?.blur ?? 0
+        if (blur > 0 && !region?.active()) {
+          this.blurGroup(encoder, child, blur)
+        }
         if (region?.active() && child.pooled) {
           child.region = this.regionFrame(child, parent, g, encoder, ctx, dpr)
           region.encode(child.region)
@@ -644,8 +744,40 @@ export class Renderer {
     rp.end()
     if (chain && this.sceneView) {
       this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
+      this.sceneKey = key
+      this.sceneBatches = scene.batches
     }
     this.composite.flush()
+    const readback = timer?.end(encoder)
+    this.device.queue.submit([encoder.finish()])
+    readback?.()
+    this.lastEncodeMs = performance.now() - encodeStart
+  }
+
+  /** A frame whose scene is unchanged: only the post chain and the canvas
+   * pass run, reading the scene texture the last full render left. */
+  private renderPostOnly(
+    chain: PostChain,
+    texture: GPUTexture,
+    ctx: FrameContext,
+    dpr: number
+  ): void {
+    this.writeFrame(ctx, dpr)
+    this.shared.dpr = dpr
+    this.lastUploads = 0
+    this.lastUploadMs = 0
+    this.lastUploadByLayer = {}
+    this.lastBatches = 0
+    this.lastGroups = 0
+    this.lastDraws = 0
+    this.lastReused = true
+    const encodeStart = performance.now()
+    const timer = this.shared.timer
+    this.frames++
+    timer?.begin(this.frames)
+    const encoder = this.device.createCommandEncoder()
+    const canvasView = texture.createView({ format: this.gpu.viewFormat })
+    this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
     const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
     readback?.()
@@ -672,6 +804,8 @@ export class Renderer {
   }
 
   private releaseScene(): void {
+    this.sceneKey = null
+    this.sceneBatches = null
     this.sceneTexture?.destroy()
     this.sceneTexture = null
     this.sceneView = null
@@ -930,11 +1064,46 @@ export class Renderer {
     // scissor above covers its AABB).
     const shape =
       top.xf && g && g.space !== 'viewport' ? this.clipIndexOf(g.clip) : 0
-    this.composite.draw(rp, pooled, quad, top.w, top.h, a, shape)
+    this.composite.draw(
+      rp,
+      pooled,
+      quad,
+      top.w,
+      top.h,
+      a,
+      shape,
+      g?.filter?.matrices
+    )
     if (sc) {
       rp.setScissorRect(0, 0, parent.devW, parent.devH)
     }
     return true
+  }
+
+  /** Replace `child`'s texture with its contents blurred by `sigma` CSS
+   * px (two passes through pooled targets). */
+  private blurGroup(
+    encoder: GPUCommandEncoder,
+    child: Target,
+    sigma: number
+  ): void {
+    const src = child.pooled
+    if (!src) {
+      return
+    }
+    this.groupBlur ??= new GroupBlur(this.shared)
+    const blur = this.groupBlur
+    // Device px: the group's texture scale (above 1 under a scaling
+    // layer transform).
+    const s = sigma * Math.max(child.sx, child.sy)
+    const mid = this.composite.acquire(child.w, child.h)
+    blur.run(encoder, src, mid, child.w, child.h, [1, 0], s)
+    this.composite.release(src)
+    const out = this.composite.acquire(child.w, child.h)
+    blur.run(encoder, mid, out, child.w, child.h, [0, 1], s)
+    this.composite.release(mid)
+    child.pooled = out
+    child.view = out.view
   }
 
   /** The parent-target scissor (x, y, w, h device px) for `g`'s
@@ -1104,6 +1273,7 @@ export class Renderer {
 
   destroy(): void {
     this.setGpuTiming(null)
+    this.groupBlur?.destroy()
     for (const pass of this.passes) {
       pass.destroy()
     }

@@ -96,8 +96,12 @@ transforms, one past the row's clip), `fx-transform-identity` and
 `fx-dissolve` (the row half dissolved) and `fx-dissolve-full` (progress
 1: must equal `fx-transform-off` exactly), and on `playground/trail.html`
 (replace mode, a scripted stroke held at decay 1) `fx-trail-off`,
-`fx-trail`, `fx-trail-pixel` and `fx-trail-clear` (must equal
-`fx-trail-off` exactly). Material pipelines compile asynchronously:
+`fx-trail`, `fx-trail-pixel`, `fx-trail-clear` (must equal
+`fx-trail-off` exactly) and `fx-trail-reuse` (the page pass alone over a
+still page: frames must reuse the scene, and equal `sceneReuse: false`
+exactly); `fx-waapi` (a box faded by `element.animate()`, equal exactly
+to the same opacity set as a style) and `fx-mat-shared` (two materials
+with the same hooks compile one pipeline). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -233,7 +237,12 @@ translation is solved from `getBoundingClientRect`; near-45° cases fall back
 to `offsetWidth/Height`, glyphs to the font's content height). `matrix3d` is
 flattened to 2D. Running CSS transitions/animations produce no mutation
 records, so `DomSync` tracks them via transition/animation events and the
-frame re-reads their parents' subtrees every frame while they run. Italic
+frame re-reads their parents' subtrees every frame while they run. Script
+animations (`element.animate()`, `Animation.play()`, which Motion uses
+for opacity/transform) fire no events: the first DomSync to start wraps
+those two entry points (`hookScriptAnimations`), and each reports its
+target until its `finished` settles. A paused one scrubbed through
+`currentTime` is not seen. Italic
 runs whose face has no italic get a synthetic 14° shear via the same affine.
 
 ### The frame
@@ -249,6 +258,16 @@ the mutated element's border-box rect changed (siblings could move); inline and
 `getBoundingClientRect` / `getClientRects` from a pass, a shader upload, or
 anything downstream of the reader** — per-glyph rects are already a
 forced-reflow hazard.
+
+**Scene reuse:** while the post chain runs, `Renderer.render` skips
+uploads, groups and the main pass when nothing feeding the scene texture
+changed (`reuseKey`: canvas geometry, scroll, dpr, layer-transform values,
+the active materials and that each reports `changed() === false`, the
+material-pipeline settle counter; no active layer or region; the same
+batch list; no dirty layer) and runs the chain on last frame's texture
+(`renderPostOnly`, `stats().sceneReused`). `/fx` materials report
+`changed()` from their params, time use, trail and pointer reads.
+`sceneReuse: false` turns it off.
 
 **Replace-mode handoff:** `start()` doesn't hide the source. The canvas
 renders at opacity 0 (drawn over the page it doubled the text) until the
@@ -377,7 +396,16 @@ Conventions each pass must follow:
   target's single pass draws its batches and composites its child groups
   at their push (`compositeGroup`; `gpu/composite.ts` draws a quad of four
   corners with the group alpha). The main pass is never split. Records
-  therefore carry `opacity = 1`; passes stay unaware.
+  therefore carry `opacity = 1`; passes stay unaware. A context with a
+  CSS `filter` is a group too (`scene/filter.ts`): its colour functions
+  are 4×5 matrices the composite applies in order, clamped after each
+  (`mats` storage buffer; an instance with none takes the plain path),
+  and `blur()` runs two Gaussian passes over the group texture
+  (`gpu/groupBlur.ts`) after its records, with `bounds` grown by 3σ.
+  `isolation: isolate` makes a group only when something inside blends.
+  Not drawn: `drop-shadow()`, `url()`; `multiply` inside an isolated group
+  over transparent pixels comes out black (its blend state assumes an
+  opaque backdrop).
 - **Layer transforms** (`graph.transform`, `/fx` `fx.transform`): an
   element isolated like a region (shared id; `node.regionClip`, the
   group's `box`/`clip`/`space`) whose group is composited through a

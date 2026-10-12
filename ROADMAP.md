@@ -314,7 +314,21 @@ perspective transforms · culling · WebGL2 backend.
 - [ ] Atlas eviction + edge-filled gutters
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
-- [ ] Isolated groups for `filter` / `mix-blend-mode` / `isolation` (same push/pop machinery)
+- [x] Isolated groups for `filter` / `isolation` (2026-10-11): colour
+      functions as matrices applied in order by the group composite,
+      `blur()` as two Gaussian passes over the group texture, `isolation`
+      a group when something inside blends. `test:visual` section
+      `filters` (parity ~0.6%).
+- [x] Scene reuse (2026-10-11): post passes over an unchanged scene run on
+      last frame's scene texture (`Renderer.reuseKey`,
+      `stats().sceneReused`, `sceneReuse: false` to compare);
+      material pipelines shared by source and `material.warm()`
+- [ ] `filter: drop-shadow()` (an offset, tinted, blurred copy of the
+      group's alpha drawn under it) and `url()` filters
+- [ ] `mix-blend-mode` on an element with a subtree as one blended group
+      (records blend one by one today); `multiply` over a transparent
+      backdrop (inside an isolated group) needs the full
+      `cs(1-αb) + cb(1-αs) + cs·cb`, which one blend state can't express
 - [x] `mix-blend-mode` per record (2026-10-10, `scene/blend.ts`,
       `gpu/blend.ts`): `multiply`, `screen`, `plus-lighter`, `exclusion`
       exact, `difference` as exclusion (exact for black/white sources);
@@ -368,7 +382,10 @@ perspective transforms · culling · WebGL2 backend.
       `to_clip` in `FRAME_WGSL`); `sticky` → paint-only re-read of moved
       stickies on scroll. Not handled: `background-attachment: fixed`,
       fixed pseudo-elements, element scroll containers
-- [ ] Web Animations API (`element.animate()`) fires no CSS events → untracked
+- [x] Web Animations API (`element.animate()`) fires no CSS events:
+      `element.animate()` / `Animation.play()` wrapped (2026-10-11,
+      `hookScriptAnimations`); a paused animation scrubbed through
+      `currentTime` is still untracked
 - [x] Perf harness (`npm run test:perf`) + CPU profile; read-pass scroll snapshot
       and grapheme-segmentation cache (full read −30%)
 - [x] Frame profiler (`compositor.profile`): per-frame CPU breakdown, read

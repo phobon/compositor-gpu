@@ -120,6 +120,13 @@ let compiling = 0
 export function materialPipelinesPending(): number {
   return compiling
 }
+/** Bumped each time a material pipeline finishes compiling (or fails):
+ * its records switch pipelines without any other input changing, so a
+ * cached scene drawn before is stale (Renderer.reuseKey). */
+let settled = 0
+export function materialPipelinesSettled(): number {
+  return settled
+}
 
 /** Blend state every record pass uses (premultiplied over). */
 export const PREMUL_BLEND: GPUBlendState = {
@@ -137,10 +144,13 @@ export const PREMUL_BLEND: GPUBlendState = {
  * frame's whole command buffer.
  */
 export class MaterialPipelines {
-  private readonly cache = new Map<
-    number,
-    GPURenderPipeline | 'pending' | 'failed'
-  >()
+  /** Pipelines by source key: materials whose assembled source, cell
+   * count, raw program and blend state match share one compile. Bind
+   * group layouts made with the same entries are interchangeable, and the
+   * source fixes the entries. */
+  private readonly byKey = new Map<string, SharedPipeline>()
+  /** Each material's key here (once it has asked for a pipeline). */
+  private readonly keyOf = new Map<number, string>()
 
   constructor(
     private readonly kind: MaterialKind,
@@ -155,17 +165,32 @@ export class MaterialPipelines {
     ) => GPURenderPipelineDescriptor
   ) {}
 
+  private state(
+    mat: MaterialBinding
+  ): GPURenderPipeline | 'pending' | 'failed' | undefined {
+    const key = this.keyOf.get(mat.id)
+    return key === undefined ? undefined : this.byKey.get(key)?.state
+  }
+
   /** The pipeline for `mat`, or null to draw with the default one. */
   get(mat: MaterialBinding | null | undefined): GPURenderPipeline | null {
     if (!mat?.kinds.has(this.kind)) {
       return null
     }
-    const p = this.cache.get(mat.id)
+    const p = this.state(mat)
     if (p === undefined) {
       this.compile(mat)
       return null
     }
     return p === 'pending' || p === 'failed' ? null : p
+  }
+
+  /** Start compiling `mat`'s pipeline now, before its records are drawn
+   * (Material.warm). */
+  warm(mat: MaterialBinding): void {
+    if (mat.kinds.has(this.kind) && this.state(mat) === undefined) {
+      this.compile(mat)
+    }
   }
 
   /** True while `mat` holds its records back here: get() returned null
@@ -174,13 +199,35 @@ export class MaterialPipelines {
     return (
       mat?.hold === true &&
       mat.kinds.has(this.kind) &&
-      this.cache.get(mat.id) === 'pending'
+      this.state(mat) === 'pending'
     )
   }
 
   private compile(mat: MaterialBinding): void {
     const id = mat.id
     const raw = mat.raw?.[this.kind]
+    const subdivisions = Math.max(1, Math.floor(mat.subdivisions))
+    const key = [
+      mat.code,
+      subdivisions,
+      raw ?? '',
+      mat.blend ? JSON.stringify(mat.blend) : ''
+    ].join('\u0000')
+    this.keyOf.set(id, key)
+    const shared = this.byKey.get(key)
+    if (shared) {
+      shared.users.add(id)
+      if (shared.state === 'pending') {
+        shared.waiting.add(mat)
+      }
+      return
+    }
+    const entry: SharedPipeline = {
+      state: 'pending',
+      users: new Set([id]),
+      waiting: new Set([mat])
+    }
+    this.byKey.set(key, entry)
     const label = `${mat.label}:${this.kind}`
     let bad = false
     const wrap = (wgsl: string): string => {
@@ -194,47 +241,68 @@ export class MaterialPipelines {
       }
       return out
     }
-    const desc = this.describe(
-      mat.code,
-      Math.max(1, Math.floor(mat.subdivisions)),
-      label,
-      mat.layout,
-      wrap
-    )
+    const desc = this.describe(mat.code, subdivisions, label, mat.layout, wrap)
     const target = desc.fragment?.targets?.[0]
     if (mat.blend && target) {
       target.blend = mat.blend
     }
     if (bad) {
       log.error(`${label}: raw program: the pass shader has no vs/fs`)
-      this.cache.set(id, 'failed')
+      entry.state = 'failed'
+      entry.waiting.clear()
       return
     }
-    this.cache.set(id, 'pending')
     compiling++
     this.device
       .createRenderPipelineAsync(desc)
       .then(
         (pipeline) => {
-          if (this.cache.get(id) === 'pending') {
-            this.cache.set(id, pipeline)
-            mat.ready?.()
+          entry.state = pipeline
+          for (const m of entry.waiting) {
+            m.ready?.()
           }
         },
         (e: unknown) => {
-          if (this.cache.get(id) === 'pending') {
-            this.cache.set(id, 'failed')
-          }
+          entry.state = 'failed'
           log.error(`${desc.label}: pipeline failed:`, (e as Error).message)
         }
       )
       .finally(() => {
+        entry.waiting.clear()
         compiling--
+        settled++
       })
   }
 
-  /** Forget a destroyed material's pipeline. */
+  /** Forget a destroyed material: its pipeline goes once no material
+   * uses it. */
   drop(id: number): void {
-    this.cache.delete(id)
+    const key = this.keyOf.get(id)
+    if (key === undefined) {
+      return
+    }
+    this.keyOf.delete(id)
+    const entry = this.byKey.get(key)
+    if (!entry) {
+      return
+    }
+    entry.users.delete(id)
+    for (const m of entry.waiting) {
+      if (m.id === id) {
+        entry.waiting.delete(m)
+      }
+    }
+    if (entry.users.size === 0) {
+      this.byKey.delete(key)
+    }
   }
+}
+
+/** One compiled (or compiling) material pipeline and the materials on it. */
+interface SharedPipeline {
+  state: GPURenderPipeline | 'pending' | 'failed'
+  /** Material ids using it. */
+  users: Set<number>
+  /** Materials to notify (`ready`) when it finishes compiling. */
+  waiting: Set<MaterialBinding>
 }

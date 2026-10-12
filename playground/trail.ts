@@ -10,7 +10,11 @@ import { createCompositor } from '@/index'
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement
 
-const compositor = await createCompositor({ mode: 'replace' })
+const q = new URLSearchParams(location.search)
+const compositor = await createCompositor({
+  mode: 'replace',
+  sceneReuse: !q.has('noreuse')
+})
 compositor.start()
 const fx = createEffects(compositor)
 const trail = fx.trail({ cell: 16, radius: 90, decay: 0.93 })
@@ -91,9 +95,13 @@ $('mat').addEventListener('change', (e) => {
   mat.enabled = (e.target as HTMLInputElement).checked
 })
 
-const q = new URLSearchParams(location.search)
 if (q.has('pixel')) {
   pass.params.mode = 1
+}
+if (q.has('passonly')) {
+  // Only the page pass: the scene itself is still (scene reuse).
+  light.enabled = false
+  mat.enabled = false
 }
 if (q.has('hold')) {
   trail.params.decay = 1

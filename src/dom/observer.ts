@@ -291,6 +291,60 @@ export const describeEl = (n: Node): string => {
   }`
 }
 
+/**
+ * Animations made from script (`element.animate()`, or an Animation's
+ * `play()`) fire none of the transition/animation events DomSync tracks,
+ * so the two entry points are wrapped, once, the first time a DomSync
+ * starts, and report their targets to every started DomSync. The
+ * wrappers call through unchanged. CSS animations and transitions are left
+ * to their events. Not covered: a paused script animation scrubbed by
+ * setting `currentTime` (no call to observe).
+ */
+const scriptAnimationSyncs = new Set<DomSync>()
+let scriptAnimationsHooked = false
+
+function reportScriptAnimation(a: Animation): void {
+  if (
+    (typeof CSSAnimation !== 'undefined' && a instanceof CSSAnimation) ||
+    (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition)
+  ) {
+    return
+  }
+  const t = (a.effect as KeyframeEffect | null)?.target
+  if (!(t instanceof Element)) {
+    return
+  }
+  for (const sync of scriptAnimationSyncs) {
+    sync.trackScriptAnimation(t, a)
+  }
+}
+
+function hookScriptAnimations(): void {
+  if (
+    scriptAnimationsHooked ||
+    typeof Element === 'undefined' ||
+    typeof Animation === 'undefined' ||
+    typeof Element.prototype.animate !== 'function'
+  ) {
+    return
+  }
+  scriptAnimationsHooked = true
+  const animate = Element.prototype.animate
+  Element.prototype.animate = function (
+    this: Element,
+    ...args: Parameters<Element['animate']>
+  ): Animation {
+    const a = animate.apply(this, args)
+    reportScriptAnimation(a)
+    return a
+  }
+  const play = Animation.prototype.play
+  Animation.prototype.play = function (this: Animation): void {
+    play.call(this)
+    reportScriptAnimation(this)
+  }
+}
+
 export class DomSync {
   private dirty: number = Dirty.ALL
   readonly diag: SyncDiagnostics = {
@@ -510,6 +564,35 @@ export class DomSync {
     this.settle(t)
   }
 
+  /** A script animation on `t` started (see hookScriptAnimations): track
+   * it like a CSS one, until it and every other animation on `t` end. */
+  trackScriptAnimation(t: Element, a: Animation): void {
+    if (!this.started || !this.root.contains(t)) {
+      return
+    }
+    if (isIgnored(t) && !isHoleElement(t)) {
+      return
+    }
+    const had = this.animating.size
+    this.animating.add(t)
+    if (had === 0) {
+      this.mark(Dirty.MUTATION)
+    }
+    const done = (): void => this.onScriptAnimationEnd(t)
+    // `finished` rejects when the animation is cancelled.
+    a.finished.then(done, done)
+  }
+
+  private onScriptAnimationEnd(t: Element): void {
+    if (!this.animating.has(t)) {
+      return
+    }
+    if (hasPending(t, 'animation') || hasPending(t, 'transition')) {
+      return
+    }
+    this.settle(t)
+  }
+
   /** Stop tracking `t`, with one final re-read of its end state. */
   private settle(t: Element): void {
     this.animating.delete(t)
@@ -581,6 +664,8 @@ export class DomSync {
     for (const type of ANIMATION_END) {
       this.root.addEventListener(type, this.onAnimationEnd, true)
     }
+    scriptAnimationSyncs.add(this)
+    hookScriptAnimations()
     // Transitions/animations already running (started before start(), so
     // their start events were missed).
     if (typeof this.root.getAnimations === 'function') {
@@ -624,6 +709,7 @@ export class DomSync {
       return
     }
     this.started = false
+    scriptAnimationSyncs.delete(this)
     this.ro.disconnect()
     this.mo.disconnect()
     this.io.disconnect()

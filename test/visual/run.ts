@@ -68,6 +68,7 @@ const SECTIONS = [
   'mutations',
   'pseudo',
   'blend',
+  'filters',
   'canvas',
   'duo'
 ] as const
