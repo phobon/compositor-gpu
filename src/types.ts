@@ -200,6 +200,9 @@ export interface Compositor {
   stop(): void
   /** Force a re-read of the DOM + re-upload. */
   invalidate(): void
+  /** Scene reuse (CompositorOptions.sceneReuse), switchable at runtime
+   * for A/B comparisons (the HUD's R key). */
+  sceneReuse: boolean
   /** Hide or show the mirrored root's own paint (replace mode), reversibly. */
   setSourceHidden(hidden: boolean): void
   destroy(): void

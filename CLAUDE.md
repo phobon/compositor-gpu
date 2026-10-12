@@ -62,7 +62,11 @@ was requested within a refresh interval of it; lateness is its interval
 then, else its wait since the request. `stop()` reports percentiles,
 late/dropped frames, read causes and the worst hitches with a cause
 (compositor CPU, GPU, script from long animation frames, or outside).
-Off, it costs a few `performance.now()` calls a frame.
+Off, it costs a few `performance.now()` calls a frame. The HUD's text
+lines show CPU/GPU p50/p95, GPU ms per pass label, the share of frames
+that reused the scene, draws and read kinds; B freezes them as a
+baseline and shows each number's change against it, R switches
+`compositor.sceneReuse` and restarts the counted window.
 `npm run test:profile` records scenarios on `perf.html` (`--only`,
 `--n`, `--frames`, `--viewport`, `--headed`, `--save`, `--baseline`) or
 scrolls any page exposing `window.__gpu` (`--url`). SwiftShader numbers

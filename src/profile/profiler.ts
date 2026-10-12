@@ -54,6 +54,8 @@ export interface FrameSample {
   batches: number
   draws: number
   groups: number
+  /** The post chain ran on the previous frame's scene (no main pass). */
+  reused: boolean
   /** Filled in a frame or two later; null without timestamp-query. */
   gpu: GpuFrameTiming | null
 }
@@ -139,6 +141,9 @@ export interface ProfileHost {
   setGpuTiming(onResult: ((t: GpuFrameTiming) => void) | null): boolean
   gpuTimingPending(): number
   requestFrame(): void
+  /** Scene reuse (Compositor.sceneReuse), for the HUD's A/B key. */
+  sceneReuse(): boolean
+  setSceneReuse(on: boolean): void
 }
 
 /** compositor.profile */
@@ -227,7 +232,7 @@ export class Profiler implements Profile {
   hud(on?: boolean): boolean {
     const show = on ?? !this.view
     if (show && !this.view) {
-      this.view = new Hud()
+      this.view = new Hud(this.host)
     } else if (!show && this.view) {
       this.view.destroy()
       this.view = null

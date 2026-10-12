@@ -469,6 +469,7 @@ export async function createCompositor(
         batches: renderer.lastBatches,
         draws: renderer.lastDraws,
         groups: renderer.lastGroups,
+        reused: renderer.lastReused,
         gpu: null
       })
     }
@@ -479,7 +480,12 @@ export async function createCompositor(
   const profileHost: ProfileHost = {
     setGpuTiming: (cb) => renderer.setGpuTiming(cb),
     gpuTimingPending: () => renderer.gpuTimingPending,
-    requestFrame: () => scheduler.request()
+    requestFrame: () => scheduler.request(),
+    sceneReuse: () => renderer.reuseScene,
+    setSceneReuse: (on) => {
+      renderer.reuseScene = on
+      scheduler.request()
+    }
   }
   const profiler = new Profiler(profileHost)
   // The effects layer's hooks (gpu/graph.ts).
@@ -1095,6 +1101,12 @@ export async function createCompositor(
       unveil()
       setSourceHidden(hidden)
     },
+    get sceneReuse() {
+      return renderer.reuseScene
+    },
+    set sceneReuse(on: boolean) {
+      profileHost.setSceneReuse(on)
+    },
     invalidate() {
       if (destroyed || lost) {
         return
@@ -1189,6 +1201,7 @@ function inert(): Compositor & { text: null; scene: null } {
     start() {},
     stop() {},
     ready: Promise.resolve(),
+    sceneReuse: false,
     invalidate() {},
     setSourceHidden() {},
     destroy() {}
