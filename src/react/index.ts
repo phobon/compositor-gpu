@@ -71,7 +71,10 @@ const finePointer = (): boolean =>
  * Runs a compositor and its effects runtime for the subtree's hooks.
  * Client-only: the library is imported after mount, so SSR and browsers
  * without WebGPU get the plain page. Props other than `enabled` are read
- * when the compositor is created.
+ * when the compositor is created. It renders only its children (no
+ * wrapper element) and the context starts null, so server and first
+ * client render match whatever `enabled` and `options` are, and a flag
+ * read only on the client is safe to pass.
  */
 export function CompositorProvider(props: CompositorProviderProps): ReactNode {
   const [gpu, setGpu] = useState<Gpu | null>(null)

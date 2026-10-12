@@ -1034,6 +1034,9 @@ export async function createCompositor(
     log.error(`GPU device lost (${info.reason}): ${info.message}`)
     lost = true
     stop()
+    // stop() shows the canvas (opacity ''); its last frame would sit over
+    // the live page.
+    canvas.style.display = 'none'
   })
 
   log.info(`compositor ready — layers: ${[...layers].join(', ')}`)
