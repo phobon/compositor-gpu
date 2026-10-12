@@ -104,8 +104,10 @@ transforms, one past the row's clip), `fx-transform-identity` and
 `fx-trail-off` exactly) and `fx-trail-reuse` (the page pass alone over a
 still page: frames must reuse the scene, and equal `sceneReuse: false`
 exactly); `fx-waapi` (a box faded by `element.animate()`, equal exactly
-to the same opacity set as a style) and `fx-mat-shared` (two materials
-with the same hooks compile one pipeline). Material pipelines compile asynchronously:
+to the same opacity set as a style), `fx-mat-shared` (two materials
+with the same hooks compile one pipeline) and `fx-reduced` (displace on
+the real clock under reduced motion: two captures 400 ms apart equal
+exactly; `motion.play()` lands at once). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
 from the library fail it. `npm run test:visual -- --with-fx` loads the
 main playground with `/fx` installed and no pass enabled; it must match
@@ -167,7 +169,11 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 single layer transform (`fx/compose.ts`), `schema` on every params
 object, `createEffects` memoised per compositor and counted
 (`release()`), no DOM fallback (inert without WebGPU); timing comes
-from GSAP/Motion (recipes in `src/fx/README.md`). The playground's dev server runs `unplugin-typegpu` (dev
+from GSAP/Motion (recipes in `src/fx/README.md`). Reduced motion
+(`fx/reducedMotion.ts`, `fx.reducedMotion` / `setReducedMotion`): the
+effects clock (`timeMs` in `effects.ts`, `deps.clockMs()` for layers and
+materials) holds still, held-clock `continuous` passes/materials stop
+keeping the loop alive, and `motion.play()` jumps; shot `fx-reduced`. The playground's dev server runs `unplugin-typegpu` (dev
 dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),

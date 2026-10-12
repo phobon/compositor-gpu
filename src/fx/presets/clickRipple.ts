@@ -75,7 +75,9 @@ export function clickRipple(
     // Run frames only while the newest click's ripple is alive.
     update(l, time, ctx) {
       const newest = ctx.pointer?.clicks[0]
-      l.continuous = newest !== undefined && time - newest.t < l.params.duration
+      // A click after the clock was held (reduced motion) is in its future.
+      const age = newest ? time - newest.t : -1
+      l.continuous = age >= 0 && age < l.params.duration
     }
   })
   const p = layer.params

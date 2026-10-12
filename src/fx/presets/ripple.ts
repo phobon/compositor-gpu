@@ -66,7 +66,9 @@ export function ripple(
     enabled: opts.enabled,
     update(m, time, ctx) {
       const newest = ctx.pointer?.clicks[0]
-      m.continuous = newest !== undefined && time - newest.t < m.params.duration
+      // A click after the clock was held (reduced motion) is in its future.
+      const age = newest ? time - newest.t : -1
+      m.continuous = age >= 0 && age < m.params.duration
     }
   })
   const p = mat.params

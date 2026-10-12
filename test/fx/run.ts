@@ -39,6 +39,9 @@
 //                 (fx-waapi-style)
 //   fx-mat-shared  two materials with the same hooks, warmed while
 //                 disabled: one pipeline compile, none more when enabled
+//   fx-reduced    displace drifting on the real clock under reduced motion:
+//                 two captures 400 ms apart must be equal exactly, and
+//                 motion.play() must land at once
 //   fx-m3b            the M3b section, nothing enabled
 //   fx-layer-glyphs   a Layer drawing the heading's glyphs through Slug
 //   fx-layer-image    a Layer sampling the <img> Target as four tiles
@@ -571,6 +574,72 @@ async function main(): Promise<void> {
           note: `${n} px differ`
         })
       }
+    }
+    if (want('fx-reduced')) {
+      // The real clock (pointer still pinned), reduced motion on: the
+      // clock holds, so displace's drift stops.
+      const clip = await sectionClip(page, 'fx-displace')
+      await page.evaluate(() => {
+        const fx = window.__fx?.fx
+        fx?.__override({
+          pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
+        })
+        fx?.setReducedMotion(true)
+      })
+      await setEffect(page, 'displace')
+      const settle = (): Promise<void> =>
+        page.evaluate(async () => {
+          for (let i = 0; i < 4; i++) {
+            await window.__fx?.raf2()
+          }
+        })
+      await settle()
+      const a = clip ? await shoot(page, 'fx-reduced-a', clip) : null
+      await page.waitForTimeout(400)
+      // A scroll forces frames the held clock must not move.
+      await page.evaluate(() => window.scrollBy(0, 1))
+      await settle()
+      await page.evaluate(() => window.scrollBy(0, -1))
+      await settle()
+      const b = clip ? await shoot(page, 'fx-reduced-b', clip) : null
+      const landed = await page.evaluate(async () => {
+        const h = window.__fx
+        const el = document.querySelector('[data-vr="fx-off"]')
+        if (!h || !el) {
+          return false
+        }
+        const m = h.fx.motion(el, { from: { y: 40 } })
+        await m.play({ duration: 5 })
+        const ok = m.progress === 1
+        m.destroy()
+        return ok && h.fx.reducedMotion
+      })
+      await setEffect(page, 'none')
+      await page.evaluate(() => {
+        const fx = window.__fx?.fx
+        fx?.setReducedMotion(null)
+        fx?.__override({
+          time: 1.25,
+          elapsed: 1.25,
+          pointer: { x: 640, y: 450, follow: { x: 640, y: 450 } }
+        })
+      })
+      await settle()
+      if (a && b) {
+        const n = exactDiff(a, b)
+        results.push({
+          name: 'fx-reduced (held clock)',
+          regressionPct: diffPng(a, b, resolve(outDir, 'fx-reduced-diff.png')),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
+      results.push({
+        name: 'fx-reduced (play jumps)',
+        regressionPct: null,
+        status: landed ? 'ok' : 'fail',
+        note: landed ? 'progress 1 at once' : 'play() tweened'
+      })
     }
     if (want('fx-mat-shared')) {
       // Two materials with the same hooks on different elements, created

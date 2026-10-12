@@ -5,7 +5,8 @@ import type { Target } from './target'
 // Motions: an element's layer transform moving from `from` to `to` as
 // `progress` goes 0 -> 1 (docs/EFFECTS.md, Authoring). Timing is the
 // caller's: GSAP or Motion set `progress` (src/fx/README.md recipes), or
-// play()/reverse() run a basic built-in tween. Several motions and
+// play()/reverse() run a basic built-in tween (which jumps to its end
+// under reduced motion, Effects.reducedMotion). Several motions and
 // transforms on one element combine (compose.ts). Without WebGPU nothing
 // renders; progress and params still work.
 
@@ -70,7 +71,7 @@ export interface Motion {
    * ranges, for tuning UIs. */
   readonly schema: MotionSchema
   /** Tween progress to 1 with the built-in tween; resolves when done or
-   * stopped. */
+   * stopped. Under reduced motion it jumps there at once. */
   play(opts?: PlayOptions): Promise<void>
   /** Tween progress to 0. */
   reverse(opts?: PlayOptions): Promise<void>
@@ -165,7 +166,9 @@ export function createMotion(
   composer: Composer,
   gpu: boolean,
   target: Target | Element,
-  opts: MotionOptions = {}
+  opts: MotionOptions = {},
+  /** Reduced motion is on: play()/reverse() jump to their end. */
+  reduced: () => boolean = () => false
 ): Motion {
   const el = target instanceof Element ? target : target.el
   const c: Contribution = { v: identity(), enabled: opts.enabled ?? true }
@@ -244,6 +247,10 @@ export function createMotion(
   const tween = (goal: number, o: PlayOptions = {}): Promise<void> => {
     stop()
     if (destroyed) {
+      return Promise.resolve()
+    }
+    if (reduced()) {
+      handle.progress = goal
       return Promise.resolve()
     }
     const duration = Math.max(0, o.duration ?? 0.6) * 1000

@@ -262,6 +262,10 @@ config.
   types, defaults, ranges; motions list `from.*`, `to.*` and `ease`). A
   dev-only helper in the site builds DialKit panels from the effects it
   registers, so no separate config is kept in sync by hand.
+- **Reduced motion.** `fx.reducedMotion` follows `prefers-reduced-motion`
+  (with `setReducedMotion` to override): the effects clock holds and
+  `motion.play()` jumps to its end. Timing the page drives (GSAP,
+  Motion) is the page's to gate (`src/fx/README.md`, Reduced motion).
 - **One runtime per compositor.** `createEffects(compositor)` returns
   the same runtime to every caller and counts them; `release()` drops
   one, the last destroys it. (`/duo`'s `fxRuntime.js` did this by hand.)

@@ -132,6 +132,10 @@ export interface MaterialDeps {
   graph: RenderGraph
   pointerBuf: GPUBuffer
   time(): number
+  /** The effects clock, ms (held still under reduced motion). */
+  clockMs(): number
+  /** The clock is held (reduced motion, no test override). */
+  clockHeld(): boolean
   elapsedOverride(): number | null
   /** The pointer uniform differs from the previous frame's. */
   pointerMoved(): boolean
@@ -366,7 +370,7 @@ export function createMaterial<S extends ParamSchema>(
       const trailLive = trail?.live() ?? false
       let changed =
         fresh ||
-        state.continuous ||
+        (state.continuous && !deps.clockHeld()) ||
         o.update !== undefined ||
         block.dirty ||
         trailLive ||
@@ -378,7 +382,7 @@ export function createMaterial<S extends ParamSchema>(
         entry.bindGroup = makeGroup()
         changed = true
       }
-      enabledAt ??= ctx.time
+      enabledAt ??= deps.clockMs()
       const time = deps.time()
       inFrame = true
       try {
@@ -391,7 +395,7 @@ export function createMaterial<S extends ParamSchema>(
       }
       const f = fxData
       f[0] = time
-      f[1] = deps.elapsedOverride() ?? (ctx.time - enabledAt) / 1000
+      f[1] = deps.elapsedOverride() ?? (deps.clockMs() - enabledAt) / 1000
       f[2] = graph.shared.dpr
       f[3] = entry.glyphs ?? 0
       f[4] = ctx.scrollX

@@ -701,6 +701,27 @@ defaults to `continuous: true` (its noise drifts); `blur` is static;
 after a pass is enabled; both come from the frame's rAF timestamp, so
 tween time scales affect params, not time.
 
+## Reduced motion
+
+`fx.reducedMotion` is true while the viewer has `prefers-reduced-motion:
+reduce` (live) or after `fx.setReducedMotion(true)`;
+`fx.setReducedMotion(null)` follows the system again, and
+`fx.onReducedMotion(cb)` reports changes. While it is on:
+
+- the effects clock holds still: `fx.time` and `fx.elapsed` stop
+  advancing, so `displace` stops drifting, `ripple`/`clickRipple` don't
+  start for new clicks, and any hook reading the clock draws a still
+  frame;
+- time-driven (`continuous`) passes and materials no longer keep the
+  loop alive (layers still do: a `simulate` keeps stepping);
+- `motion.play()` / `reverse()` jump to their end.
+
+It doesn't touch what the page drives: `progress` and params written by
+GSAP or Motion still apply, as does the pointer (`cursorGlow`, trails).
+Gate those with the same query, e.g. `gsap.matchMedia()` with
+`(prefers-reduced-motion: no-preference)`, and leave elements at rest
+otherwise. The mirror itself isn't motion and stays on.
+
 ## TypeGPU
 
 Every hook takes a `tgpu.fn` with the hook's signature in place of WGSL:

@@ -38,6 +38,7 @@ import {
   type PointerOverride,
   PointerTracker
 } from './pointer'
+import { createReducedMotion } from './reducedMotion'
 import {
   EFFECT_BYTES,
   effectSource,
@@ -147,6 +148,19 @@ export interface Effects {
   /** Remove every pass, layer, material, transform and motion and the
    * pointer listeners, for every caller. Prefer release(). */
   destroy(): void
+  /** The viewer asked for reduced motion (`prefers-reduced-motion:
+   * reduce`, live), or setReducedMotion's override. While on, the effects clock holds still: `fx.time` and
+   * `fx.elapsed` stop advancing, so time-driven effects (displace's
+   * drift, ripples, custom hooks) stop moving, and Motion.play()/
+   * reverse() jump to their end. Progress and params set by the page
+   * (GSAP, Motion) still apply: gate those with the same media query. */
+  readonly reducedMotion: boolean
+  /** Override reducedMotion (true/false), or follow the system again
+   * (null). */
+  setReducedMotion(on: boolean | null): void
+  /** Called with the new value whenever reducedMotion changes. Returns
+   * the unsubscribe. */
+  onReducedMotion(cb: (on: boolean) => void): () => void
   /** Test hook: pin time/elapsed/pointer (null clears). Requests a frame. */
   __override(o: FxOverride | null): void
   /** Test hook: material pipelines still compiling. */
@@ -273,14 +287,23 @@ const inertComposer = createComposer(null)
 function inertEffects(): Effects {
   const pointer = emptyPointer()
   const cache = new WeakMap<Element, Target>()
+  const reduced = createReducedMotion()
   return {
     active: false,
     pointer,
+    get reducedMotion() {
+      return reduced.on
+    },
+    setReducedMotion(on) {
+      reduced.override = on
+    },
+    onReducedMotion: (cb) => reduced.subscribe(cb),
     layer: (opts) => inertLayer(opts),
     material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
     transform: (el, opts) => createTransform(inertComposer, false, el, opts),
-    motion: (el, opts) => createMotion(inertComposer, false, el, opts),
+    motion: (el, opts) =>
+      createMotion(inertComposer, false, el, opts, () => reduced.on),
     trail: (opts) => inertTrail(opts),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
@@ -310,7 +333,9 @@ function inertEffects(): Effects {
       )
     },
     release() {},
-    destroy() {},
+    destroy() {
+      reduced.destroy()
+    },
     __override() {},
     __pending: () => 0,
     __compiled: () => 0
@@ -359,10 +384,14 @@ function buildEffects(compositor: Compositor): Effects {
     const fx = inertEffects()
     fx.release = () => {
       if (lastUser(compositor, fx)) {
-        forget(compositor, fx)
+        fx.destroy()
       }
     }
-    fx.destroy = () => forget(compositor, fx)
+    const inertDestroy = fx.destroy
+    fx.destroy = () => {
+      inertDestroy()
+      forget(compositor, fx)
+    }
     return fx
   }
   const { device, format, frameLayout } = graph.shared
@@ -378,6 +407,8 @@ function buildEffects(compositor: Compositor): Effects {
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
   let destroyed = false
+  const reduced = createReducedMotion()
+  reduced.subscribe(() => graph.requestFrame())
 
   const anyEnabled = (): boolean =>
     trails.some((t) => t.enabled) ||
@@ -571,7 +602,9 @@ function buildEffects(compositor: Compositor): Effects {
 
   // Per-frame state, set in beforeFrame.
   let pointerNow: PointerState = tracker.state
+  /** The effects clock, ms: ctx.time, held still under reduced motion. */
   let timeMs = 0
+  let clockSet = false
   const effectData = new Float32Array(EFFECT_BYTES / 4)
   /** This frame's running stages, in order (filled by encode). */
   const running: { pass: PassState; stage: Stage }[] = []
@@ -728,7 +761,10 @@ function buildEffects(compositor: Compositor): Effects {
   let pointerMoved = true
   const removeHook = graph.addHook({
     beforeFrame(ctx: FrameContext) {
-      timeMs = ctx.time
+      if (!reduced.on || !clockSet) {
+        timeMs = ctx.time
+        clockSet = true
+      }
       tracker.step(ctx.dt, ctx.scrollX, ctx.scrollY)
       const o = override?.pointer
       pointerNow = o
@@ -745,7 +781,7 @@ function buildEffects(compositor: Compositor): Effects {
         if (p.enabled) {
           any = true
           chainLive ||= !p.region
-          p.enabledAt ??= ctx.time
+          p.enabledAt ??= timeMs
         }
         if (!p.enabled && p.ping.length > 0) {
           freePing(p)
@@ -782,12 +818,21 @@ function buildEffects(compositor: Compositor): Effects {
         return true
       }
       let any = false
-      for (const e of [...passes, ...layers, ...materials]) {
-        if (e.enabled) {
-          if (e.continuous) {
-            return true
+      // A held clock gives time-driven passes and materials nothing new
+      // to draw; layers may still simulate.
+      const held = reduced.on && override?.time === undefined
+      for (const [list, timed] of [
+        [passes, true],
+        [layers, false],
+        [materials, true]
+      ] as const) {
+        for (const e of list) {
+          if (e.enabled) {
+            if (e.continuous && !(timed && held)) {
+              return true
+            }
+            any = true
           }
-          any = true
         }
       }
       return any && !override?.pointer && tracker.moving()
@@ -1085,6 +1130,8 @@ function buildEffects(compositor: Compositor): Effects {
     graph,
     pointerBuf,
     time: () => override?.time ?? timeMs / 1000,
+    clockMs: () => timeMs,
+    clockHeld: () => reduced.on && override?.time === undefined,
     elapsedOverride: () => override?.elapsed ?? null,
     dtOverride: () => override?.dt ?? null,
     pointerMoved: () => pointerMoved,
@@ -1221,7 +1268,7 @@ function buildEffects(compositor: Compositor): Effects {
       return t
     },
     motion(el, opts) {
-      const m = createMotion(composer, true, el, opts)
+      const m = createMotion(composer, true, el, opts, () => reduced.on)
       motions.push(m)
       return m
     },
@@ -1255,6 +1302,7 @@ function buildEffects(compositor: Compositor): Effects {
       }
       destroyed = true
       forget(compositor, fx)
+      reduced.destroy()
       tracker.unlisten()
       removeHook()
       for (const t of transforms) {
@@ -1294,6 +1342,13 @@ function buildEffects(compositor: Compositor): Effects {
       pointerBuf.destroy()
       noImage?.destroy()
     },
+    get reducedMotion() {
+      return reduced.on
+    },
+    setReducedMotion(on) {
+      reduced.override = on
+    },
+    onReducedMotion: (cb) => reduced.subscribe(cb),
     __override(o) {
       override = o
       graph.requestFrame()

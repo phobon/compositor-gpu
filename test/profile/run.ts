@@ -21,6 +21,10 @@
 //   --dpr 2        device pixel ratio (default 1; a Retina display is 2)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
+// Each report records the run's adapter and browser (`run`); --baseline
+// refuses GPU and pacing deltas against a baseline from another adapter
+// (software vs hardware, or another vendor/architecture) and warns when
+// the browser's major version differs.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,6 +64,100 @@ const flag = (name: string): boolean =>
 
 /** Stop with a clear message when the page's compositor didn't start
  * (no WebGPU adapter in this browser). */
+/** What a report was recorded on (saved with it as `run`). */
+interface RunInfo {
+  adapter: {
+    vendor: string
+    architecture: string
+    device: string
+    description: string
+  } | null
+  /** SwiftShader or another fallback adapter: GPU and pacing numbers
+   * don't describe the machine. */
+  software: boolean
+  browser: string
+  headed: boolean
+}
+
+type SavedReport = ProfileReport & { run?: RunInfo }
+
+async function adapterInfo(page: Page): Promise<
+  | (RunInfo['adapter'] & {
+      fallback: boolean
+    })
+  | null
+> {
+  return page.evaluate(async () => {
+    const a = await navigator.gpu?.requestAdapter()
+    if (!a) {
+      return null
+    }
+    const i = a.info
+    return {
+      vendor: i.vendor,
+      architecture: i.architecture,
+      device: i.device,
+      description: i.description,
+      fallback:
+        (i as { isFallbackAdapter?: boolean }).isFallbackAdapter === true
+    }
+  })
+}
+
+const adapterName = (r: RunInfo | undefined): string => {
+  if (!r) {
+    return 'unknown (no record)'
+  }
+  const a = r.adapter
+  const name = a
+    ? [a.vendor, a.architecture, a.description].filter(Boolean).join(' / ')
+    : 'no adapter'
+  return `${name}${r.software ? ' (software)' : ''}`
+}
+
+const major = (v: string): string => v.match(/(\d+)\./)?.[1] ?? v
+
+/** Why `run` and `base` can't be compared on the GPU (null: they can), and
+ * warnings that don't block the comparison. */
+function mismatch(
+  run: RunInfo,
+  base: RunInfo | undefined
+): { gpu: string | null; warn: string[] } {
+  const warn: string[] = []
+  if (!base) {
+    // Unknown baseline adapter: a software run can't be checked against
+    // it, so it gets CPU deltas only.
+    return {
+      gpu: run.software
+        ? 'the baseline has no adapter record and this run is on a software adapter'
+        : null,
+      warn: [
+        'the baseline has no adapter record (saved before the check existed): make sure it ran on the same GPU'
+      ]
+    }
+  }
+  let gpu: string | null = null
+  if (run.software !== base.software) {
+    gpu = `this run is on ${run.software ? 'a software' : 'a hardware'} adapter, the baseline on ${base.software ? 'a software' : 'a hardware'} one`
+  } else if (
+    run.adapter?.vendor !== base.adapter?.vendor ||
+    run.adapter?.architecture !== base.adapter?.architecture
+  ) {
+    gpu = `adapters differ: ${adapterName(run)} vs ${adapterName(base)}`
+  }
+  if (major(run.browser) !== major(base.browser)) {
+    warn.push(
+      `browser versions differ: ${run.browser} vs ${base.browser} (layout and reads can move with it)`
+    )
+  }
+  if (run.headed !== base.headed) {
+    warn.push(
+      `this run is ${run.headed ? 'headed' : 'headless'}, the baseline ${base.headed ? 'headed' : 'headless'}`
+    )
+  }
+  return { gpu, warn }
+}
+
 async function requireActive(page: Page): Promise<void> {
   const state = await page.evaluate(async () => ({
     active: window.__gpu?.active === true,
@@ -122,7 +220,21 @@ function delta(label: string, now: Pct, then: Pct | undefined): string {
   return `  ${label.padEnd(18)}p50 ${d(now.p50, then.p50).padStart(7)}  p95 ${d(now.p95, then.p95).padStart(7)}`
 }
 
-function compare(r: ProfileReport, base: ProfileReport): string {
+function compare(
+  r: ProfileReport,
+  base: ProfileReport,
+  gpuOk: boolean
+): string {
+  if (!gpuOk) {
+    // Frame pacing and GPU time describe the adapter: CPU only.
+    return [
+      '  vs baseline (CPU only: different adapter):',
+      delta('cpu total', r.cpu.total, base.cpu.total),
+      delta('  read', r.cpu.read, base.cpu.read)
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
   const lines = [
     `  vs baseline: late ${r.late - base.late >= 0 ? '+' : ''}${r.late - base.late}, dropped ${r.dropped - base.dropped >= 0 ? '+' : ''}${r.dropped - base.dropped}`,
     delta('frame interval', r.dt, base.dt),
@@ -206,11 +318,41 @@ async function main(): Promise<void> {
         await page.evaluate(() => window.__gpu?.profile.hud(true))
       }
     }
+    const describeRun = async (): Promise<RunInfo> => {
+      const adapter = await adapterInfo(page)
+      const run: RunInfo = {
+        adapter: adapter
+          ? {
+              vendor: adapter.vendor,
+              architecture: adapter.architecture,
+              device: adapter.device,
+              description: adapter.description
+            }
+          : null,
+        software:
+          usedSwiftshader ||
+          adapter?.fallback === true ||
+          /swiftshader/i.test(
+            `${adapter?.vendor} ${adapter?.architecture} ${adapter?.description}`
+          ),
+        browser: browser.version(),
+        headed: flag('headed')
+      }
+      console.log(`[profile] adapter: ${adapterName(run)}, ${run.browser}`)
+      if (run.software) {
+        console.log(
+          '[profile] ⚠ SOFTWARE ADAPTER: GPU times and frame pacing describe SwiftShader, not this machine (try --headed)'
+        )
+      }
+      return run
+    }
     const reports: [string, ProfileReport][] = []
+    let run: RunInfo | null = null
     if (url) {
       await page.goto(url, { waitUntil: 'load' })
       await untilReady(page, 'window.__gpu !== undefined')
       await requireActive(page)
+      run = await describeRun()
       await showHud()
       // Let fonts, images and entrance animations settle.
       await page.waitForTimeout(2000)
@@ -225,6 +367,7 @@ async function main(): Promise<void> {
       await page.evaluate(() => window.__perf?.ready)
       console.log(`[profile] perf.html n=${n} ready`)
       await requireActive(page)
+      run = await describeRun()
       await showHud()
       for (const name of SCENARIOS) {
         if (only && !only.includes(name)) {
@@ -248,8 +391,10 @@ async function main(): Promise<void> {
       `\n[profile] ${usedSwiftshader ? 'swiftshader (CPU numbers only)' : 'native GPU'}, ` +
         `GPU timing ${reports.some(([, r]) => r.gpuTiming) ? 'on' : 'unavailable'}\n`
     )
+    let warned = false
     for (const [name, r] of reports) {
-      writeFileSync(resolve(outDir, `${name}.json`), JSON.stringify(r))
+      const saved: SavedReport = run ? { ...r, run } : r
+      writeFileSync(resolve(outDir, `${name}.json`), JSON.stringify(saved))
       console.log(formatReport(r, name))
       for (const ph of r.phases) {
         console.log(formatReport(ph.summary, `  ${name}/${ph.label}`))
@@ -257,8 +402,22 @@ async function main(): Promise<void> {
       if (baseline) {
         const file = resolve(here, 'out', baseline, `${name}.json`)
         if (existsSync(file)) {
-          const b = JSON.parse(readFileSync(file, 'utf8')) as ProfileReport
-          console.log(compare(r, b))
+          const b = JSON.parse(readFileSync(file, 'utf8')) as SavedReport
+          const m = run
+            ? mismatch(run, b.run)
+            : { gpu: 'this run has no adapter record', warn: [] }
+          if (!warned) {
+            warned = true
+            if (m.gpu) {
+              console.log(
+                `[profile] ⚠ baseline '${baseline}': ${m.gpu}; showing CPU deltas only`
+              )
+            }
+            for (const w of m.warn) {
+              console.log(`[profile] ⚠ baseline '${baseline}': ${w}`)
+            }
+          }
+          console.log(compare(r, b, m.gpu === null))
         }
       }
       console.log('')

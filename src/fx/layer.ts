@@ -323,6 +323,10 @@ export interface LayerDeps {
   pointerBuf: GPUBuffer
   /** Page clock, s (or the test override). */
   time(): number
+  /** The effects clock, ms (held still under reduced motion). */
+  clockMs(): number
+  /** The clock is held (reduced motion, no test override). */
+  clockHeld(): boolean
   /** Every effect's elapsed override, s, or null. */
   elapsedOverride(): number | null
   /** The simulate step override, s, or null. */
@@ -849,7 +853,7 @@ export function createLayer<S extends ParamSchema>(
       if (!state.enabled) {
         return
       }
-      enabledAt ??= ctx.time
+      enabledAt ??= deps.clockMs()
       const time = deps.time()
       inFrame = true
       try {
@@ -876,7 +880,7 @@ export function createLayer<S extends ParamSchema>(
       }
       const f = fxData
       f[0] = time
-      f[1] = deps.elapsedOverride() ?? (ctx.time - enabledAt) / 1000
+      f[1] = deps.elapsedOverride() ?? (deps.clockMs() - enabledAt) / 1000
       f[2] = graph.shared.dpr
       f[3] = drawn
       f[4] = ctx.scrollX
