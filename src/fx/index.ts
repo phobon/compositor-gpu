@@ -68,6 +68,11 @@ export {
   dissolve
 } from './presets/dissolve'
 export {
+  type EdgeLensOptions,
+  type EdgeLensSchema,
+  edgeLens
+} from './presets/edgeLens'
+export {
   type ProgressiveBlurOptions,
   type ProgressiveBlurSchema,
   progressiveBlur
@@ -77,6 +82,22 @@ export {
   type RippleSchema,
   ripple
 } from './presets/ripple'
+export {
+  type SpotlightOptions,
+  type SpotlightSchema,
+  spotlight
+} from './presets/spotlight'
+export {
+  type TextStaggerOptions,
+  type TextStaggerSchema,
+  textStagger
+} from './presets/textStagger'
+export {
+  type TouchTrail,
+  type TouchTrailParams,
+  type TouchTrailSchema,
+  touchTrail
+} from './presets/touchTrail'
 export {
   EFFECT_BYTES,
   EFFECT_WGSL,

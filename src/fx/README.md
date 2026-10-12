@@ -3,7 +3,8 @@
 The effects layer of `docs/EFFECTS.md`. Built: the runtime spine and
 fullscreen post (M1: `createEffects`, Params, the pointer, `fx.pass`) and
 geometry (M2: Targets, Layers, region passes) and Materials (M3), with
-the presets `blur`, `displace`, `cursorGlow`, `clickRipple` and `ripple`.
+the presets `blur`, `displace`, `cursorGlow`, `clickRipple`, `ripple`,
+`spotlight`, `textStagger`, `edgeLens` and `touchTrail`.
 M3b added the Layer `simulate` compute hook, Layers that draw a Target's
 glyphs or sample its image, `raw` materials, and TypeGPU externals for
 JS-bodied (`'use gpu'`) hooks. M4 added authoring: `fx.motion`,
@@ -808,6 +809,21 @@ layer draws nothing).
   duration = 1.2 })`: an image Material (fragment only, `mat_sample`): a
   wave packet travelling out from each recent click; `continuous` only
   while the newest one runs.
+- `spotlight(fx, { target, radius = 280, intensity = 0.35, rim = 1.5,
+  rimWidth = 2, color = '#fff', kinds = ['box'] })`: a fragment
+  Material: light around `pointer.follow`, over each record's colour,
+  times its coverage, brighter within `rimWidth` of the edge.
+- `textStagger(fx, { target, progress = 0, spread = 2, rise = 14 })`: a
+  glyph Material (`hold`): glyph k of n rises `rise` px and fades in over
+  its own window of `progress`, offset by k / n × `spread`. The page
+  animates `params.progress` to 1 and destroys it there.
+- `edgeLens(fx, { top = 0.15, topBand = 0.2, bottom = 0.15, bottomBand =
+  0.2 })`: a fullscreen pass magnifying bands at the viewport's top and
+  bottom toward each edge's centre. Pair with `canvasPin: 'viewport'`.
+- `touchTrail(trail, { drag = 1, tap = 56, tapSpeed = 2400, spokes = 6,
+  tapMs = 250 })`: touch listeners feeding `trail.stroke()` (a finger's
+  path, scroll drags included; a tap leaves `spokes` radial strokes).
+  `params` is read per event; `destroy()` removes the listeners.
 - `clickRipple(fx, { radius = 80, width = 2, duration = 0.6, color =
   '#fff', place = 'above' })`: a ring per entry of `pointer.clicks`
   (document space, so it stays where clicked), ease-out growth, linear

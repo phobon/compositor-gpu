@@ -46,38 +46,43 @@ yarn add typegpu opentype.js
 
 ## 4. Mount on `/duo`
 
-A client-only React wrapper (`src/components/Duo/GpuCompositor.jsx`) creates the
-compositor after mount, behind a flag so it's opt-in and easy to A/B:
+`compositor-gpu/react` (React is an optional peer dependency) has a
+client-only provider: it imports the library after mount, creates and
+starts the compositor and the `/fx` runtime, and shares them with hooks
+below it. SSR and browsers without WebGPU get the plain page.
 
 ```jsx
-import { useEffect } from 'react'
+import { CompositorProvider, useFx } from 'compositor-gpu/react'
 
-export const GpuCompositor = ({ enabled = false, onGlyph }) => {
-  useEffect(() => {
-    if (!enabled || typeof window === 'undefined') return
-    let compositor
-    let cancelled = false
-    import('compositor-gpu').then(async ({ createCompositor }) => {
-      compositor = await createCompositor({
-        mode: 'overlay', // 'replace' also opacity-hides the DOM's own paint
-        layers: ['boxes', 'text'],
-        fonts: 'auto', // discovers document.fonts; pass FontFace[] to scope it
-        onGlyph
-      })
-      if (cancelled) return compositor.destroy()
-      compositor.start()
-    })
-    return () => {
-      cancelled = true
-      compositor?.destroy()
-    }
-  }, [enabled, onGlyph])
-  return null
-}
+<CompositorProvider
+  enabled={flag} // e.g. off with ?gpu=0
+  options={{ mode: 'replace', fonts: 'auto', zIndex: 500 }}
+  hud={false} // the profiler HUD
+  trail={false} // true: one shared pointer trail (useTrail)
+>
+  {children}
+</CompositorProvider>
 ```
 
-Enable it with `?gpu=1` (see the drop-in on `/duo`), so the default page is
-untouched and turning the flag off leaves it pixel-identical.
+Everything but `enabled` is read when the compositor is created. Hooks:
+`useGpu()` (`{ compositor, fx, lib, trail, reducedMotion }`),
+`useCompositor()`, `useFx()`, `useFxLib()` (the `/fx` module's presets),
+`useTrail()`, all null until it runs; `useFxEffect(effect, deps)` and
+`useElementFx(ref, effect, deps)`, a useEffect that waits for the
+runtime and skips while the viewer asks for reduced motion
+(`{ reducedMotion: true }` runs anyway); and hooks for presets:
+`useSpotlight(ref)`, `useEdgeLens()`, `useTouchTrail()`. Their `bind`
+option hooks the effect's `params`/`schema` up to a tuning panel.
+
+With the alias above, `compositor-gpu/react` resolves to the submodule's
+source, which imports `react` by name: it must resolve to the site's copy
+(it does while the submodule has no `node_modules`; otherwise dedupe it,
+e.g. vite `resolve.dedupe: ['react']`).
+
+`compositor-gpu/dials` builds DialKit panels (an optional peer) from
+effect schemas: `attachDials(panel, folder, { schema, targets, onChange,
+actions })`, on with `?dials=1` (`configureDials` sets the parameter,
+position, theme and inline/popover mode).
 
 ## Measuring parity on your site
 

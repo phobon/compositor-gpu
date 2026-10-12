@@ -133,9 +133,17 @@ and any `SlugText` faces that failed to resolve (CORS/404 on an `@font-face`
 unless `--parity-max` is passed.
 
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
-bundles two ES entries, `src/index.ts` → `dist/compositor-gpu.js` and
-`src/fx/index.ts` → `dist/fx.js` (`compositor-gpu/fx`), with `typegpu` and
-`opentype.js` external. `@/*` aliases `src/*` in both tsconfig and vite.
+bundles four ES entries, `src/index.ts` → `dist/compositor-gpu.js`,
+`src/fx/index.ts` → `dist/fx.js` (`compositor-gpu/fx`), `src/react/index.ts`
+→ `dist/react.js` (`compositor-gpu/react`: provider and hooks) and
+`src/dials/index.ts` → `dist/dials.js` (`compositor-gpu/dials`: DialKit
+panels from effect schemas), with `typegpu`, `opentype.js`, `react` and
+`dialkit` external (the last two optional peers). `src/react` is the only
+code that imports React (biome's React rules apply there only); it loads
+the core and `/fx` by dynamic import, so SSR stays inert. Site-specific
+choreography (reveals, scrubs, transitions) stays in the sites: GSAP on
+bonobolabs.com, Motion on phobon.io. `@/*` aliases `src/*` in both
+tsconfig and vite.
 
 ## Status
 

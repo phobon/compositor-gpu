@@ -5,9 +5,11 @@ import dts from 'vite-plugin-dts'
 
 // Two modes:
 //   `vite`        → dev server for the playground (root = ./playground)
-//   `vite build`  → library build of ./src into ./dist: two entries,
-//                   `compositor-gpu` (dist/compositor-gpu.js) and
-//                   `compositor-gpu/fx` (dist/fx.js), sharing chunks
+//   `vite build`  → library build of ./src into ./dist: four entries,
+//                   `compositor-gpu` (dist/compositor-gpu.js),
+//                   `compositor-gpu/fx` (dist/fx.js), `compositor-gpu/react`
+//                   (dist/react.js) and `compositor-gpu/dials`
+//                   (dist/dials.js), sharing chunks
 export default defineConfig(({ command }) => {
   if (command === 'serve') {
     return {
@@ -26,15 +28,18 @@ export default defineConfig(({ command }) => {
       lib: {
         entry: {
           index: resolve(import.meta.dirname, 'src/index.ts'),
-          fx: resolve(import.meta.dirname, 'src/fx/index.ts')
+          fx: resolve(import.meta.dirname, 'src/fx/index.ts'),
+          react: resolve(import.meta.dirname, 'src/react/index.ts'),
+          dials: resolve(import.meta.dirname, 'src/dials/index.ts')
         },
         formats: ['es'],
         fileName: (_format, name) =>
           name === 'index' ? 'compositor-gpu.js' : `${name}.js`
       },
       rollupOptions: {
-        // keep heavy deps external so host apps dedupe them
-        external: ['typegpu', 'opentype.js']
+        // keep heavy deps external so host apps dedupe them; react and
+        // dialkit are optional peers
+        external: ['typegpu', 'opentype.js', 'react', /^dialkit(\/|$)/]
       },
       sourcemap: true,
       target: 'esnext'

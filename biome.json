@@ -22,6 +22,9 @@
   },
   "linter": {
     "enabled": true,
+    "domains": {
+      "react": "none"
+    },
     "rules": {
       "preset": "recommended",
       "suspicious": {
@@ -35,6 +38,16 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["src/react/**"],
+      "linter": {
+        "domains": {
+          "react": "recommended"
+        }
+      }
+    }
+  ],
   "files": {
     "includes": [
       "**",
