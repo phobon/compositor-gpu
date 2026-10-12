@@ -135,6 +135,11 @@ function loadSvgImage(
   return null
 }
 
+/** Each svg root's most recent ready rasterisation. */
+const shown = new WeakMap<Element, HTMLImageElement>()
+
+const snap = (v: number): number => Math.round(v * 64) / 64
+
 /** Drop every pending svg-image callback registered by `owner` (mirrors
  * disposeBackgrounds). */
 export function disposeSvgImages(owner: object): void {
@@ -174,15 +179,20 @@ export function readSvgRecord(
   if (rect.width <= 0 || rect.height <= 0) {
     return null
   }
-  const w = Math.max(1, place.local.w)
-  const h = Math.max(1, place.local.h)
+  // The local size recovered under a transform drifts by ~1e-5 px from
+  // frame to frame (a scale transition): snapped, it keeps one key.
+  const w = Math.max(1, snap(place.local.w))
+  const h = Math.max(1, snap(place.local.h))
   const markup = serialize(el, s, w, h)
   const key = fnv1a(`${markup}|${w}x${h}`)
   const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`
-  const img = loadSvgImage(key, dataUrl, owner, el, onReady)
+  // While a new rasterisation decodes (a real resize or restyle), keep
+  // drawing the last one rather than dropping the icon for those frames.
+  const img = loadSvgImage(key, dataUrl, owner, el, onReady) ?? shown.get(el)
   if (!img) {
     return null
   }
+  shown.set(el, img)
   return {
     kind: 'image',
     id,
