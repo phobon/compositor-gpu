@@ -311,7 +311,13 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Conic and repeating-conic gradients; gradient
       `background-size`/`-position`/`-origin` tiles, per-axis repeat;
       elliptical outer and inset shadows
-- [ ] Atlas eviction + edge-filled gutters
+- [x] Image atlas eviction (2026-10-13): entries used in neither of the
+      last two uploads are dropped when a new one doesn't fit at 4096px,
+      the rest repacked tallest first by texture copy (also recovers the
+      space shelves packed before a grow waste); growth copies the old
+      texture instead of re-uploading from sources; standalone textures
+      not drawn for 10 s are destroyed. `npm run test:atlas`
+- [ ] Atlas edge-filled gutters
 - [x] Stacking contexts + z-index (Appendix E paint order, cross-layer draw batches)
 - [x] Opacity groups: opacity<1 contexts render offscreen and composite once (`scene.groups`, push/pop markers in the batch list, pooled targets)
 - [x] Isolated groups for `filter` / `isolation` (2026-10-11): colour

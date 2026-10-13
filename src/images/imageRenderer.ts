@@ -274,7 +274,13 @@ interface Cached {
   src: string
   w: number
   h: number
+  /** performance.now() when it was made or an upload last drew it. */
+  used: number
 }
+
+/** A standalone texture no upload has drawn for this long is destroyed
+ * (and re-made if its source comes back). */
+const TEXTURE_IDLE_MS = 10_000
 
 /**
  * Textured-quad pass for <img> and (via `dom/backgrounds.ts`)
@@ -307,7 +313,8 @@ export class ImagePass implements RenderPass {
   private buffer: GPUBuffer | null = null
   private capacity = 0
   private data = new Float32Array(0)
-  private cache = new WeakMap<CanvasImageSource, Cached>()
+  /** Standalone textures by source; swept after uploads (TEXTURE_IDLE_MS). */
+  private cache = new Map<CanvasImageSource, Cached>()
   /** Rasterised-SVG canvases, keyed by `currentSrc@WxH` so a resize (a new
    * display size) re-rasterises rather than stretching a stale one. Bounded:
    * cleared wholesale past `SVG_CACHE_LIMIT` entries. */
@@ -478,7 +485,8 @@ export class ImagePass implements RenderPass {
       texture,
       src: key,
       w,
-      h
+      h,
+      used: performance.now()
     }
     this.cache.set(source, entry)
     return entry
@@ -510,7 +518,7 @@ export class ImagePass implements RenderPass {
         if (w > 0 && h > 0) {
           const spot =
             Math.max(w, h) <= MAX_ENTRY_SIZE
-              ? this.atlas.add(source, w, h, key, img)
+              ? this.atlas.add(source, w, h, key)
               : null
           // Oversized, or the atlas is full (`add` already logs that once) —
           // same fallback the generic non-bitmap path takes.
@@ -556,7 +564,14 @@ export class ImagePass implements RenderPass {
     if (mipLevelCount > 1) {
       this.mips.generate(texture, mipLevelCount)
     }
-    this.cache.set(img, { view: texture.createView(), texture, src: key, w, h })
+    this.cache.set(img, {
+      view: texture.createView(),
+      texture,
+      src: key,
+      w,
+      h,
+      used: performance.now()
+    })
   }
 
   /** Rasterise an SVG `<img>` at `w`x`h` device px (its concrete object
@@ -641,6 +656,32 @@ export class ImagePass implements RenderPass {
   }
 
   upload(scene: Scene): void {
+    // A record's atlas rect can move while later ones are added (the
+    // atlas grows or compacts): then the instances written before it are
+    // stale and the upload runs again.
+    for (let round = 0; round < 2; round++) {
+      this.atlas.beginUse()
+      const gen = this.atlas.generation
+      this.uploadOnce(scene)
+      if (this.atlas.generation === gen) {
+        break
+      }
+    }
+    this.sweepTextures()
+  }
+
+  /** Destroy standalone textures no upload has drawn for TEXTURE_IDLE_MS. */
+  private sweepTextures(): void {
+    const now = performance.now()
+    for (const [source, c] of this.cache) {
+      if (now - c.used > TEXTURE_IDLE_MS) {
+        c.texture.destroy()
+        this.cache.delete(source)
+      }
+    }
+  }
+
+  private uploadOnce(scene: Scene): void {
     const images = scene.images
     this.draws = []
     this.regions.clear()
@@ -778,6 +819,9 @@ export class ImagePass implements RenderPass {
         d.fill(0, o, o + FLOATS_PER_IMAGE)
         this.draws.push(null)
         continue
+      }
+      if (cached) {
+        cached.used = performance.now()
       }
       this.regions.set(rec, (spot ?? cached) as AtlasRect | Cached)
       const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
@@ -981,6 +1025,10 @@ export class ImagePass implements RenderPass {
   destroy(): void {
     this.buffer?.destroy()
     this.atlas.destroy()
+    for (const c of this.cache.values()) {
+      c.texture.destroy()
+    }
+    this.cache.clear()
   }
 }
 

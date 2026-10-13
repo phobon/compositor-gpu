@@ -28,7 +28,8 @@ export type AtlasCopySource = AtlasSource | ImageBitmap
 
 interface Entry {
   rect: AtlasRect
-  source: AtlasSource
+  /** The `use` epoch it was last looked up or added in. */
+  used: number
 }
 
 /** Stable key for a static image source: URL + natural size. */
@@ -51,9 +52,13 @@ function key(source: HTMLImageElement, w: number, h: number): string {
  * entry can show a faint edge darkening as it blends toward that
  * transparent border.
  *
- * No eviction yet (`count` only grows) — a full atlas just stops accepting
- * new entries (logged once) and the caller falls back to a standalone
- * texture for anything that doesn't fit.
+ * Eviction: each `get`/`add` marks its entry with the current epoch
+ * (`beginUse`, once per upload of the image records). When an entry
+ * doesn't fit at the largest size, the entries used in neither of the
+ * last two rounds are dropped and the rest are repacked (`compact`, a copy
+ * between textures; their rects change and `generation` bumps). Only
+ * when that still leaves no room does `add` refuse (logged once) and the
+ * caller falls back to a standalone texture.
  */
 export class ImageAtlas {
   size = START_SIZE
@@ -69,6 +74,10 @@ export class ImageAtlas {
   private shelfH = 0
   private mipsDirty = false
   private warnedFull = false
+  private epoch = 0
+  /** Packed tallest-first by `compact` since the last entry was added:
+   * repacking again without dropping anything can't make room. */
+  private packedClean = false
   private readonly mips: MipGenerator
 
   constructor(private readonly device: GPUDevice) {
@@ -97,6 +106,12 @@ export class ImageAtlas {
     return this.texture
   }
 
+  /** Start a round of lookups: entries not looked up or added from here
+   * on are the ones `compact` may drop. */
+  beginUse(): void {
+    this.epoch++
+  }
+
   private createTexture(size: number): GPUTexture {
     return this.device.createTexture({
       label: `image-atlas ${size}`,
@@ -106,8 +121,30 @@ export class ImageAtlas {
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
         GPUTextureUsage.RENDER_ATTACHMENT
     })
+  }
+
+  /** Copy each of `moves` (old rect -> new origin) from the current
+   * texture into `into`, mip 0; the caller regenerates the chain. */
+  private copyInto(
+    into: GPUTexture,
+    moves: [AtlasRect, number, number][]
+  ): void {
+    const from = this.texture
+    if (!from || moves.length === 0) {
+      return
+    }
+    const encoder = this.device.createCommandEncoder({ label: 'image-atlas' })
+    for (const [r, x, y] of moves) {
+      encoder.copyTextureToTexture(
+        { texture: from, origin: [r.x, r.y] },
+        { texture: into, origin: [x, y] },
+        [r.w, r.h]
+      )
+    }
+    this.device.queue.submit([encoder.finish()])
   }
 
   /** Shelf-pack a `w`x`h` cell (plus its gutter). Null if it can't fit at
@@ -135,45 +172,74 @@ export class ImageAtlas {
   }
 
   /** Re-create the texture one step bigger (2048 -> 4096, capped at
-   * `device.limits.maxTextureDimension2D`) and re-upload every live entry
-   * at its existing coordinates — packing state is untouched, only the
-   * backing texture grows. An entry whose live `<img>` no longer shows
-   * what it was keyed by (`src` or natural size changed) is dropped rather
-   * than re-copied with the wrong pixels; its space is not reclaimed.
-   * False if already at the cap. */
+   * `device.limits.maxTextureDimension2D`) and copy the old one into its
+   * top-left: rects and packing state are unchanged. False if already at
+   * the cap. */
   private grow(): boolean {
     const max = this.maxSize()
     if (this.size >= max) {
       return false
     }
-    const newSize = Math.min(this.size * 2, max)
+    const old = this.size
+    const newSize = Math.min(old * 2, max)
     const texture = this.createTexture(newSize)
-    for (const [k, e] of this.entries) {
-      const img = e.source
-      const live =
-        !(img instanceof HTMLImageElement) ||
-        (img.complete &&
-          img.naturalWidth === e.rect.w &&
-          img.naturalHeight === e.rect.h &&
-          key(img, e.rect.w, e.rect.h) === k)
-      if (!live) {
-        this.entries.delete(k)
+    this.copyInto(texture, [[{ x: 0, y: 0, w: old, h: old }, 0, 0]])
+    this.replace(texture, newSize)
+    return true
+  }
+
+  /** Drop the entries not used in this or the last `beginUse` round and
+   * repack the rest, tallest first, into a fresh texture of the same size
+   * (this also recovers the space shelves packed before a grow waste).
+   * False when it can't make room: nothing to drop and already packed
+   * that way. */
+  private compact(): boolean {
+    const keep: [string, Entry][] = []
+    for (const kv of this.entries) {
+      // Used in this round or the last: a record later in the round
+      // being uploaded still holds it from the last one.
+      if (kv[1].used >= this.epoch - 1) {
+        keep.push(kv)
+      }
+    }
+    const before = this.entries.size
+    if (keep.length === before && this.packedClean) {
+      return false
+    }
+    keep.sort((a, b) => b[1].rect.h - a[1].rect.h)
+    this.entries = new Map()
+    this.shelfX = 0
+    this.shelfY = 0
+    this.shelfH = 0
+    const texture = this.createTexture(this.size)
+    const moves: [AtlasRect, number, number][] = []
+    for (const [k, e] of keep) {
+      const spot = this.pack(e.rect.w, e.rect.h)
+      if (!spot) {
         continue
       }
-      copyExternalImage(
-        this.device,
-        { source: e.source },
-        { texture, origin: [e.rect.x, e.rect.y] },
-        [e.rect.w, e.rect.h]
-      )
+      moves.push([e.rect, spot.x, spot.y])
+      this.entries.set(k, {
+        rect: { x: spot.x, y: spot.y, w: e.rect.w, h: e.rect.h },
+        used: e.used
+      })
     }
+    this.copyInto(texture, moves)
+    this.replace(texture, this.size)
+    this.packedClean = true
+    log.info(
+      `ImageAtlas: repacked, ${before - keep.length} unused entries dropped`
+    )
+    return true
+  }
+
+  private replace(texture: GPUTexture, size: number): void {
     this.texture?.destroy()
     this.texture = texture
     this.view = texture.createView()
-    this.size = newSize
+    this.size = size
     this.generation++
     this.mipsDirty = true
-    return true
   }
 
   /**
@@ -183,20 +249,14 @@ export class ImageAtlas {
    * in the atlas (by key) returns its existing rect without re-uploading
    * pixels. `explicitKey` lets a caller key a canvas source itself (e.g. an
    * SVG rasterised at display size, keyed by `src@WxH`) — a canvas has no
-   * URL of its own to derive one from. `trackSource`, when given, is what
-   * gets recorded for later `grow()` revalidation instead of `source` — an
-   * `ImageBitmap` is transient (the caller closes it right after this call),
-   * so a bitmap-backed entry tracks the originating `<img>` instead; `grow()`
-   * already drops an entry it can't revalidate against rather than
-   * re-copying from the wrong pixels, so this never reintroduces the crop
-   * `source` was decoded to avoid.
+   * URL of its own to derive one from. The atlas keeps only the pixels,
+   * never `source`.
    */
   add(
     source: AtlasCopySource,
     w: number,
     h: number,
-    explicitKey?: string,
-    trackSource?: AtlasSource
+    explicitKey?: string
   ): AtlasRect | null {
     if (w <= 0 || h <= 0) {
       return null
@@ -207,11 +267,15 @@ export class ImageAtlas {
     const k = explicitKey ?? key(source as HTMLImageElement, w, h)
     const hit = this.entries.get(k)
     if (hit) {
+      hit.used = this.epoch
       return hit.rect
     }
     this.ensureTexture()
     let spot = this.pack(w, h)
     if (!spot && this.grow()) {
+      spot = this.pack(w, h)
+    }
+    if (!spot && this.compact()) {
       spot = this.pack(w, h)
     }
     if (!spot) {
@@ -225,13 +289,21 @@ export class ImageAtlas {
       this.device,
       { source: source as GPUCopyExternalImageSource },
       { texture: this.texture as GPUTexture, origin: [spot.x, spot.y] },
-      [w, h]
+      [w, h],
+      // A re-issued upload (see copyExternalImage) goes where the entry is
+      // by then: a grow or compact may have moved it to a new texture.
+      () => {
+        const e = this.entries.get(k)
+        if (!e || !this.texture) {
+          return null
+        }
+        this.mipsDirty = true
+        return { texture: this.texture, origin: [e.rect.x, e.rect.y] }
+      }
     )
     const rect: AtlasRect = { x: spot.x, y: spot.y, w, h }
-    this.entries.set(k, {
-      rect,
-      source: trackSource ?? (source as AtlasSource)
-    })
+    this.entries.set(k, { rect, used: this.epoch })
+    this.packedClean = false
     this.mipsDirty = true
     return rect
   }
@@ -239,9 +311,15 @@ export class ImageAtlas {
   /** Pure lookup: the rect already packed under `explicitKey`, or null if
    * nothing has been packed for it yet. Never packs or copies — used by a
    * caller (e.g. `ImagePass`'s async bitmap cache) that must not trigger a
-   * synchronous copy before it has real pixels to copy from. */
+   * synchronous copy before it has real pixels to copy from. Marks the
+   * entry used (see `beginUse`). */
   get(explicitKey: string): AtlasRect | null {
-    return this.entries.get(explicitKey)?.rect ?? null
+    const e = this.entries.get(explicitKey)
+    if (!e) {
+      return null
+    }
+    e.used = this.epoch
+    return e.rect
   }
 
   /** Regenerate the mip chain if the atlas changed since the last flush

@@ -391,7 +391,14 @@ Conventions each pass must follow:
   clamped by a half texel in the shader); canvas/video and larger images keep
   their own texture. `ImagePass.draw` collapses consecutive atlas-backed
   instances into one call. `draw()` returns the number of GPU draws issued
-  (`stats().draws`). Mip generation lives in `gpu/mips.ts`.
+  (`stats().draws`). Mip generation lives in `gpu/mips.ts`. Eviction:
+  `ImagePass.upload` starts a round (`atlas.beginUse`) and every lookup
+  marks its entry; when an entry doesn't fit at the largest size, entries
+  unused in the last two rounds are dropped and the rest repacked by
+  texture copy (rects move, `generation` bumps, and an upload that saw it
+  happen runs again). Standalone textures not drawn for 10 s are destroyed
+  (`TEXTURE_IDLE_MS`). `npm run test:atlas` checks the atlas in a page
+  (`playground/atlas.html`).
 - **Inline SVG and SVG images.** An inline `<svg>` root becomes one
   ImageRecord (`dom/svg.ts`: cloned, computed `color`/`fill`/`stroke` baked
   in, serialised to a `data:` URL, cached by FNV-1a hash of markup+size); its

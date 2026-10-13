@@ -51,13 +51,17 @@ function describe(src: GPUImageCopyExternalImageSource): string {
  *
  * Canvas sources: once one has failed (see `canvasImportBroken`) every
  * canvas upload goes through `getImageData` instead, and the failed copy is
- * re-issued that way immediately, so the first frame self-heals.
+ * re-issued that way immediately, so the first frame self-heals. The
+ * re-issue lands after the error scope resolves: `retarget`, when given,
+ * says where the pixels belong by then (an atlas entry may have moved to
+ * another texture meanwhile), or null to drop them.
  */
 export function copyExternalImage(
   device: GPUDevice,
   source: GPUImageCopyExternalImage,
   dest: GPUImageCopyTextureTagged,
-  size: GPUExtent3DStrict
+  size: GPUExtent3DStrict,
+  retarget?: () => GPUImageCopyTextureTagged | null
 ): void {
   const src = source.source
   if (canvasImportBroken && isCanvas(src)) {
@@ -80,7 +84,8 @@ export function copyExternalImage(
     const label = dest.texture.label || '(unlabeled)'
     if (isCanvas(src)) {
       const data = readback(src)
-      if (data) {
+      const to = retarget ? retarget() : dest
+      if (data && to) {
         if (!canvasImportBroken) {
           canvasImportBroken = true
           log.warn(
@@ -89,7 +94,7 @@ export function copyExternalImage(
         }
         device.queue.copyExternalImageToTexture(
           { ...source, source: data },
-          dest,
+          to,
           size
         )
         return
