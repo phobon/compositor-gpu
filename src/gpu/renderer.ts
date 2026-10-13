@@ -1,4 +1,5 @@
 import type { DrawBatch } from '../scene/batches'
+import type { DropShadow } from '../scene/filter'
 import type { Rect } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import type { OpacityGroup } from '../scene/stacking'
@@ -724,6 +725,11 @@ export class Renderer {
         if (blur > 0 && !region?.active()) {
           this.blurGroup(encoder, child, blur)
         }
+        if (g?.filter && !region?.active()) {
+          for (const sh of g.filter.shadows) {
+            this.shadowGroup(encoder, child, sh)
+          }
+        }
         if (region?.active() && child.pooled) {
           child.region = this.regionFrame(child, parent, g, encoder, ctx, dpr)
           region.encode(child.region)
@@ -1102,6 +1108,35 @@ export class Renderer {
     const out = this.composite.acquire(child.w, child.h)
     blur.run(encoder, mid, out, child.w, child.h, [0, 1], s)
     this.composite.release(mid)
+    child.pooled = out
+    child.view = out.view
+  }
+
+  /** Replace `child`'s texture with its contents over `sh`, their
+   * drop shadow (two passes through pooled targets). */
+  private shadowGroup(
+    encoder: GPUCommandEncoder,
+    child: Target,
+    sh: DropShadow
+  ): void {
+    const src = child.pooled
+    if (!src) {
+      return
+    }
+    this.groupBlur ??= new GroupBlur(this.shared)
+    const blur = this.groupBlur
+    const s = sh.sigma * Math.max(child.sx, child.sy)
+    const [r, g, b, a] = sh.color
+    const mid = this.composite.acquire(child.w, child.h)
+    blur.run(encoder, src, mid, child.w, child.h, [1, 0], s, {
+      offset: [sh.dx * child.sx, sh.dy * child.sy]
+    })
+    const out = this.composite.acquire(child.w, child.h)
+    blur.run(encoder, mid, out, child.w, child.h, [0, 1], s, {
+      shadow: { tint: [r * a, g * a, b * a, a], orig: src }
+    })
+    this.composite.release(mid)
+    this.composite.release(src)
     child.pooled = out
     child.view = out.view
   }

@@ -49,6 +49,8 @@ declare global {
       pinClicksOn(id: string): void
       setMode(mode: 'dom' | 'gpu' | 'both'): Promise<void>
       stats(): CompositorStats
+      /** Inline-svg image records in the scene. */
+      svgRecords(): number
       /** Stop / restart the compositor's frame loop (the scissor check
        * scrolls a stale frame into view). */
       stop(): void

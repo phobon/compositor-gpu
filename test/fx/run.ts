@@ -39,6 +39,10 @@
 //                 (fx-waapi-style)
 //   fx-mat-shared  two materials with the same hooks, warmed while
 //                 disabled: one pipeline compile, none more when enabled
+//   fx-svg-transition  an inline svg icon inside a badge whose scale
+//                 transition runs: its image record must be in the scene
+//                 on every frame (the local size recovered under the
+//                 transform drifts; it must not re-rasterise per frame)
 //   fx-reduced    displace drifting on the real clock under reduced motion:
 //                 two captures 400 ms apart must be equal exactly, and
 //                 motion.play() must land at once
@@ -574,6 +578,53 @@ async function main(): Promise<void> {
           note: `${n} px differ`
         })
       }
+    }
+    if (want('fx-svg-transition')) {
+      await setEffect(page, 'none')
+      const r = await page.evaluate(async () => {
+        const host = document.querySelector('[data-vr="fx-geometry"]')
+        const badge = document.createElement('span')
+        badge.id = 'svg-badge'
+        Object.assign(badge.style, {
+          position: 'absolute',
+          left: '24px',
+          top: '24px',
+          display: 'flex',
+          width: '32px',
+          height: '32px',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: '50%',
+          background: '#fff',
+          transform: 'scale(0.92)',
+          transition: 'transform 3s linear'
+        })
+        badge.innerHTML =
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.25"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+        host?.appendChild(badge)
+        const fx = window.__fx
+        // At rest first: the icon rasterised and in the scene.
+        for (let i = 0; i < 40 && (fx?.svgRecords() ?? 0) < 1; i++) {
+          await fx?.raf2()
+        }
+        const before = fx?.svgRecords() ?? 0
+        badge.style.transform = 'scale(1)'
+        const during: number[] = []
+        for (let i = 0; i < 20; i++) {
+          await fx?.raf2()
+          during.push(fx?.svgRecords() ?? 0)
+        }
+        badge.remove()
+        await fx?.raf2()
+        return { before, during }
+      })
+      const ok = r.before === 1 && r.during.every((n) => n === 1)
+      results.push({
+        name: 'fx-svg-transition',
+        regressionPct: null,
+        status: ok ? 'ok' : 'fail',
+        note: `svg records at rest ${r.before}, during ${r.during.join('')}`
+      })
     }
     if (want('fx-reduced')) {
       // The real clock (pointer still pinned), reduced motion on: the

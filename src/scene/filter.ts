@@ -4,9 +4,11 @@
 // order with the clamp to [0, 1] after each, and a Gaussian blur. The
 // matrices are the Filter Effects spec's, in sRGB as Chrome applies the
 // shorthand functions. Deviations: the colour functions apply after the
-// blur whatever their order in the list; past MAX_FILTER_OPS colour
-// functions the rest are dropped; `drop-shadow()` and `url()` are not
-// drawn (each logged once).
+// blur whatever their order in the list; drop shadows apply after the
+// blur and before the colour functions (so a colour function listed
+// before a drop-shadow tints its shadow too); past MAX_FILTER_OPS colour
+// functions the rest are dropped; `url()` is not drawn (logged once).
+import { tryParseColor } from '../util/color'
 import { log } from '../util/log'
 
 /** A 4×5 colour matrix, row-major: rows r, g, b, a of [r g b a offset],
@@ -23,6 +25,21 @@ export interface GroupFilter {
   /** Gaussian standard deviation, CSS px (0: none). Several blurs combine
    * as the root of the sum of squares. */
   blur: number
+  /** `drop-shadow()`s in order, each the shadow of everything before it
+   * (the content and earlier shadows). */
+  shadows: DropShadow[]
+}
+
+/** One `drop-shadow()`: the group's alpha, offset, blurred and tinted,
+ * drawn under it. */
+export interface DropShadow {
+  /** Offset, CSS px in the element's own (untransformed) space. */
+  dx: number
+  dy: number
+  /** Gaussian standard deviation, CSS px (half the blur radius). */
+  sigma: number
+  /** sRGB, straight alpha, 0..1. */
+  color: [number, number, number, number]
 }
 
 const IDENTITY: ColorMatrix = [
@@ -198,6 +215,61 @@ function functions(value: string): [string, string][] {
   return out
 }
 
+const LENGTH = /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px)?$/i
+
+/** Space-separated tokens of `s` outside parentheses. */
+function tokens(s: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of s.trim()) {
+    if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      depth--
+    }
+    if (ch === ' ' && depth === 0) {
+      if (cur) {
+        out.push(cur)
+      }
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  if (cur) {
+    out.push(cur)
+  }
+  return out
+}
+
+/** A computed `drop-shadow()` argument (`<color>? <dx> <dy> <blur>?`, in
+ * either order), or null when it has no offsets or draws nothing. */
+function dropShadow(arg: string): DropShadow | null {
+  const lens: number[] = []
+  let color = 'currentcolor'
+  for (const t of tokens(arg)) {
+    if (LENGTH.test(t)) {
+      lens.push(Number.parseFloat(t))
+    } else {
+      color = t
+    }
+  }
+  if (lens.length < 2) {
+    return null
+  }
+  const c = tryParseColor(color)
+  if (!c || c.a <= 0) {
+    return null
+  }
+  return {
+    dx: lens[0] ?? 0,
+    dy: lens[1] ?? 0,
+    sigma: Math.max(0, lens[2] ?? 0) / 2,
+    color: [c.r, c.g, c.b, c.a]
+  }
+}
+
 const warned = new Set<string>()
 
 const isIdentity = (m: ColorMatrix): boolean =>
@@ -210,8 +282,16 @@ export function parseFilter(value: string): GroupFilter | null {
     return null
   }
   const matrices: ColorMatrix[] = []
+  const shadows: DropShadow[] = []
   let blur2 = 0
   for (const [name, arg] of functions(value)) {
+    if (name === 'drop-shadow') {
+      const sh = dropShadow(arg)
+      if (sh) {
+        shadows.push(sh)
+      }
+      continue
+    }
     if (name === 'blur') {
       const px = Number.parseFloat(arg)
       if (Number.isFinite(px) && px > 0) {
@@ -238,10 +318,20 @@ export function parseFilter(value: string): GroupFilter | null {
     }
   }
   const blur = Math.sqrt(blur2)
-  return matrices.length > 0 || blur > 0 ? { matrices, blur } : null
+  return matrices.length > 0 || blur > 0 || shadows.length > 0
+    ? { matrices, blur, shadows }
+    : null
 }
 
 /** How far a filter spreads paint beyond its group's records, CSS px. */
 export function filterSpread(f: GroupFilter | null | undefined): number {
-  return f ? Math.ceil(f.blur * 3) : 0
+  if (!f) {
+    return 0
+  }
+  // Each shadow is a shadow of everything before it, so their reaches add.
+  let s = f.blur * 3
+  for (const sh of f.shadows) {
+    s += Math.max(Math.abs(sh.dx), Math.abs(sh.dy)) + sh.sigma * 3
+  }
+  return Math.ceil(s)
 }

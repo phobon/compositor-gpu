@@ -9,6 +9,10 @@ import { timed } from './timer'
 // group was drawn; the rest of a pooled texture is cleared, so samples
 // past the edge read transparent. Above 48 taps a side the taps spread
 // out (step > 1) to bound the cost.
+//
+// CSS `filter: drop-shadow()` runs the same two passes over the group's
+// texture: the first samples it shifted by the shadow's offset, the
+// second tints the blurred alpha and draws the original over it.
 
 const BLUR_WGSL = /* wgsl */ `
 struct Blur {
@@ -17,11 +21,15 @@ struct Blur {
   sigma  : f32,     // device px
   radius : f32,     // taps reach ±radius device px
   step   : f32,     // device px between taps
-  _pad   : f32,
+  shadow : f32,     // 1: tint the result alpha, orig over it
+  offset : vec2f,   // device px the source is shifted by
+  _pad   : vec2f,
+  tint   : vec4f,   // premultiplied shadow colour
 };
 @group(0) @binding(0) var<uniform> blur : Blur;
 @group(0) @binding(1) var src : texture_2d<f32>;
 @group(0) @binding(2) var samp : sampler;
+@group(0) @binding(3) var orig : texture_2d<f32>;
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
@@ -31,25 +39,36 @@ fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 
 @fragment
 fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
-  let k = -0.5 / (blur.sigma * blur.sigma);
+  let p = pos.xy - blur.offset;
   var acc = vec4f(0.0);
-  var total = 0.0;
-  var o = -blur.radius;
-  loop {
-    if (o > blur.radius) {
-      break;
+  if (blur.sigma < 0.01) {
+    acc = textureSampleLevel(src, samp, p * blur.texel, 0.0);
+  } else {
+    let k = -0.5 / (blur.sigma * blur.sigma);
+    var total = 0.0;
+    var o = -blur.radius;
+    loop {
+      if (o > blur.radius) {
+        break;
+      }
+      let w = exp(o * o * k);
+      let uv = (p + blur.dir * o) * blur.texel;
+      acc += textureSampleLevel(src, samp, uv, 0.0) * w;
+      total += w;
+      o += blur.step;
     }
-    let w = exp(o * o * k);
-    let uv = (pos.xy + blur.dir * o) * blur.texel;
-    acc += textureSampleLevel(src, samp, uv, 0.0) * w;
-    total += w;
-    o += blur.step;
+    acc = acc / total;
   }
-  return acc / total;
+  if (blur.shadow > 0.5) {
+    let c = textureSampleLevel(orig, samp,
+      pos.xy / vec2f(textureDimensions(orig)), 0.0);
+    return c + blur.tint * acc.a * (1.0 - c.a);
+  }
+  return acc;
 }
 `
 
-const UNIFORM_BYTES = 32
+const UNIFORM_BYTES = 64
 
 export class GroupBlur {
   private readonly pipeline: GPURenderPipeline
@@ -78,6 +97,11 @@ export class GroupBlur {
           binding: 2,
           visibility: GPUShaderStage.FRAGMENT,
           sampler: { type: 'filtering' }
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float' }
         }
       ]
     })
@@ -106,7 +130,9 @@ export class GroupBlur {
     this.used = 0
   }
 
-  /** Blur the top-left w×h of `from` along `dir` into `to`. */
+  /** Blur the top-left w×h of `from` along `dir` into `to`. `offset`
+   * (device px) shifts the source; with `shadow` the result's alpha is
+   * tinted (premultiplied) and `orig` drawn over it. */
   run(
     encoder: GPUCommandEncoder,
     from: GroupTarget,
@@ -114,7 +140,11 @@ export class GroupBlur {
     w: number,
     h: number,
     dir: [number, number],
-    sigma: number
+    sigma: number,
+    opts: {
+      offset?: [number, number]
+      shadow?: { tint: [number, number, number, number]; orig: GroupTarget }
+    } = {}
   ): void {
     const { device } = this.shared
     let buffer = this.uniforms[this.used]
@@ -127,7 +157,9 @@ export class GroupBlur {
       this.uniforms.push(buffer)
     }
     this.used++
-    const radius = Math.ceil(sigma * 3)
+    const radius = sigma < 0.01 ? 0 : Math.ceil(sigma * 3)
+    const offset = opts.offset ?? [0, 0]
+    const tint = opts.shadow?.tint ?? [0, 0, 0, 0]
     const step = Math.max(1, Math.ceil(radius / 48))
     device.queue.writeBuffer(
       buffer,
@@ -140,7 +172,12 @@ export class GroupBlur {
         sigma,
         radius,
         step,
-        0
+        opts.shadow ? 1 : 0,
+        offset[0],
+        offset[1],
+        0,
+        0,
+        ...tint
       ])
     )
     const bindGroup = device.createBindGroup({
@@ -148,7 +185,8 @@ export class GroupBlur {
       entries: [
         { binding: 0, resource: { buffer } },
         { binding: 1, resource: from.view },
-        { binding: 2, resource: this.sampler }
+        { binding: 2, resource: this.sampler },
+        { binding: 3, resource: (opts.shadow?.orig ?? from).view }
       ]
     })
     const rp = encoder.beginRenderPass({

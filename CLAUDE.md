@@ -105,7 +105,10 @@ transforms, one past the row's clip), `fx-transform-identity` and
 still page: frames must reuse the scene, and equal `sceneReuse: false`
 exactly); `fx-waapi` (a box faded by `element.animate()`, equal exactly
 to the same opacity set as a style), `fx-mat-shared` (two materials
-with the same hooks compile one pipeline) and `fx-reduced` (displace on
+with the same hooks compile one pipeline), `fx-svg-transition` (an
+inline svg icon in a badge under a running scale transition stays in
+the scene every frame: no re-rasterising on sub-pixel size drift) and
+`fx-reduced` (displace on
 the real clock under reduced motion: two captures 400 ms apart equal
 exactly; `motion.play()` lands at once). Material pipelines compile asynchronously:
 the harness waits for `fx.__pending()` to reach 0. Console errors
@@ -421,7 +424,8 @@ Conventions each pass must follow:
   and `blur()` runs two Gaussian passes over the group texture
   (`gpu/groupBlur.ts`) after its records, with `bounds` grown by 3σ.
   `isolation: isolate` makes a group only when something inside blends.
-  Not drawn: `drop-shadow()`, `url()`; `multiply` inside an isolated group
+  `drop-shadow()` is drawn by `Renderer.shadowGroup` (after the blur,
+  before the colour functions). Not drawn: `url()`; `multiply` inside an isolated group
   over transparent pixels comes out black (its blend state assumes an
   opaque backdrop).
 - **Layer transforms** (`graph.transform`, `/fx` `fx.transform`): an

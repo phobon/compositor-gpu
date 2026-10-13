@@ -323,8 +323,11 @@ perspective transforms · culling · WebGL2 backend.
       last frame's scene texture (`Renderer.reuseKey`,
       `stats().sceneReused`, `sceneReuse: false` to compare);
       material pipelines shared by source and `material.warm()`
-- [ ] `filter: drop-shadow()` (an offset, tinted, blurred copy of the
-      group's alpha drawn under it) and `url()` filters
+- [x] `filter: drop-shadow()` (2026-10-13): an offset, tinted, blurred
+      copy of the group's alpha drawn under it (two `GroupBlur` passes);
+      shadows apply after `blur()` and before the colour functions;
+      visual section `drop-shadow`
+- [ ] `url()` filters
 - [ ] `mix-blend-mode` on an element with a subtree as one blended group
       (records blend one by one today); `multiply` over a transparent
       backdrop (inside an isolated group) needs the full

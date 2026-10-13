@@ -799,6 +799,12 @@ async function boot(): Promise<void> {
       await raf2()
     },
     stats: () => compositor.stats(),
+    svgRecords: () =>
+      (compositor.scene?.images ?? []).filter(
+        (r) =>
+          r.source instanceof HTMLImageElement &&
+          r.source.src.startsWith('data:image/svg')
+      ).length,
     stop: () => compositor.stop(),
     start: () => compositor.start(),
     raf2
