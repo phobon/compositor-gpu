@@ -1,9 +1,10 @@
 import type { DrawBatch } from '../scene/batches'
 import type { DropShadow } from '../scene/filter'
-import type { Rect } from '../scene/records'
+import type { BackdropRecord, Rect } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext, Layer } from '../types'
+import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
 import type { GpuContext } from './device'
 import {
@@ -253,6 +254,10 @@ export class Renderer {
   private readonly composite: GroupCompositor
   /** CSS `filter: blur()` on groups (made on first use). */
   private groupBlur: GroupBlur | null = null
+  /** CSS `backdrop-filter` draws (made on first use). */
+  private backdrop: BackdropPass | null = null
+  /** The canvas was configured with TEXTURE_BINDING (for backdrops). */
+  private canvasSampled = false
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
    * submit). Reused across frames. */
@@ -516,6 +521,17 @@ export class Renderer {
     this.scene = scene
     const chain = this.postChain?.active() ? this.postChain : null
     const key = chain && this.reuseScene ? this.reuseKey(ctx, dpr) : null
+    if (scene.backdrops.length > 0 && !this.canvasSampled) {
+      // Backdrops read the canvas texture they were drawn over.
+      this.canvasSampled = true
+      this.gpu.context.configure({
+        device: this.device,
+        format: this.gpu.format,
+        alphaMode: 'premultiplied',
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+      })
+    }
     const texture = this.gpu.context.getCurrentTexture()
     if (
       chain &&
@@ -583,6 +599,14 @@ export class Renderer {
     }
     this.composite.begin(scene.groups.length)
     this.groupBlur?.begin()
+    if (scene.backdrops.length > 0) {
+      this.backdrop ??= new BackdropPass(this.shared)
+      let ops = 0
+      for (const b of scene.backdrops) {
+        ops += b.filter.matrices.length
+      }
+      this.backdrop.begin(scene.backdrops.length, ops)
+    }
     let batches = 0
     let groups = 0
     let draws = 0
@@ -591,8 +615,8 @@ export class Renderer {
     // Two phases. Every group's texture is rendered first (children before
     // parents, each in its own pass), then each target's pass draws its
     // batches and composites its child groups in place. A target's pass is
-    // never split, so groups cost no reload of their parent (the main
-    // target is the whole canvas).
+    // split only at a backdrop-filter (drawBackdrop), so groups cost no
+    // reload of their parent (the main target is the whole canvas).
     /** By push index: a rendered group, or 'in-place' (drawn in its
      * parent's pass), or 'skip' (nothing to draw). */
     const plan = new Map<number, Target | 'in-place' | 'skip'>()
@@ -613,12 +637,16 @@ export class Renderer {
     const popOf = (i: number, group: number): number =>
       skipGroup(list, i, group)
 
+    // Draws list[start, end) into `target`; returns the pass to continue
+    // with (a backdrop ends the pass it was given and begins another).
     const drawRange = (
-      rp: GPURenderPassEncoder,
+      first: GPURenderPassEncoder,
       target: Target,
       start: number,
-      end: number
-    ): void => {
+      end: number,
+      label: string
+    ): GPURenderPassEncoder => {
+      let rp = first
       for (let i = start; i < end; i++) {
         const batch = list[i]
         if (!batch) {
@@ -646,6 +674,12 @@ export class Renderer {
             layer.draw(rp, ctx)
             draws++
           }
+        } else if (batch.kind === 'backdrop') {
+          const rec = scene.backdrops[batch.index]
+          if (rec) {
+            rp = this.drawBackdrop(encoder, rp, target, rec, ctx, label)
+            draws++
+          }
         } else {
           const pass = this.passByLayer.get(batch.layer)
           if (!pass) {
@@ -664,6 +698,7 @@ export class Renderer {
           batches++
         }
       }
+      return rp
     }
 
     /** Plan and render the groups in list[start, end) drawn into
@@ -713,13 +748,14 @@ export class Renderer {
         child.group = batch.group
         plan.set(i, child)
         prepare(child, i + 1, j)
-        const rp = this.beginPass(
-          encoder,
+        const label = region?.active() ? 'region' : t ? 'layer' : 'group'
+        const rp = drawRange(
+          this.beginPass(encoder, child, 'clear', label),
           child,
-          'clear',
-          region?.active() ? 'region' : t ? 'layer' : 'group'
+          i + 1,
+          j,
+          label
         )
-        drawRange(rp, child, i + 1, j)
         rp.end()
         const blur = g?.filter?.blur ?? 0
         if (blur > 0 && !region?.active()) {
@@ -742,8 +778,13 @@ export class Renderer {
       this.growExtents(scene.groups, ctx, xfs, extents)
     }
     prepare(main, 0, list.length)
-    const rp = this.beginPass(encoder, main, 'clear', 'main')
-    drawRange(rp, main, 0, list.length)
+    const rp = drawRange(
+      this.beginPass(encoder, main, 'clear', 'main'),
+      main,
+      0,
+      list.length,
+      'main'
+    )
     this.lastBatches = batches
     this.lastGroups = groups
     this.lastDraws = draws
@@ -754,6 +795,7 @@ export class Renderer {
       this.sceneBatches = scene.batches
     }
     this.composite.flush()
+    this.backdrop?.flush()
     const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
     readback?.()
@@ -1112,6 +1154,69 @@ export class Renderer {
     child.view = out.view
   }
 
+  /** End `rp`, filter what `target` holds under `rec` into a pooled
+   * texture (blurred around the border box by 3σ), begin a new pass on
+   * `target` and draw it there inside the element's shape. */
+  private drawBackdrop(
+    encoder: GPUCommandEncoder,
+    rp: GPURenderPassEncoder,
+    target: Target,
+    rec: BackdropRecord,
+    ctx: FrameContext,
+    label: string
+  ): GPURenderPassEncoder {
+    const vx = rec.space === 'viewport' ? ctx.scrollX : 0
+    const vy = rec.space === 'viewport' ? ctx.scrollY : 0
+    const r = rec.rect
+    const pad = rec.filter.blur * 3 + 1
+    const x0 = clamp(
+      Math.floor((r.x + vx - pad - target.ox) * target.sx),
+      target.devW
+    )
+    const y0 = clamp(
+      Math.floor((r.y + vy - pad - target.oy) * target.sy),
+      target.devH
+    )
+    const x1 = clamp(
+      Math.ceil((r.x + r.width + vx + pad - target.ox) * target.sx),
+      target.devW
+    )
+    const y1 = clamp(
+      Math.ceil((r.y + r.height + vy + pad - target.oy) * target.sy),
+      target.devH
+    )
+    const w = x1 - x0
+    const h = y1 - y0
+    const backdrop = this.backdrop
+    if (w <= 0 || h <= 0 || !backdrop) {
+      return rp
+    }
+    rp.end()
+    this.groupBlur ??= new GroupBlur(this.shared)
+    const blur = this.groupBlur
+    // The target as a blur source (its pass has ended).
+    const src = {
+      view: target.view,
+      width: target.pooled?.width ?? target.devW,
+      height: target.pooled?.height ?? target.devH
+    }
+    const s = rec.filter.blur * Math.max(target.sx, target.sy)
+    // First pass: the region, shifted to the texture's origin (and
+    // blurred across); second: blurred down.
+    let out = this.composite.acquire(w, h)
+    blur.run(encoder, src, out, w, h, [1, 0], s, { offset: [-x0, -y0] })
+    if (s >= 0.01) {
+      const mid = out
+      out = this.composite.acquire(w, h)
+      blur.run(encoder, mid, out, w, h, [0, 1], s)
+      this.composite.release(mid)
+    }
+    const next = this.beginPass(encoder, target, 'load', label)
+    backdrop.draw(next, out, rec, x0, y0, this.clipIndexOf(rec.clip))
+    this.composite.release(out)
+    return next
+  }
+
   /** Replace `child`'s texture with its contents over `sh`, their
    * drop shadow (two passes through pooled targets). */
   private shadowGroup(
@@ -1309,6 +1414,7 @@ export class Renderer {
   destroy(): void {
     this.setGpuTiming(null)
     this.groupBlur?.destroy()
+    this.backdrop?.destroy()
     for (const pass of this.passes) {
       pass.destroy()
     }

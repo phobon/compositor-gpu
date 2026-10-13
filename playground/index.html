@@ -580,6 +580,12 @@
       .ds-two > i { display: block; width: 90px; height: 90px; border-radius: 50%; background: #fc3; }
       .ds-gray { filter: drop-shadow(0 8px 6px #36f) grayscale(1); }
       .ds-gray > i { display: block; height: 100%; border-radius: 6px 40px; background: #3a6; }
+      .backdemo { position: relative; height: 200px; border-radius: 12px; overflow: hidden; background: url(./test.png) 0 0/220px 160px; }
+      .backdemo > * { position: absolute; }
+      .bd-glass { left: 24px; top: 24px; width: 260px; height: 120px; border-radius: 18px; background: rgb(255 255 255 / 0.25); backdrop-filter: blur(10px) saturate(1.6); font: 600 18px/1 system-ui; color: #fff; padding: 16px; box-sizing: border-box; }
+      .bd-badge { left: 320px; top: 30px; width: 40px; height: 40px; border-radius: 50%; background: rgb(255 255 255 / 0.6); backdrop-filter: blur(8px); }
+      .bd-gray { left: 400px; top: 24px; width: 180px; height: 150px; border-radius: 8px 40px; backdrop-filter: grayscale(1); outline: 1px solid #fff; }
+      .bd-rot { left: 640px; top: 40px; width: 140px; height: 100px; border-radius: 14px; transform: rotate(-8deg); backdrop-filter: blur(4px) invert(1); }
       .isodemo { display: flex; gap: 24px; margin-top: 20px; background: linear-gradient(90deg, #f6c, #3cf); padding: 16px; }
       .isodemo > div { width: 160px; height: 60px; border: 2px solid #fff; position: relative; }
       .isodemo > div.iso { isolation: isolate; }
@@ -1134,6 +1140,16 @@
           <div class="ds-hard"><b>Aa</b></div>
           <div class="ds-two"><i></i></div>
           <div class="ds-gray"><i></i></div>
+        </div>
+      </section>
+
+      <section data-vr="backdrop">
+        <h2>backdrop-filter</h2>
+        <div class="backdemo">
+          <div class="bd-glass">frosted glass</div>
+          <div class="bd-badge"></div>
+          <div class="bd-gray"></div>
+          <div class="bd-rot"></div>
         </div>
       </section>
 

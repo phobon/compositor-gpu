@@ -70,6 +70,7 @@ const SECTIONS = [
   'blend',
   'filters',
   'drop-shadow',
+  'backdrop',
   'canvas',
   'duo'
 ] as const

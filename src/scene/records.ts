@@ -5,6 +5,7 @@
 // No GPU types leak into this file.
 
 import type { Affine } from '../dom/transform'
+import type { GroupFilter } from './filter'
 
 export type { Affine }
 
@@ -344,4 +345,32 @@ export interface CutoutRecord {
   clip?: Rect | null
 }
 
-export type SceneRecord = BoxRecord | ImageRecord | GlyphRun | CutoutRecord
+/**
+ * `backdrop-filter`: what is painted behind the element (in its target:
+ * the canvas, or the opacity/filter group it is in), blurred and colour-
+ * filtered, drawn inside its border box before its own background. The
+ * renderer ends the target's pass at it, filters the backdrop and resumes.
+ */
+export interface BackdropRecord {
+  kind: 'backdrop'
+  id: number
+  z: number
+  /** Doc-space (or viewport-space) AABB of the border box. */
+  rect: Rect
+  local: LocalSize
+  xform: Affine
+  space?: Space
+  radius: Corners
+  radiusY?: Corners
+  /** Ancestor clip. */
+  clip?: Rect | null
+  /** The blur and colour functions (drop shadows are ignored). */
+  filter: GroupFilter
+}
+
+export type SceneRecord =
+  | BoxRecord
+  | ImageRecord
+  | GlyphRun
+  | CutoutRecord
+  | BackdropRecord

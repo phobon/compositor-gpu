@@ -327,6 +327,13 @@ perspective transforms · culling · WebGL2 backend.
       copy of the group's alpha drawn under it (two `GroupBlur` passes);
       shadows apply after `blur()` and before the colour functions;
       visual section `drop-shadow`
+- [x] `backdrop-filter` (2026-10-13): blur and colour functions of what
+      the element's target holds under its border box, drawn in its
+      rounded, transformed shape; the target's pass splits there
+      (`Renderer.drawBackdrop`, `gpu/backdrop.ts`); visual section
+      `backdrop`. Deviations: the element's own opacity doesn't fade its
+      backdrop; a layer transform (GPU-only) acts as a backdrop root;
+      `drop-shadow()` in a backdrop-filter is ignored
 - [ ] `url()` filters
 - [ ] `mix-blend-mode` on an element with a subtree as one blended group
       (records blend one by one today); `multiply` over a transparent

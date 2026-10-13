@@ -121,6 +121,9 @@ export function createsStackingContext(
   if (s.filter !== 'none') {
     return true
   }
+  if (s.backdropFilter && s.backdropFilter !== 'none') {
+    return true
+  }
   const wc = s.willChange
   if (/(^|,)\s*opacity\s*(,|$)/.test(wc)) {
     return true
@@ -171,6 +174,7 @@ function styleSubset(s: CSSStyleDeclaration): Partial<CSSStyleDeclaration> {
     isolation: s.isolation,
     mixBlendMode: s.mixBlendMode,
     filter: s.filter,
+    backdropFilter: s.backdropFilter,
     willChange: s.willChange,
     opacity: s.opacity
   }
@@ -314,7 +318,11 @@ function blends(ctx: StackingContext): boolean {
       if (blends(item)) {
         return true
       }
-    } else if (item.kind !== 'cutout' && (item.material ?? 0) >= BLEND_BASE) {
+    } else if (
+      item.kind !== 'cutout' &&
+      item.kind !== 'backdrop' &&
+      (item.material ?? 0) >= BLEND_BASE
+    ) {
       return true
     }
   }

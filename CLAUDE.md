@@ -416,7 +416,8 @@ Conventions each pass must follow:
   origin), children before parents, each in its own pass; then each
   target's single pass draws its batches and composites its child groups
   at their push (`compositeGroup`; `gpu/composite.ts` draws a quad of four
-  corners with the group alpha). The main pass is never split. Records
+  corners with the group alpha). The main pass is split only at a
+  backdrop (below). Records
   therefore carry `opacity = 1`; passes stay unaware. A context with a
   CSS `filter` is a group too (`scene/filter.ts`): its colour functions
   are 4×5 matrices the composite applies in order, clamped after each
@@ -425,7 +426,18 @@ Conventions each pass must follow:
   (`gpu/groupBlur.ts`) after its records, with `bounds` grown by 3σ.
   `isolation: isolate` makes a group only when something inside blends.
   `drop-shadow()` is drawn by `Renderer.shadowGroup` (after the blur,
-  before the colour functions). Not drawn: `url()`; `multiply` inside an isolated group
+  before the colour functions). `backdrop-filter` (blur and colour
+  functions) is a `BackdropRecord` painted first among the element's own
+  records, reached through a `backdrop` batch at its z (before its own
+  group's push): `Renderer.drawBackdrop` ends the target's pass, blurs
+  the region under the border box (+3σ) from the target into a pooled
+  texture, resumes the pass (`load`) and draws it inside the element's
+  rounded, transformed shape (`gpu/backdrop.ts`, colour functions there).
+  The backdrop is what the target holds, so the nearest opacity, filter
+  or layer-transform group is the backdrop root; the element's own
+  opacity doesn't fade it. The canvas is reconfigured with
+  TEXTURE_BINDING the first time a backdrop appears.
+  Not drawn: `url()`; `multiply` inside an isolated group
   over transparent pixels comes out black (its blend state assumes an
   opaque backdrop).
 - **Layer transforms** (`graph.transform`, `/fx` `fx.transform`): an

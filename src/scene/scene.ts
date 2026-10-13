@@ -1,6 +1,7 @@
 import type { Layer } from '../types'
 import { type Anchor, buildBatches, type DrawBatch, unionRect } from './batches'
 import type {
+  BackdropRecord,
   BoxRecord,
   ClipShape,
   CutoutRecord,
@@ -24,6 +25,9 @@ export class Scene {
   runs: GlyphRun[] = []
   /** `data-gpu-ignore` holes (see CutoutRecord). */
   cutouts: CutoutRecord[] = []
+  /** backdrop-filter elements, by z (drawn through batches of kind
+   * 'backdrop', not a layer). */
+  backdrops: BackdropRecord[] = []
   /** Opacity groups, sorted by `first` (see stacking.ts). Set by the
    * reader before sort(). */
   groups: OpacityGroup[] = []
@@ -79,6 +83,7 @@ export class Scene {
     this.images = []
     this.runs = []
     this.cutouts = []
+    this.backdrops = []
     this.groups = []
     this.clipShapes = []
     this.clipIds.clear()
@@ -126,6 +131,9 @@ export class Scene {
         this.cutouts.push(record)
         this.markDirty('cutouts')
         break
+      case 'backdrop':
+        this.backdrops.push(record)
+        break
     }
   }
 
@@ -137,6 +145,7 @@ export class Scene {
     this.images.sort(byZ)
     this.runs.sort(byZ)
     this.cutouts.sort(byZ)
+    this.backdrops.sort(byZ)
     const runRects = this.runs.map((r) =>
       unionRect(r.glyphs.map((g) => g.rect))
     )
@@ -147,7 +156,8 @@ export class Scene {
       runRects,
       this.cutouts,
       this.groups,
-      this.anchors?.() ?? []
+      this.anchors?.() ?? [],
+      this.backdrops
     )
   }
 

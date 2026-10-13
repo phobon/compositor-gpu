@@ -1,5 +1,6 @@
 import type { Layer } from '../types'
 import type {
+  BackdropRecord,
   BoxRecord,
   CutoutRecord,
   GlyphRun,
@@ -26,6 +27,9 @@ export type DrawBatch =
   | { kind: 'push'; group: number }
   | { kind: 'pop'; group: number }
   | { kind: 'extra'; id: number }
+  /** Scene.backdrops[index]: end the target's pass, filter what it holds
+   * so far, resume and draw it. */
+  | { kind: 'backdrop'; index: number }
 
 /**
  * Where an extra layer (gpu/graph.ts `addLayer`) draws: before the record
@@ -43,8 +47,8 @@ export interface Anchor {
 
 interface GroupEvent {
   z: number
-  kind: 'push' | 'pop' | 'extra'
-  /** Group index, or the extra layer's id. */
+  kind: 'push' | 'pop' | 'extra' | 'backdrop'
+  /** Group index, the extra layer's id, or the backdrop's index. */
   group: number
   /** Group: nesting depth. Extra: Anchor.depth. */
   depth: number
@@ -67,6 +71,13 @@ function compareEvents(a: GroupEvent, b: GroupEvent): number {
   }
   if (a.kind === 'extra' && b.kind === 'extra') {
     return b.depth - a.depth
+  }
+  // An extra anchored at a backdrop's z goes before the element.
+  if (a.kind === 'backdrop' && b.kind === 'extra') {
+    return 1
+  }
+  if (a.kind === 'extra' && b.kind === 'backdrop') {
+    return -1
   }
   // pop vs extra: the pop closes first unless its group encloses the
   // element the extra follows.
@@ -280,7 +291,8 @@ export function buildBatches(
   runRects: Rect[],
   cutouts: CutoutRecord[] = [],
   groups: readonly OpacityGroup[] = [],
-  anchors: readonly Anchor[] = []
+  anchors: readonly Anchor[] = [],
+  backdrops: readonly BackdropRecord[] = []
 ): DrawBatch[] {
   const entries: Entry[] = []
   for (let i = 0; i < boxes.length; i++) {
@@ -375,6 +387,15 @@ export function buildBatches(
   for (const a of anchors) {
     events.push({ z: a.z, kind: 'extra', group: a.id, depth: a.depth })
   }
+  // A backdrop draws at its own z, inside the groups open there. Its
+  // element's own group (opacity, filter) pushes at the same z and comes
+  // after it: the backdrop reads the target that group composites into.
+  for (let i = 0; i < backdrops.length; i++) {
+    const b = backdrops[i]
+    if (b) {
+      events.push({ z: b.z, kind: 'backdrop', group: i, depth: 0 })
+    }
+  }
   events.sort(compareEvents)
 
   const batches: (Accum | GroupEvent)[] = []
@@ -442,8 +463,12 @@ export function buildBatches(
           }
         : { layer: b.layer, first: b.first, count: b.count }
     }
-    return b.kind === 'extra'
-      ? { kind: 'extra', id: b.group }
-      : { kind: b.kind, group: b.group }
+    if (b.kind === 'extra') {
+      return { kind: 'extra', id: b.group }
+    }
+    if (b.kind === 'backdrop') {
+      return { kind: 'backdrop', index: b.group }
+    }
+    return { kind: b.kind, group: b.group }
   })
 }

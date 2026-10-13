@@ -1,6 +1,7 @@
 import { blendMaterialId } from '../scene/blend'
 import { type GroupFilter, parseFilter } from '../scene/filter'
 import type {
+  BackdropRecord,
   BoxRecord,
   CutoutRecord,
   Glyph,
@@ -108,7 +109,7 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
 export const MAX_BOUNDARIES = 64
 const RECT_EPSILON = 0.01
 
-type OwnRecord = BoxRecord | ImageRecord | CutoutRecord
+type OwnRecord = BoxRecord | ImageRecord | CutoutRecord | BackdropRecord
 
 const NO_RECORDS: readonly OwnRecord[] = []
 
@@ -194,7 +195,7 @@ function tagBlend(node: ElNode, id: number): void {
     r.material ??= id
   }
   for (const r of node.own) {
-    if (r.kind !== 'cutout') {
+    if (r.kind !== 'cutout' && r.kind !== 'backdrop') {
       tag(r)
     }
   }
@@ -862,6 +863,39 @@ export class SceneReader {
       }
       if (inset.length) {
         own = [...own, ...inset]
+      }
+    }
+
+    // backdrop-filter: the filtered backdrop paints first, under the
+    // element's shadows and background.
+    const bf = s.backdropFilter
+    if (
+      layers.has('boxes') &&
+      bf &&
+      bf !== 'none' &&
+      s.visibility === 'visible' &&
+      rect.width > 0 &&
+      rect.height > 0
+    ) {
+      const filter = parseFilter(bf)
+      if (filter && (filter.blur > 0 || filter.matrices.length > 0)) {
+        const back: BackdropRecord = {
+          kind: 'backdrop',
+          id: scene.allocId(),
+          z: 0,
+          rect,
+          local: place.local,
+          xform: place.xform,
+          ...recordRadii(s, {
+            x: 0,
+            y: 0,
+            width: place.local.w,
+            height: place.local.h
+          }),
+          clip,
+          filter
+        }
+        own = [back, ...own]
       }
     }
 

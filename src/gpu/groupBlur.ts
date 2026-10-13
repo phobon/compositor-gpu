@@ -135,7 +135,7 @@ export class GroupBlur {
    * tinted (premultiplied) and `orig` drawn over it. */
   run(
     encoder: GPUCommandEncoder,
-    from: GroupTarget,
+    from: Pick<GroupTarget, 'view' | 'width' | 'height'>,
     to: GroupTarget,
     w: number,
     h: number,
