@@ -1,0 +1,55 @@
+Band culling, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+
+## npx tsx test/fill/run.ts
+full       rows drawn 2700, instances 14483, flat viewport rows after a 600 px stall 30 of 900
+band       rows drawn 1156, instances 6294, flat viewport rows after a 600 px stall 482 of 900
+bandcanvas rows drawn 1156, instances 14056, flat viewport rows after a 600 px stall 482 of 900
+
+## test:profile --only scroll --nodim --frames 0.05 
+[profile] adapter: google / swiftshader / SwiftShader Device (Subzero) (software), 141.0.7390.37
+scroll: 12 frames over 53.4 s, refresh 5749.70 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     5833.10 6299.70 6299.70 6299.70
+  cpu total             0.40    3.60    3.60    3.60
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.20    0.20    0.20
+    upload              0.00    0.00    0.00    0.00
+    encode              0.20    0.40    0.40    0.40
+    other               0.10    3.40    3.40    3.40
+  gpu total          5804.18 6277.17 6277.17 6277.17
+    main             5804.18 6277.17 6277.17 6277.17
+      alone          5804.18 6277.17 6277.17 6277.17
+
+## test:profile --only scroll --nodim --frames 0.05 --band --bandcanvas
+[profile] adapter: google / swiftshader / SwiftShader Device (Subzero) (software), 141.0.7390.37
+scroll: 12 frames over 22.5 s, refresh 2366.60 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     2416.50 2766.50 2766.50 2766.50
+  cpu total             0.30    0.80    0.80    0.80
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.20    0.40    0.40    0.40
+    other               0.10    0.30    0.30    0.30
+  gpu total          2411.92 2723.01 2723.01 2723.01
+    main             2411.92 2723.01 2723.01 2723.01
+      alone          2411.92 2723.01 2723.01 2723.01
+
+## test:profile --only scroll --nodim --frames 0.05 --band
+[profile] adapter: google / swiftshader / SwiftShader Device (Subzero) (software), 141.0.7390.37
+scroll: 12 frames over 22.7 s, refresh 2366.50 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     2416.50 2816.50 2816.50 2816.50
+  cpu total             0.40    0.80    0.80    0.80
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.20    0.50    0.50    0.50
+    other               0.00    0.60    0.60    0.60
+  gpu total          2442.25 2789.16 2789.16 2789.16
+    main             2442.25 2789.16 2789.16 2789.16
+      alone          2442.25 2789.16 2789.16 2789.16
+

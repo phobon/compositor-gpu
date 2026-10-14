@@ -47,7 +47,8 @@ spans whole paragraphs and blocked every merge), and shadow records use a
 1.5σ `batchRect` footprint. On the main target each batch draws only
 the instance runs whose records reach the canvas region grown by half a
 canvas (`gpu/cull.ts`, cached per batch list until the canvas leaves that
-region; gaps under 64 instances are drawn through; batches with a
+region; each instance's bounds are computed once per batch list into
+typed arrays, so a new region is a loop over numbers; gaps under 64 instances are drawn through; batches with a
 non-builtin material are drawn whole, their vertex hooks may move
 geometry): perf.html submits ~11k instances in 33 draws instead of ~76k
 in 123. `cullDraws: false` turns it off; `test:perf` and `test:profile`
@@ -72,7 +73,13 @@ SwiftShader. `canvasFill: 'band'` (experimental, page-pinned canvas)
 scissors the main pass to the viewport plus a band sized to the scroll
 steps of the last 200 ms (at least 128 CSS px) and skips groups outside
 it; everything a pass draws on the main target resets to that scissor
-(`Target.scissor`, `restoreScissor`). `npx tsx test/fill/run.ts` shows
+(`Target.scissor`, `restoreScissor`); draws are culled to the band
+(`cullDraws: 'canvas'` culls to the canvas instead, for A/B). Without a
+post chain, 'band' draws into a texture kept between frames (the canvas
+texture isn't), cleared and redrawn only in the band (`ClearRect`), its
+pixels shifted by a texture copy when the canvas re-anchors (the rows
+newly covered drawn that frame), and copied to the canvas in a `copy`
+pass; `'band-clear'` clears outside the band instead. `npx tsx test/fill/run.ts` shows
 what a stalled main thread then reveals. A frame is paced when the previous one asked for it or it
 was requested within a refresh interval of it; lateness is its interval
 then, else its wait since the request. `stop()` reports percentiles,

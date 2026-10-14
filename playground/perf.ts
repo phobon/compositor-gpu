@@ -152,10 +152,20 @@ async function boot(): Promise<void> {
     root: stage,
     layers: ['boxes', 'images', 'text'],
     fonts: 'auto',
-    // `?nocull`: submit every instance (CompositorOptions.cullDraws).
-    cullDraws: !params.has('nocull'),
-    // `?band`: draw only the viewport and a band (CompositorOptions.canvasFill).
-    canvasFill: params.has('band') ? 'band' : 'full'
+    // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
+    // to the canvas rather than the band (CompositorOptions.cullDraws).
+    cullDraws: params.has('nocull')
+      ? false
+      : params.has('bandcanvas')
+        ? 'canvas'
+        : true,
+    // `?band`: draw only the viewport and a band, keeping the rest;
+    // `?bandclear`: clearing it (CompositorOptions.canvasFill).
+    canvasFill: params.has('bandclear')
+      ? 'band-clear'
+      : params.has('band')
+        ? 'band'
+        : 'full'
     // No onGlyph: the perf fixture stays static, matching main.ts's
     // non-animated ?vr mode, so nothing dirties the text layer every frame.
   })
@@ -201,6 +211,16 @@ async function boot(): Promise<void> {
     async scroll() {
       for (let f = 0, n = k(240); f < n; f++) {
         window.scrollBy(0, f < n / 2 ? 8 : -8)
+        await raf()
+      }
+    },
+    // 4800 px down then back up, in steps sized to the frame count, so
+    // the scroll leaves draw culling's cached region repeatedly.
+    async 'scroll-long'() {
+      const n = k(240)
+      const step = Math.round(9600 / n)
+      for (let f = 0; f < n; f++) {
+        window.scrollBy(0, f < n / 2 ? step : -step)
         await raf()
       }
     },

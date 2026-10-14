@@ -1,0 +1,42 @@
+Band margins, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+
+## npx tsx test/fill/run.ts (scroll to 3000 px in 600 px steps, then a 600 px stalled scroll)
+full       rows drawn 2700, instances 14931, flat viewport rows after a 600 px stall 321 of 900
+band       rows drawn 1156, instances 6294, flat viewport rows after a 600 px stall 321 of 900
+bandcanvas rows drawn 1156, instances 14289, flat viewport rows after a 600 px stall 321 of 900
+bandclear  rows drawn 1156, instances 6294, flat viewport rows after a 600 px stall 482 of 900
+Pixel diff of the stall screenshots against full (channel > 8): band 40 px, bandcanvas 40 px (one tilted card), bandclear 176527 px.
+The 321 rows with full are the canvas's own end: the last re-anchor (at 2400 px) put the canvas bottom at 4200 px, and the stalled viewport reaches 4501 px.
+
+## test:visual, default canvasFill switched to 'band' temporarily vs 'full'
+Both: 29 ok; the same 5 fail with the same numbers in both (container goldens): textshadow 1.09, emoji 4.18, bglayers-select 9.11, selcolor-select 8.90, duo-s900 19.97
+
+## test:fx, default 'band' (failures)
+fx-blur-scissor                  8.38  fail
+fx-displace                      1.00  fail
+fx-displace-push                 1.07  fail
+fx-dissolve                      2.68  fail
+fx-trail-off                   100.00  fail
+fx-trail                       100.00  fail
+fx-trail-pixel                 100.00  fail
+fx-trail-reuse                 100.00  fail
+fx-trail-reuse-off             100.00  fail
+fx-trail-clear                 100.00  fail
+With 'full': fx-blur-scissor 0.00 ok; fx-trail 100.00, fx-displace 1.00, fx-dissolve 2.68 fail the same (checked with --only). fx-blur-scissor runs a post chain, where 'band' behaves as 'band-clear'.
+
+## test:profile --only scroll --nodim --frames 0.05 --bandclear
+scroll: 12 frames over 23.2 s, refresh 2466.60 ms (0 Hz)
+  cpu total             0.50    5.40    5.40    5.40
+  gpu total          2528.75 2628.51 2628.51 2628.51
+    main             2528.75 2628.51 2628.51 2628.51
+      alone          2528.75 2628.51 2628.51 2628.51
+
+## test:profile --only scroll --nodim --frames 0.05 --band
+scroll: 12 frames over 27.9 s, refresh 2566.50 ms (0 Hz)
+  cpu total             0.40    0.90    0.90    0.90
+  gpu total          2731.41 3098.14 3098.14 3098.14
+    main             2684.29 3028.90 3028.90 3028.90
+      alone          2684.29 3028.90 3028.90 3028.90
+    copy               46.52   69.24   69.24   69.24
+      alone            46.52   69.24   69.24   69.24
+

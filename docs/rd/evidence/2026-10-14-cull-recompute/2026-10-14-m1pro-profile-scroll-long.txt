@@ -1,0 +1,38 @@
+Cull recompute, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-14. perf.html n=400, 1280x900, dpr 1,
+test:profile --headed --only scroll-long --nodim [--band].
+Before: src/gpu/cull.ts stashed (HEAD version). After: stash popped.
+
+                       encode p50  p95   p99   max   | cpu total p99/max | main GPU p50
+before, full             0.10     0.20  1.90  5.20  |   2.00 / 5.30     |  5.83
+before, band             0.10     1.60  2.50  4.50  |   2.50 / 4.60     |  3.81
+after,  full             0.10     0.20  0.90  5.90  |   1.00 / 6.00     |  5.23
+after,  band             0.10     0.50  0.80  3.90  |   0.90 / 3.90     |  4.08
+
+All four: 239-253 frames over 2.0-2.1 s at 120 Hz, late 0, dropped 0,
+reads 0 partial / 0 full.
+
+---- before, full
+scroll-long: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  frame interval        8.30    9.10    9.20    9.40
+  cpu total             0.20    0.30    2.00    5.30
+    encode              0.10    0.20    1.90    5.20
+  gpu total             5.83    6.85    7.64    8.35
+---- before, band
+scroll-long: 253 frames over 2.1 s, refresh 8.33 ms (120 Hz)
+  frame interval        8.30    9.20    9.30    9.30
+  cpu total             0.10    1.70    2.50    4.60
+    encode              0.10    1.60    2.50    4.50
+  gpu total             3.81    5.50    6.57    7.22
+---- after, full
+scroll-long: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  frame interval        8.30    9.30    9.40    9.40
+  cpu total             0.10    0.30    1.00    6.00
+    encode              0.10    0.20    0.90    5.90
+  gpu total             5.23    6.81    7.74    8.80
+---- after, band
+scroll-long: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  frame interval        8.30    9.20    9.30    9.40
+  cpu total             0.20    0.60    0.90    3.90
+    encode              0.10    0.50    0.80    3.90
+  gpu total             4.08    5.15    6.03    6.61

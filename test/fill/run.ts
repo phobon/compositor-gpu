@@ -1,10 +1,13 @@
 // Fill check for CompositorOptions.canvasFill: loads perf.html (n=400)
-// with 'full' and with 'band', scrolls to 3000 px, then stops the
+// with each canvasFill, scrolls to 3000 px in 600 px steps (so the canvas
+// re-anchors and 'band' shifts its kept pixels), then stops the
 // compositor's redraws (requestAnimationFrame disabled, as in a main-thread
 // stall) and scrolls 600 px further, with the page's own paint hidden. It
 // prints the rows the last frame drew and how many viewport rows are left
 // flat (blank, or empty space between cards), and saves the screenshots to
-// test/fill/out/.
+// test/fill/out/. Also prints the instances drawn, and runs 'band' a second
+// time culled to the canvas rather than the band (`cullDraws: 'canvas'`),
+// and 'band-clear' (margins cleared rather than kept).
 //
 // Usage: npx tsx test/fill/run.ts
 import { mkdirSync } from 'node:fs'
@@ -52,22 +55,28 @@ async function main(): Promise<void> {
   }
   const { browser } = await launchWithFallback(`${base}perf.html`, 'fill')
   try {
-    for (const mode of ['full', 'band']) {
+    const modes: Record<string, string> = {
+      full: '',
+      band: '&band',
+      bandcanvas: '&band&bandcanvas',
+      bandclear: '&bandclear'
+    }
+    for (const [mode, query] of Object.entries(modes)) {
       const page = await browser.newPage({
         viewport: { width: 1280, height: 900 }
       })
-      await page.goto(
-        `${base}perf.html?n=400${mode === 'band' ? '&band' : ''}`
-      )
+      await page.goto(`${base}perf.html?n=400${query}`)
       await page.waitForFunction(() => '__perf' in window, null, {
         timeout: 120_000
       })
       await page.evaluate('window.__perf.ready')
-      const rows = await page.evaluate(`(async () => {
+      const { rows, instances } = await page.evaluate(`(async () => {
         const raf2 = () => new Promise((r) =>
           requestAnimationFrame(() => requestAnimationFrame(r)))
-        window.scrollTo(0, 3000)
-        await raf2()
+        for (let y = 600; y <= 3000; y += 600) {
+          window.scrollTo(0, y)
+          await raf2()
+        }
         await raf2()
         // Let the jump age out of the band's scroll history, then scroll
         // a pixel so the next frame sizes the band from small steps.
@@ -79,16 +88,16 @@ async function main(): Promise<void> {
         for (let i = 0; i < 6; i++) {
           await raf2()
         }
-        const rows = g.stats().fillRows
+        const { fillRows: rows, instances } = g.stats()
         window.requestAnimationFrame = () => 0
         window.scrollBy(0, 600)
         await new Promise((r) => setTimeout(r, 300))
-        return rows
+        return { rows, instances }
       })()`)
       const path = resolve(outDir, `${mode}.png`)
       const png = PNG.sync.read(await page.screenshot({ path }))
       console.log(
-        `${mode.padEnd(5)} rows drawn ${rows}, flat viewport rows after a 600 px stall ${flatRows(png)} of ${png.height}`
+        `${mode.padEnd(10)} rows drawn ${rows}, instances ${instances}, flat viewport rows after a 600 px stall ${flatRows(png)} of ${png.height}`
       )
       await page.close()
     }

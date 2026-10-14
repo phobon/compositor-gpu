@@ -1,0 +1,59 @@
+Cull recompute, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+test:profile --only scroll-long --nodim --frames 0.1 (24 frames, 400 px steps)
+
+## before-full
+scroll-long: 24 frames over 136.6 s, refresh 6099.80 ms (0 Hz)
+  late 1, dropped 1; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     6433.20 7083.10 13232.80 13232.80
+  cpu total             0.50   14.50   35.80   35.80
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.20    0.20
+    upload              0.00    0.00    0.00    0.00
+    encode              0.20   14.30   35.60   35.60
+    other               0.10    0.90    1.10    1.10
+
+## before-band
+scroll-long: 24 frames over 107.4 s, refresh 4249.80 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     4966.40 6166.40 6333.10 6333.10
+  cpu total             0.60   13.10   24.20   24.20
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.00    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.50   12.90   23.90   23.90
+    other               0.20    0.40    0.70    0.70
+
+## after-full
+scroll-long: 24 frames over 133.8 s, refresh 6166.40 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     6266.40 6733.10 6749.70 6749.70
+  cpu total             0.40    1.30   12.20   12.20
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.20    0.20
+    upload              0.00    0.00    0.00    0.00
+    encode              0.20    1.00   11.80   11.80
+    other               0.10    0.30    0.40    0.40
+
+## after-band
+scroll-long: 24 frames over 108.4 s, refresh 4216.60 ms (0 Hz)
+  late 1, dropped 1; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     5016.40 6266.40 6549.60 6549.60
+  cpu total             0.80    8.00   10.30   10.30
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.60    7.90   10.20   10.20
+    other               0.10    0.20    0.30    0.30
+
+## instances, npx tsx test/fill/run.ts (after; before was identical)
+full       rows drawn 2700, instances 14483
+band       rows drawn 1156, instances 6294
+bandcanvas rows drawn 1156, instances 14056
+
+## cullRuns time per recompute, band mode, temporary console timing (after; ms)
+15.10 (first: includes the bounds build) 9.50 1.00 9.50 5.80 13.60 1.10 1.00 0.50 1.00 0.60 0.60 0.70
+Node micro-benchmark of the bounds loop alone, 76k instances: 0.5-0.8 ms after warm-up (2.6 ms first call)

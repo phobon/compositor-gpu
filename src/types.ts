@@ -112,14 +112,19 @@ export interface CompositorOptions {
   /** Skip the instances of each draw that can't reach the canvas (records
    * more than half a canvas outside it): fewer vertices per frame on long
    * pages, at the cost of a few more draw calls (`stats().instances`).
-   * Default true; false submits everything (for comparing). */
-  cullDraws?: boolean
+   * With `canvasFill: 'band'` the region is the band instead. Default
+   * true; false submits everything, 'canvas' culls to the canvas even
+   * with a band (both for comparing). */
+  cullDraws?: boolean | 'canvas'
   /** With `canvasPin: 'page'`: 'full' (default) redraws the whole canvas,
    * viewport and margins, every frame; 'band' only the viewport plus a
    * band above and below sized to recent scroll steps (at least 128 CSS
-   * px), clearing the rest (`stats().fillRows`). Experimental: canvas the
-   * compositor scrolls into view before the next frame can show blank. */
-  canvasFill?: 'full' | 'band'
+   * px), keeping the rest from earlier frames (`stats().fillRows`): canvas
+   * the compositor scrolls into view before the next frame shows what was
+   * last drawn there, possibly stale. Not while a post chain runs (then
+   * as 'band-clear'). 'band-clear': the band, with the rest cleared (canvas
+   * scrolled into view before the next frame is blank). Experimental. */
+  canvasFill?: 'full' | 'band' | 'band-clear'
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */

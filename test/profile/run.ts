@@ -22,6 +22,8 @@
 //   --nocull       perf.html with CompositorOptions.cullDraws off (A/B)
 //   --nodim        perf.html without its opacity: 0.8 cards (no groups)
 //   --band         perf.html with CompositorOptions.canvasFill 'band'
+//   --bandcanvas   with --band, cull draws to the canvas, not the band
+//   --bandclear    perf.html with canvasFill 'band-clear' (margins cleared)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -46,6 +48,7 @@ const root = resolve(here, '../..')
 export const SCENARIOS = [
   'idle',
   'scroll',
+  'scroll-long',
   'mutate',
   'full-read',
   'css-transforms',
@@ -368,7 +371,9 @@ async function main(): Promise<void> {
       const cull =
         (flag('nocull') ? '&nocull' : '') +
         (flag('nodim') ? '&nodim' : '') +
-        (flag('band') ? '&band' : '')
+        (flag('band') ? '&band' : '') +
+        (flag('bandcanvas') ? '&bandcanvas' : '') +
+        (flag('bandclear') ? '&bandclear' : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)

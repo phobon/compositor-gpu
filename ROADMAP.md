@@ -442,8 +442,23 @@ perspective transforms · culling · WebGL2 backend.
       stalled main thread then reveals blank canvas (`test/fill/run.ts`).
       Default stays 'full'. See
       `docs/rd/experiments/2026-10-14-fill-cost.md`
-- [ ] Fill follow-ups: the band A/B at dpr 2; cull draws to the band too;
-      keep the margins' last contents if a band is adopted
+- [x] Band at dpr 2 and culling to the band measured (2026-10-14): at dpr 2
+      the full canvas misses 120 Hz on an M1 Pro (14.1 ms main pass), the
+      band cuts it 53-58%; culling to the band adds little and its
+      recompute spikes CPU up to 6.8 ms. See
+      `docs/rd/experiments/2026-10-14-band-culling.md`
+- [ ] Cheap cull recompute: bounds in typed arrays once per scene change
+      done (p99 2-3x lower on an M1 Pro, see
+      `docs/rd/experiments/2026-10-14-cull-recompute.md`); one 4-6 ms frame
+      per scroll remains: time the recompute directly, then a y-bucketed
+      index if culling is the cause
+- [x] Kept margins for the band (2026-10-14): `canvasFill: 'band'` keeps
+      them (`'band-clear'` for the A/B); at dpr 2 on an M1 Pro, 45-50% of a
+      full redraw with no dropped frames. See
+      `docs/rd/experiments/2026-10-14-band-margins.md`
+- [ ] `'band'` as the default: stall check on real hardware; post chains
+      (fall back to clearing); fixed elements left in kept rows; spread a
+      re-anchor's new rows over a few frames (p99 10 ms at dpr 2)
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
       was mostly overlap with the main pass (the profiler now prints
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for

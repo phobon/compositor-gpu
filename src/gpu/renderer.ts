@@ -16,6 +16,7 @@ import {
   type Shared
 } from './frame'
 import {
+  ClearRect,
   CopyThrough,
   type DeviceRect,
   type ExtraLayer,
@@ -275,8 +276,9 @@ export class Renderer {
   private backdrop: BackdropPass | null = null
   /** The canvas was configured with TEXTURE_BINDING (for backdrops). */
   private canvasSampled = false
-  /** Skip instances outside the canvas region (CompositorOptions.cullDraws). */
-  cullDraws = true
+  /** Skip instances outside the canvas region, or the band with
+   * `canvasFill: 'band'` (CompositorOptions.cullDraws). */
+  cullDraws: boolean | 'canvas' = true
   /** Cached culling: for these batches, within `culledRegion` (the canvas
    * region grown by half its size each way, kept while the canvas stays
    * inside it). */
@@ -285,13 +287,26 @@ export class Renderer {
   private culledRegion: Region | null = null
   /** Instances submitted in the last frame (stats().instances). */
   lastInstances = 0
-  /** 'band': draw only the viewport plus a band above and below it
+  /** 'band': draw only the viewport plus a band above and below it, the
+   * rest kept from earlier frames; 'band-clear': the rest cleared
    * (CompositorOptions.canvasFill). */
-  canvasFill: 'full' | 'band' = 'full'
+  canvasFill: 'full' | 'band' | 'band-clear' = 'full'
+  /** canvasFill 'band': the canvas's pixels kept between frames (a
+   * canvas texture isn't), and a same-size texture to shift them into
+   * when the canvas re-anchors. */
+  private kept: GPUTexture | null = null
+  private keptView: GPUTextureView | null = null
+  private keptSpare: GPUTexture | null = null
+  /** The main target's ox, oy, sx, sy when `kept` was last drawn. */
+  private keptAt: [number, number, number, number] | null = null
+  private clearRect: ClearRect | null = null
   /** [time, |scroll step|] of the frames of the last 200 ms, CSS px
    * (sizes the band). */
   private steps: [number, number][] = []
   private lastScrollY: number | null = null
+  /** The last frame's band in document CSS px (y0, y1), or null when the
+   * whole canvas is drawn. */
+  private bandY: [number, number] | null = null
   /** Device-px rows the last frame's main pass drew (stats().fillRows). */
   lastFillRows = 0
   /** Frame uniforms for group targets, one per group slot in a frame
@@ -502,12 +517,13 @@ export class Renderer {
     const dy =
       this.lastScrollY === null ? 0 : Math.abs(ctx.scrollY - this.lastScrollY)
     this.lastScrollY = ctx.scrollY
+    this.bandY = null
     const now = performance.now()
     this.steps.push([now, dy])
     while ((this.steps[0]?.[0] ?? now) < now - 200) {
       this.steps.shift()
     }
-    if (this.canvasFill !== 'band') {
+    if (this.canvasFill === 'full') {
       return undefined
     }
     let step = 0
@@ -523,6 +539,7 @@ export class Renderer {
     if (y0 === 0 && y1 === t.devH) {
       return undefined
     }
+    this.bandY = [ctx.scrollY - pad, ctx.scrollY + ctx.height + pad]
     return [0, y0, t.devW, y1 - y0]
   }
 
@@ -676,7 +693,29 @@ export class Renderer {
       py: 0,
       xf: null
     }
-    main.scissor = this.fillBand(ctx, main)
+    let band = this.fillBand(ctx, main)
+    let mainLoad: GPULoadOp = 'clear'
+    if (this.canvasFill === 'band' && !chain) {
+      const stale = this.keepMargins(encoder, texture, main)
+      main.view = this.keptView ?? canvasView
+      if (stale === 'all' || !band) {
+        band = undefined
+        this.bandY = null
+      } else {
+        if (stale) {
+          // Rows the canvas newly covers after a re-anchor: drawn with
+          // the band (and not culled to it).
+          const y0 = Math.min(band[1], stale[0])
+          const y1 = Math.max(band[1] + band[3], stale[1])
+          band = [0, y0, main.devW, y1 - y0]
+          this.bandY = null
+        }
+        mainLoad = 'load'
+      }
+    } else if (this.kept) {
+      this.releaseKept()
+    }
+    main.scissor = band
     this.lastFillRows = main.scissor ? main.scissor[3] : main.devH
     this.composite.begin(scene.groups.length)
     this.groupBlur?.begin()
@@ -884,18 +923,24 @@ export class Renderer {
       this.growExtents(scene.groups, ctx, xfs, extents)
     }
     prepare(main, 0, list.length)
-    const rp = drawRange(
-      this.beginPass(encoder, main, 'clear', 'main'),
-      main,
-      0,
-      list.length,
-      'main'
-    )
+    const first = this.beginPass(encoder, main, mainLoad, 'main')
+    if (mainLoad === 'load') {
+      // Kept pixels outside the band stay; the band is redrawn from clear.
+      this.clearRect ??= new ClearRect(this.shared)
+      this.clearRect.draw(first)
+    }
+    const rp = drawRange(first, main, 0, list.length, 'main')
     this.lastBatches = batches
     this.lastGroups = groups
     this.lastDraws = draws
     this.lastInstances = instances
     rp.end()
+    if (this.keptView && main.view === this.keptView) {
+      this.copy ??= new CopyThrough(this.shared)
+      const cp = this.beginPassOn(encoder, canvasView, 'copy')
+      this.copy.draw(cp, this.keptView)
+      cp.end()
+    }
     if (chain && this.sceneView) {
       this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
       this.sceneKey = key
@@ -956,6 +1001,76 @@ export class Renderer {
     this.sceneTexture = texture
     this.sceneView = texture.createView()
     return this.sceneView
+  }
+
+  /**
+   * canvasFill 'band': make `kept` match the canvas texture and the main
+   * target's placement. Returns 'all' when nothing kept is usable (new
+   * texture, scale or x change, or a shift that isn't whole rows), the
+   * device rows [y0, y1) left without content after shifting the kept
+   * pixels to a new anchor, or null when all of them still line up.
+   */
+  private keepMargins(
+    encoder: GPUCommandEncoder,
+    canvas: GPUTexture,
+    main: Target
+  ): 'all' | [number, number] | null {
+    const { width: w, height: h } = canvas
+    const make = (label: string): GPUTexture =>
+      this.device.createTexture({
+        label,
+        size: { width: w, height: h },
+        format: this.shared.format,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC |
+          GPUTextureUsage.COPY_DST
+      })
+    if (this.kept?.width !== w || this.kept.height !== h) {
+      this.releaseKept()
+      this.kept = make('kept')
+      this.keptView = this.kept.createView()
+    }
+    const at = this.keptAt
+    this.keptAt = [main.ox, main.oy, main.sx, main.sy]
+    if (!at || at[0] !== main.ox || at[2] !== main.sx || at[3] !== main.sy) {
+      return 'all'
+    }
+    if (at[1] === main.oy) {
+      return null
+    }
+    // Content moves down the texture by `s` rows.
+    const s = (at[1] - main.oy) * main.sy
+    const r = Math.round(s)
+    if (Math.abs(s - r) > 1e-3 || Math.abs(r) >= h || !this.kept) {
+      return 'all'
+    }
+    if (this.keptSpare?.width !== w || this.keptSpare.height !== h) {
+      this.keptSpare?.destroy()
+      this.keptSpare = make('kept-spare')
+    }
+    encoder.copyTextureToTexture(
+      { texture: this.kept, origin: { x: 0, y: Math.max(0, -r) } },
+      { texture: this.keptSpare, origin: { x: 0, y: Math.max(0, r) } },
+      { width: w, height: h - Math.abs(r) }
+    )
+    const spare = this.kept
+    this.kept = this.keptSpare
+    this.keptSpare = spare
+    this.keptView = this.kept.createView()
+    this.copy?.release()
+    return r > 0 ? [0, r] : [h + r, h]
+  }
+
+  private releaseKept(): void {
+    this.kept?.destroy()
+    this.keptSpare?.destroy()
+    this.kept = null
+    this.keptSpare = null
+    this.keptView = null
+    this.keptAt = null
+    this.copy?.release()
   }
 
   private releaseScene(): void {
@@ -1062,10 +1177,11 @@ export class Renderer {
 
   private beginPassOn(
     encoder: GPUCommandEncoder,
-    view: GPUTextureView
+    view: GPUTextureView,
+    label = 'post'
   ): GPURenderPassEncoder {
     const rp = encoder.beginRenderPass({
-      ...timed(this.shared.timer, 'post'),
+      ...timed(this.shared.timer, label),
       colorAttachments: [
         {
           view,
@@ -1275,12 +1391,14 @@ export class Renderer {
   }
 
   /** The main target's culled runs (see gpu/cull.ts), recomputed when the
-   * batches change or the canvas leaves the cached region. */
+   * batches change or the canvas (or the band being drawn) leaves the
+   * cached region. */
   private cullFor(scene: Scene, ctx: FrameContext): Runs {
+    const band = this.cullDraws === 'canvas' ? null : this.bandY
     const x0 = ctx.canvasX
-    const y0 = ctx.canvasY
+    const y0 = band ? band[0] : ctx.canvasY
     const x1 = x0 + ctx.canvasWidth
-    const y1 = y0 + ctx.canvasHeight
+    const y1 = band ? band[1] : y0 + ctx.canvasHeight
     const r = this.culledRegion
     if (
       this.culled &&
@@ -1294,7 +1412,7 @@ export class Renderer {
       return this.culled
     }
     const mx = ctx.canvasWidth / 2
-    const my = ctx.canvasHeight / 2
+    const my = (band ? ctx.height : ctx.canvasHeight) / 2
     const region: Region = [x0 - mx, y0 - my, x1 + mx, y1 + my]
     this.culled = cullRuns(scene, scene.batches, region, (id) => {
       const m = this.materials.get(id)
@@ -1576,5 +1694,6 @@ export class Renderer {
     }
     this.composite.destroy()
     this.releaseScene()
+    this.releaseKept()
   }
 }

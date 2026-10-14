@@ -9,6 +9,8 @@ import { padGlyphRect, textShadowPad } from '../scene/stacking'
 // the runs of instances that intersect the region; gaps shorter than
 // `MERGE_GAP` instances are drawn through, to bound the extra draw calls.
 // Viewport-space records (position: fixed) always count as visible.
+// Each instance's rect is computed once per set of batches (a re-sort
+// makes new ones), so a recompute for a new region is a loop over numbers.
 
 /** Gaps of fewer instances than this between visible runs are drawn. */
 const MERGE_GAP = 64
@@ -20,49 +22,89 @@ export type Region = readonly [number, number, number, number]
  * (empty: nothing of it is visible). Non-draw batches are null. */
 export type Runs = (number[] | null)[]
 
-function hits(r: Rect, g: Region): boolean {
-  return (
-    r.x < g[2] && r.x + r.width > g[0] && r.y < g[3] && r.y + r.height > g[1]
-  )
+/** Each instance's culling rect, per layer: minX, minY, maxX, maxY
+ * (viewport-space records: infinite, so always visible). */
+type Bounds = Record<string, Float32Array>
+
+/** Bounds by the batches they were computed for: batches are rebuilt on
+ * every re-sort, so a new region only compares numbers. */
+const boundsCache = new WeakMap<readonly DrawBatch[], Bounds>()
+
+function put(b: Float32Array, i: number, r: Rect, fixed: boolean): void {
+  const o = i * 4
+  if (fixed) {
+    b[o] = b[o + 1] = Number.NEGATIVE_INFINITY
+    b[o + 2] = b[o + 3] = Number.POSITIVE_INFINITY
+    return
+  }
+  b[o] = r.x
+  b[o + 1] = r.y
+  b[o + 2] = r.x + r.width
+  b[o + 3] = r.y + r.height
 }
 
-/** Visibility flags per instance of each layer. */
-function visibility(scene: Scene, g: Region): Record<string, Uint8Array> {
-  const flag = <T extends { rect: Rect; space?: string }>(
+function bounds(scene: Scene, batches: readonly DrawBatch[]): Bounds {
+  const cached = boundsCache.get(batches)
+  if (cached) {
+    return cached
+  }
+  const of = <T extends { rect: Rect; space?: string }>(
     list: readonly T[],
     rectOf: (r: T) => Rect = (r) => r.rect
-  ): Uint8Array => {
-    const v = new Uint8Array(list.length)
+  ): Float32Array => {
+    const b = new Float32Array(list.length * 4)
     for (let i = 0; i < list.length; i++) {
       const r = list[i]
-      if (r && (r.space === 'viewport' || hits(rectOf(r), g))) {
-        v[i] = 1
+      if (r) {
+        put(b, i, rectOf(r), r.space === 'viewport')
       }
     }
-    return v
+    return b
   }
   let glyphs = 0
   for (const run of scene.runs) {
     glyphs += run.glyphs.length
   }
-  const text = new Uint8Array(glyphs)
+  const text = new Float32Array(glyphs * 4)
   let k = 0
   for (const run of scene.runs) {
     const pad = textShadowPad(run)
     const fixed = run.space === 'viewport'
     for (const glyph of run.glyphs) {
-      if (fixed || hits(padGlyphRect(glyph, pad, glyph.fontSize * 0.25), g)) {
-        text[k] = 1
-      }
+      put(text, k, padGlyphRect(glyph, pad, glyph.fontSize * 0.25), fixed)
       k++
     }
   }
-  return {
-    boxes: flag(scene.boxes, (b) => b.batchRect ?? b.rect),
-    images: flag(scene.images),
-    cutouts: flag(scene.cutouts),
+  const out: Bounds = {
+    boxes: of(scene.boxes, (b) => b.batchRect ?? b.rect),
+    images: of(scene.images),
+    cutouts: of(scene.cutouts),
     text
   }
+  boundsCache.set(batches, out)
+  return out
+}
+
+/** Visibility flags per instance of each layer. */
+function visibility(all: Bounds, g: Region): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {}
+  for (const layer in all) {
+    const b = all[layer] as Float32Array
+    const n = b.length / 4
+    const v = new Uint8Array(n)
+    for (let i = 0, o = 0; i < n; i++, o += 4) {
+      if (
+        (b[o] as number) < g[2] &&
+        (b[o + 2] as number) > g[0] &&
+        (b[o + 1] as number) < g[3] &&
+        (b[o + 3] as number) > g[1]
+      ) {
+        v[i] = 1
+      }
+    }
+    out[layer] = v
+  }
+  return out
 }
 
 /**
@@ -76,7 +118,7 @@ export function cullRuns(
   region: Region,
   keep: (material: number) => boolean
 ): Runs {
-  const vis = visibility(scene, region)
+  const vis = visibility(bounds(scene, batches), region)
   const out: Runs = []
   for (const b of batches) {
     if (b.kind !== undefined && b.kind !== 'draw') {

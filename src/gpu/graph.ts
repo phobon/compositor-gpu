@@ -273,3 +273,46 @@ export class CopyThrough {
     this.view = null
   }
 }
+
+const CLEAR_WGSL = /* wgsl */ `
+${FRAME_WGSL}
+
+@vertex
+fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs() -> @location(0) vec4f {
+  return vec4f(0.0);
+}
+`
+
+/** Clears the current pass to transparent inside its scissor rect (a
+ * fullscreen triangle, no blending): a load-op clear covers the whole
+ * attachment. */
+export class ClearRect {
+  private readonly pipeline: GPURenderPipeline
+
+  constructor(shared: Shared) {
+    const { device, format, frameLayout } = shared
+    const module = device.createShaderModule({
+      label: 'clear-rect',
+      code: CLEAR_WGSL
+    })
+    reportShaderErrors(module, 'clear-rect')
+    this.pipeline = device.createRenderPipeline({
+      label: 'clear-rect',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [frameLayout] }),
+      vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+      primitive: { topology: 'triangle-list' }
+    })
+  }
+
+  draw(rp: GPURenderPassEncoder): void {
+    rp.setPipeline(this.pipeline)
+    rp.draw(3)
+  }
+}
