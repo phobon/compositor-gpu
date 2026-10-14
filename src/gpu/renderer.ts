@@ -287,10 +287,13 @@ export class Renderer {
   private culledRegion: Region | null = null
   /** Instances submitted in the last frame (stats().instances). */
   lastInstances = 0
+  /** ms the last frame spent recomputing culled runs; 0 when cached
+   * (stats().cullMs). */
+  lastCullMs = 0
   /** 'band': draw only the viewport plus a band above and below it, the
    * rest kept from earlier frames; 'band-clear': the rest cleared
    * (CompositorOptions.canvasFill). */
-  canvasFill: 'full' | 'band' | 'band-clear' = 'full'
+  canvasFill: 'full' | 'band' | 'band-clear' = 'band'
   /** canvasFill 'band': the canvas's pixels kept between frames (a
    * canvas texture isn't), and a same-size texture to shift them into
    * when the canvas re-anchors. */
@@ -695,7 +698,7 @@ export class Renderer {
     }
     let band = this.fillBand(ctx, main)
     let mainLoad: GPULoadOp = 'clear'
-    if (this.canvasFill === 'band' && !chain) {
+    if (this.canvasFill === 'band') {
       const stale = this.keepMargins(encoder, texture, main)
       main.view = this.keptView ?? canvasView
       if (stale === 'all' || !band) {
@@ -731,6 +734,7 @@ export class Renderer {
     let groups = 0
     let draws = 0
     let instances = 0
+    this.lastCullMs = 0
     const culled = this.cullDraws ? this.cullFor(scene, ctx) : null
     let slot = 0
     const list = scene.batches
@@ -935,11 +939,22 @@ export class Renderer {
     this.lastDraws = draws
     this.lastInstances = instances
     rp.end()
-    if (this.keptView && main.view === this.keptView) {
-      this.copy ??= new CopyThrough(this.shared)
-      const cp = this.beginPassOn(encoder, canvasView, 'copy')
-      this.copy.draw(cp, this.keptView)
-      cp.end()
+    if (this.kept && this.keptView && main.view === this.keptView) {
+      const scene = chain ? this.sceneTexture : null
+      if (scene) {
+        // The post chain reads its own scene texture (kept as-is on
+        // frames that only rerun the chain).
+        encoder.copyTextureToTexture(
+          { texture: this.kept },
+          { texture: scene },
+          { width: scene.width, height: scene.height }
+        )
+      } else {
+        this.copy ??= new CopyThrough(this.shared)
+        const cp = this.beginPassOn(encoder, canvasView, 'copy')
+        this.copy.draw(cp, this.keptView)
+        cp.end()
+      }
     }
     if (chain && this.sceneView) {
       this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
@@ -996,7 +1011,10 @@ export class Renderer {
       label: 'post-scene',
       size: { width: canvas.width, height: canvas.height },
       format: this.shared.format,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST
     })
     this.sceneTexture = texture
     this.sceneView = texture.createView()
@@ -1414,10 +1432,12 @@ export class Renderer {
     const mx = ctx.canvasWidth / 2
     const my = (band ? ctx.height : ctx.canvasHeight) / 2
     const region: Region = [x0 - mx, y0 - my, x1 + mx, y1 + my]
+    const t0 = performance.now()
     this.culled = cullRuns(scene, scene.batches, region, (id) => {
       const m = this.materials.get(id)
       return m !== undefined && !m.builtin
     })
+    this.lastCullMs = performance.now() - t0
     this.culledBatches = scene.batches
     this.culledRegion = region
     return this.culled

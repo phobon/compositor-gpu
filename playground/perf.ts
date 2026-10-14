@@ -147,6 +147,26 @@ async function boot(): Promise<void> {
   const n = Math.max(1, Number(params.get('n')) || 400)
   const stage = document.getElementById('stage') as HTMLElement
   buildGrid(n)
+  // `?fixed`: a fixed header bar (viewport-space records), for the fill
+  // check's stale-copy test.
+  if (params.has('fixed')) {
+    const bar = document.createElement('div')
+    bar.textContent = 'Fixed header'
+    Object.assign(bar.style, {
+      position: 'fixed',
+      top: '0',
+      left: '0',
+      right: '0',
+      height: '64px',
+      padding: '20px 24px',
+      boxSizing: 'border-box',
+      background: '#2b5cd8',
+      color: '#fff',
+      font: '600 18px system-ui, sans-serif',
+      zIndex: '10'
+    } satisfies Partial<CSSStyleDeclaration>)
+    stage.appendChild(bar)
+  }
 
   const compositor = await createCompositor({
     root: stage,

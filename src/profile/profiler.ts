@@ -22,6 +22,8 @@ export interface CpuBreakdown {
   upload: number
   /** Command encoding and submit. */
   encode: number
+  /** Part of `encode`: recomputing draw culling (0 when reused). */
+  cull: number
   /** The rest: dirty tracking, canvas placement, bookkeeping. */
   other: number
 }
@@ -490,6 +492,7 @@ export function summarize(
     'hooks',
     'upload',
     'encode',
+    'cull',
     'other'
   ]
   const cpu = {} as Record<keyof CpuBreakdown, Pct>
@@ -684,6 +687,7 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
     row('  hooks', r.cpu.hooks),
     row('  upload', r.cpu.upload),
     row('  encode', r.cpu.encode),
+    row('    cull', r.cpu.cull ?? { p50: 0, p95: 0, p99: 0, max: 0 }),
     row('  other', r.cpu.other)
   ]
   if (r.gpu) {

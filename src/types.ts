@@ -116,14 +116,15 @@ export interface CompositorOptions {
    * true; false submits everything, 'canvas' culls to the canvas even
    * with a band (both for comparing). */
   cullDraws?: boolean | 'canvas'
-  /** With `canvasPin: 'page'`: 'full' (default) redraws the whole canvas,
-   * viewport and margins, every frame; 'band' only the viewport plus a
-   * band above and below sized to recent scroll steps (at least 128 CSS
-   * px), keeping the rest from earlier frames (`stats().fillRows`): canvas
-   * the compositor scrolls into view before the next frame shows what was
-   * last drawn there, possibly stale. Not while a post chain runs (then
-   * as 'band-clear'). 'band-clear': the band, with the rest cleared (canvas
-   * scrolled into view before the next frame is blank). Experimental. */
+  /** With `canvasPin: 'page'`: 'band' (default) redraws only the viewport
+   * plus a band above and below sized to recent scroll steps (at least
+   * 128 CSS px), keeping the rest of the canvas from earlier frames
+   * (`stats().fillRows`): canvas the browser scrolls into view before the
+   * next frame (a stalled main thread) shows what was last drawn there,
+   * possibly stale. 'full' redraws the whole canvas, viewport and
+   * margins, every frame. 'band-clear': the band, with the rest cleared
+   * (canvas scrolled into view before the next frame is blank; for
+   * comparing). Ignored with `canvasPin: 'viewport'`. */
   canvasFill?: 'full' | 'band' | 'band-clear'
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
@@ -200,6 +201,9 @@ export interface CompositorStats {
   uploadMs: number
   /** Wall time from createCommandEncoder to submit, ms. */
   encodeMs: number
+  /** Part of `encodeMs` spent recomputing draw culling (0 when the last
+   * frame reused it), ms. */
+  cullMs: number
   fps: number
   /** Wall time of the last frame callback (read + hooks + encode), ms. */
   frameMs: number

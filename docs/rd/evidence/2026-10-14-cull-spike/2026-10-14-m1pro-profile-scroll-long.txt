@@ -1,0 +1,25 @@
+Cull spike, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-14. perf.html n=400, 1280x900, dpr 1,
+test:profile --headed --only scroll-long --nodim [--band].
+
+---- full
+scroll-long: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.20    0.30    0.70    2.50
+    encode              0.10    0.20    0.60    2.50
+      cull              0.00    0.00    0.50    2.40
+  gpu total             5.70    6.90    7.85    8.59
+
+---- band (kept margins)
+scroll-long: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.40
+  cpu total             0.20    0.30    0.80    1.70
+    encode              0.10    0.20    0.70    1.50
+      cull              0.00    0.00    0.50    1.50
+  gpu total             4.01    6.05    7.32    8.69
+    copy                3.65    6.03    7.16    8.25  (alone 0.17 p50)
+    main                3.83    5.85    7.10    8.50  (alone 0.31 p50)

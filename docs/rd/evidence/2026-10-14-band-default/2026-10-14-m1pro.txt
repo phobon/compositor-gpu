@@ -1,0 +1,53 @@
+Band as default, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-14. perf.html n=400, 1280x900.
+
+## npx tsx test/fill/run.ts --headed
+full       rows drawn 2700, instances 15030, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+band       rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+bandcanvas rows drawn 1156, instances 14601, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+bandclear  rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 492 of 900, 529184 px differ from full (apple)
+
+## npx tsx test/fill/run.ts --headed --fixed --up
+full       rows drawn 2700, instances 15042, flat viewport rows after a -600 px stall 87 of 900, 0 px differ from full (apple)
+band       rows drawn 1156, instances 6359, flat viewport rows after a -600 px stall 87 of 900, 1 px differ from full (apple)
+bandcanvas rows drawn 1156, instances 14613, flat viewport rows after a -600 px stall 87 of 900, 1 px differ from full (apple)
+bandclear  rows drawn 1156, instances 6359, flat viewport rows after a -600 px stall 509 of 900, 498971 px differ from full (apple)
+
+## npx tsx test/fill/run.ts --headed --blur
+full       rows drawn 2700, instances 15030, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (apple)
+band       rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (apple)
+bandcanvas rows drawn 1156, instances 14601, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (apple)
+bandclear  rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 491 of 900, 529184 px differ from full (apple)
+
+## test:profile --headed --only blur-scroll --nodim --dpr 2
+blur-scroll: 129 frames over 2.4 s, refresh 16.67 ms (60 Hz)
+  late 15, dropped 15
+                         p50     p95     p99     max
+  frame interval       16.80   25.50   25.90   25.90
+  cpu total             0.20    0.40    0.50    1.00
+  gpu total            19.35   19.50   19.64   19.82
+    post               19.15   19.36   19.62   19.62  (alone 2.61)
+    fx:blur            16.72   16.89   17.22   17.22  (alone 0.00)
+    main               14.33   14.44   14.62   14.63  (alone 0.00 p50)
+  hitches 25.7-25.9 ms, "gpu: 19.3-19.4 ms on the GPU in the frame before"
+
+## test:profile --headed --only blur-scroll --nodim --dpr 2 --band
+blur-scroll: 137 frames over 1.5 s, refresh 8.33 ms (120 Hz)
+  late 49, dropped 49
+  frame interval        8.50   17.20   17.50   17.50
+  cpu total             0.20    0.40    1.00    2.40
+    encode              0.10    0.20    0.70    2.30
+      cull              0.00    0.00    0.30    2.20
+  gpu total            12.01   12.20   12.35   12.38
+    post               11.96   12.11   12.22   12.22  (alone 2.61)
+    copy                6.39   11.46   11.46   11.46  (alone 0.44)
+    fx:blur             9.43    9.60    9.77    9.77
+    main                6.59    6.79    6.96   10.96
+  hitches 17.4-17.5 ms, "gpu: 12.0-12.4 ms on the GPU in the frame before"
+
+Note: the refresh estimate differs (16.67 ms with full, which never kept
+up with 120 Hz; 8.33 ms with band), so dropped-frame counts aren't
+comparable between the two runs; GPU totals are. The `copy` pass is the
+canvas copy used while no post chain runs (frames before the blur pass
+turns on); with the chain the kept texture is copied by
+copyTextureToTexture, which isn't a timed pass.

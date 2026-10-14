@@ -447,18 +447,24 @@ perspective transforms · culling · WebGL2 backend.
       band cuts it 53-58%; culling to the band adds little and its
       recompute spikes CPU up to 6.8 ms. See
       `docs/rd/experiments/2026-10-14-band-culling.md`
-- [ ] Cheap cull recompute: bounds in typed arrays once per scene change
-      done (p99 2-3x lower on an M1 Pro, see
-      `docs/rd/experiments/2026-10-14-cull-recompute.md`); one 4-6 ms frame
-      per scroll remains: time the recompute directly, then a y-bucketed
-      index if culling is the cause
+- [x] Cull recompute (2026-10-14): bounds in typed arrays (p99 2-3x lower
+      on an M1 Pro); the remaining 1.5-6 ms spike is the recompute's first,
+      unoptimised call (`stats().cullMs`); a y index cut it in band mode
+      on the M1 Pro (1.0 ms max) but not in full mode (2.9 ms). See `docs/rd/experiments/2026-10-14-cull-recompute.md`,
+      `-cull-spike.md`, `-cull-index.md`
+- [ ] Text-edit cost: ~11 ms read and ~18 ms instance upload per edit on
+      perf.html (M1 Pro, `mutate`)
 - [x] Kept margins for the band (2026-10-14): `canvasFill: 'band'` keeps
       them (`'band-clear'` for the A/B); at dpr 2 on an M1 Pro, 45-50% of a
       full redraw with no dropped frames. See
       `docs/rd/experiments/2026-10-14-band-margins.md`
-- [ ] `'band'` as the default: stall check on real hardware; post chains
-      (fall back to clearing); fixed elements left in kept rows; spread a
-      re-anchor's new rows over a few frames (p99 10 ms at dpr 2)
+- [x] `'band'` is the default (2026-10-14): kept margins also under a post
+      chain; `canvasPin: 'viewport'` stays 'full'; stall checks match
+      'full' on an M1 Pro and in SwiftShader (fixed header, upward stall,
+      blur pass). See `docs/rd/experiments/2026-10-14-band-default.md`
+- [ ] Fullscreen blur pass cost at dpr 2 (~9.4 ms of passes on an M1 Pro)
+- [ ] Spread a re-anchor's newly covered rows over a few frames (p99 10 ms
+      at dpr 2 on `scroll-long`)
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
       was mostly overlap with the main pass (the profiler now prints
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for

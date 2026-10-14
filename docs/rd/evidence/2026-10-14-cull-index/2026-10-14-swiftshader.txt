@@ -1,0 +1,38 @@
+Cull index, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+test:profile --only <scenario> --nodim --frames 0.1 [--band]; CPU columns only.
+
+## Before: precomputed bounds, walk of every instance (cull-spike runs)
+scroll-long --band: encode max 14.8, cull p95 5.0 / max 14.3
+mutate (walk):
+mutate: 6 frames over 30.9 s, refresh 16.67 ms (60 Hz)
+    encode             17.70 7301.00 7301.00 7301.00
+      cull             12.40   24.90   24.90   24.90
+
+## Index v1: built on the second query of a batch list (in the frame)
+mutate:
+mutate: 6 frames over 28.3 s, refresh 16.67 ms (60 Hz)
+    encode             11.10 6655.50 6655.50 6655.50
+      cull              9.90   25.20   25.20   25.20
+scroll-long:
+scroll-long --band:
+
+## Index v0: built with the bounds on every re-sort
+mutate:
+mutate: 6 frames over 30.5 s, refresh 16.67 ms (60 Hz)
+    encode             38.50 6790.00 6790.00 6790.00
+      cull             38.00   69.80   69.80   69.80
+
+## Final: walk until an index exists, index built in idle time 250 ms after a batch list's first query
+mutate:
+mutate: 6 frames over 31.2 s, refresh 16.67 ms (60 Hz)
+    encode             17.40 6549.10 6549.10 6549.10
+      cull             16.10   29.10   29.10   29.10
+scroll-long:
+scroll-long --band:
+
+## Equivalence: random synthetic scenes (boxes, images, cutouts, glyph runs with shadows and skew, viewport-space records, tall records, keep-material batches), runs compared with the walk-only cullRuns
+200 scenes x 10 regions (index v1): 2000 checks, 0 mismatches
+60 scenes x 10 regions with a 520 ms wait after the first (final, index built and used, checked by counting builds/queries): 600 checks, 0 mismatches
+
+## npx tsx test/fill/run.ts (final)
+full 14931 / band 6294 / bandcanvas 14289 / bandclear 6294 instances: identical to before

@@ -1,0 +1,48 @@
+Band as default, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+
+## npx tsx test/fill/run.ts [variant] (perf.html n=400; 600 px jumps to 3000, 8 x 40 px steps, then a +-600 px stalled scroll)
+### 
+full       rows drawn 2700, instances 14827, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+band       rows drawn 1156, instances 6457, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+bandcanvas rows drawn 1156, instances 14390, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+bandclear  rows drawn 1156, instances 6457, flat viewport rows after a 600 px stall 482 of 900, 516016 px differ from full (google)
+### --fixed
+full       rows drawn 2700, instances 14839, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+band       rows drawn 1156, instances 6469, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+bandcanvas rows drawn 1156, instances 14402, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+bandclear  rows drawn 1156, instances 6469, flat viewport rows after a 600 px stall 482 of 900, 516016 px differ from full (google)
+### --fixed --up
+full       rows drawn 2700, instances 14839, flat viewport rows after a -600 px stall 88 of 900, 0 px differ from full (google)
+band       rows drawn 1156, instances 6469, flat viewport rows after a -600 px stall 88 of 900, 40 px differ from full (google)
+bandcanvas rows drawn 1156, instances 14402, flat viewport rows after a -600 px stall 88 of 900, 40 px differ from full (google)
+bandclear  rows drawn 1156, instances 6469, flat viewport rows after a -600 px stall 545 of 900, 517994 px differ from full (google)
+### --blur
+full       rows drawn 2700, instances 14827, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+band       rows drawn 1156, instances 6457, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandcanvas rows drawn 1156, instances 14390, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandclear  rows drawn 1156, instances 6457, flat viewport rows after a 600 px stall 481 of 900, 516016 px differ from full (google)
+### --up
+full       rows drawn 2700, instances 14827, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (google)
+band       rows drawn 1156, instances 6457, flat viewport rows after a -600 px stall 39 of 900, 40 px differ from full (google)
+bandcanvas rows drawn 1156, instances 14390, flat viewport rows after a -600 px stall 39 of 900, 40 px differ from full (google)
+bandclear  rows drawn 1156, instances 6457, flat viewport rows after a -600 px stall 496 of 900, 517994 px differ from full (google)
+
+## test:fx with 'band' as the library default (failures)
+fx-displace                      1.00  fail
+fx-displace-push                 1.07  fail
+fx-dissolve                      2.68  fail
+fx-trail-off                   100.00  fail
+fx-trail                       100.00  fail
+fx-trail-pixel                 100.00  fail
+fx-trail-reuse                 100.00  fail
+fx-trail-reuse-off             100.00  fail
+fx-trail-clear                 100.00  fail
+(fx-blur-scissor: ok)
+
+## test:visual with 'band' as the library default
+textshadow      0.14         1.09  fail
+emoji           0.84         4.18  fail
+bglayers-select    0.99         9.11  fail
+selcolor-select    0.65         8.90  fail
+duo-s900        0.70        19.97  fail
+29 ok

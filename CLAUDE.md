@@ -48,7 +48,10 @@ spans whole paragraphs and blocked every merge), and shadow records use a
 the instance runs whose records reach the canvas region grown by half a
 canvas (`gpu/cull.ts`, cached per batch list until the canvas leaves that
 region; each instance's bounds are computed once per batch list into
-typed arrays, so a new region is a loop over numbers; gaps under 64 instances are drawn through; batches with a
+typed arrays, walked on the first queries and indexed by y in idle time
+250 ms later, so a scroll's recompute visits only nearby instances; a
+page that re-sorts every frame never builds the index; `stats().cullMs`
+and the profile's `cull` row, under `encode`, time a recompute; gaps under 64 instances are drawn through; batches with a
 non-builtin material are drawn whole, their vertex hooks may move
 geometry): perf.html submits ~11k instances in 33 draws instead of ~76k
 in 123. `cullDraws: false` turns it off; `test:perf` and `test:profile`
@@ -69,18 +72,21 @@ overstates its cost: the report's `alone` row under each label is the
 time its passes ran with no other pass running, and an A/B without the
 feature gives the real cost). New render passes spread `timed(shared.timer, label)` into
 their descriptor; never `timestampWrites: undefined`, which stalls
-SwiftShader. `canvasFill: 'band'` (experimental, page-pinned canvas)
-scissors the main pass to the viewport plus a band sized to the scroll
+SwiftShader. `canvasFill: 'band'` (the default; page-pinned canvas only,
+`canvasPin: 'viewport'` uses 'full') scissors the main pass to the viewport plus a band sized to the scroll
 steps of the last 200 ms (at least 128 CSS px) and skips groups outside
 it; everything a pass draws on the main target resets to that scissor
 (`Target.scissor`, `restoreScissor`); draws are culled to the band
-(`cullDraws: 'canvas'` culls to the canvas instead, for A/B). Without a
-post chain, 'band' draws into a texture kept between frames (the canvas
-texture isn't), cleared and redrawn only in the band (`ClearRect`), its
-pixels shifted by a texture copy when the canvas re-anchors (the rows
-newly covered drawn that frame), and copied to the canvas in a `copy`
-pass; `'band-clear'` clears outside the band instead. `npx tsx test/fill/run.ts` shows
-what a stalled main thread then reveals. A frame is paced when the previous one asked for it or it
+(`cullDraws: 'canvas'` culls to the canvas instead, for A/B). 'band'
+draws into a texture kept between frames (the canvas texture isn't),
+cleared and redrawn only in the band (`ClearRect`), its pixels shifted
+by a texture copy when the canvas re-anchors (the rows newly covered
+drawn that frame), and copied to the canvas in a `copy` pass, or into
+the post chain's scene texture when a chain runs; `'band-clear'` clears
+outside the band instead, `'full'` redraws everything. perf.html stays
+on 'full' unless `?band` / `?bandclear` (the profile baselines). `npx
+tsx test/fill/run.ts [--headed] [--fixed] [--blur] [--up]` shows what a
+stalled main thread then reveals, against 'full'. A frame is paced when the previous one asked for it or it
 was requested within a refresh interval of it; lateness is its interval
 then, else its wait since the request. `stop()` reports percentiles,
 late/dropped frames, read causes and the worst hitches with a cause

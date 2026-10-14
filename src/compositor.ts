@@ -103,7 +103,8 @@ export async function createCompositor(
   const renderer = new Renderer(gpu)
   renderer.reuseScene = options.sceneReuse ?? true
   renderer.cullDraws = options.cullDraws ?? true
-  renderer.canvasFill = options.canvasFill ?? 'full'
+  // A viewport-pinned canvas has no margins to keep.
+  renderer.canvasFill = pinned ? 'full' : (options.canvasFill ?? 'band')
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
   for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
     renderer.materials.set(m.id, m)
@@ -457,6 +458,7 @@ export async function createCompositor(
           hooks: hooksMs,
           upload,
           encode,
+          cull: renderer.lastCullMs,
           other: Math.max(0, frameMs - frameReadMs - hooksMs - upload - encode)
         },
         read,
@@ -1074,6 +1076,7 @@ export async function createCompositor(
       readMs,
       uploadMs: renderer.lastUploadMs,
       encodeMs: renderer.lastEncodeMs,
+      cullMs: renderer.lastCullMs,
       // Frames rendered in the last second (0 while idle).
       fps: frameTimes.filter((t) => t > performance.now() - 1000).length,
       frameMs,
@@ -1199,6 +1202,7 @@ function inert(): Compositor & { text: null; scene: null } {
       readMs: 0,
       uploadMs: 0,
       encodeMs: 0,
+      cullMs: 0,
       fps: 0,
       frameMs: 0,
       maxDtMs: 0,

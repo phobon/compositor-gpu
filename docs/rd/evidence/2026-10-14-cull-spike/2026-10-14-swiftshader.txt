@@ -1,0 +1,18 @@
+Cull spike, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-14
+
+## test:profile --only scroll-long --nodim --frames 0.1 --band (24 frames, 400 px steps)
+scroll-long: 24 frames over 119.3 s, refresh 4866.40 ms (0 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     5499.80 6799.80 7049.70 7049.70
+  cpu total             0.50    7.40   15.00   15.00
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.30    7.30   14.80   14.80
+      cull              0.00    5.00   14.30   14.30
+    other               0.20    0.30    0.50    0.50
+
+## cullRuns parts per call, temporary console timing (ms): bounds build, visibility loop, runs loop
+load:   21.00 2.10 4.40 | 7.40 2.90 2.00   (two batch lists before the scroll)
+scroll: 0.00 0.40 1.20 | 0.00 7.60 4.90 | 0.00 12.70 1.90 | 0.00 1.00 0.50 | 0.00 0.60 0.60 | 0.00 1.60 0.60 | 0.00 0.60 0.50 | 0.00 0.40 0.30
