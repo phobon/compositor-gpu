@@ -40,3 +40,9 @@ scroll: 12 frames over 27.9 s, refresh 2566.50 ms (0 Hz)
     copy               46.52   69.24   69.24   69.24
       alone            46.52   69.24   69.24   69.24
 
+
+## npx tsx test/fill/run.ts on Ben's MacBook Pro (headless, fell back to SwiftShader), 2026-10-14
+full       rows drawn 2700, instances 14908, flat viewport rows after a 600 px stall 321 of 900
+band       rows drawn 1156, instances 6286, flat viewport rows after a 600 px stall 321 of 900
+bandcanvas rows drawn 1156, instances 14266, flat viewport rows after a 600 px stall 321 of 900
+bandclear  rows drawn 1156, instances 6286, flat viewport rows after a 600 px stall 482 of 900

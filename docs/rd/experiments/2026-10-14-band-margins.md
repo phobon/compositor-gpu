@@ -78,6 +78,7 @@ and copying it to the canvas each frame:
 | Measure | full | band-clear | band (kept margins) | Threshold | Run date | Evidence file |
 | --- | --- | --- | --- | --- | --- | --- |
 | Blank viewport rows after a 600 px stalled scroll (stall check, 600 px steps to 3000 px) | 321 of 900 | 482 of 900 | 321 of 900 | no more than full | 2026-10-14 | `2026-10-14-swiftshader.txt` |
+| Same, on Ben's MacBook Pro (headless Chrome fell back to SwiftShader) | 321 of 900 | 482 of 900 | 321 of 900 | no more than full | 2026-10-14 | same |
 | Pixels differing from full in the stall screenshot | - | 176527 | 40 | - | 2026-10-14 | same |
 | Visual harness failures with the mode as default (SwiftShader) | 5 | - | the same 5, same numbers | no new failures | 2026-10-14 | same |
 | fx harness failures with the mode as default (SwiftShader) | fx-trail*, fx-displace*, fx-dissolve | - | the same, plus fx-blur-scissor | only fx-blur-scissor | 2026-10-14 | same |
