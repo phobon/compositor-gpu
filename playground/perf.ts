@@ -62,13 +62,16 @@ function paragraphHtml(seed: number): string {
   return words.join(' ')
 }
 
+const nodim = new URLSearchParams(location.search).has('nodim')
+
 function buildCard(index: number): HTMLElement {
   const card = document.createElement('div')
   card.className = 'pcard'
   if ((index + 1) % 10 === 0) {
     card.classList.add('rot')
   }
-  if ((index + 1) % 7 === 0) {
+  // `?nodim`: no opacity cards, so no opacity groups.
+  if ((index + 1) % 7 === 0 && !nodim) {
     card.classList.add('dim')
   }
 
@@ -150,7 +153,9 @@ async function boot(): Promise<void> {
     layers: ['boxes', 'images', 'text'],
     fonts: 'auto',
     // `?nocull`: submit every instance (CompositorOptions.cullDraws).
-    cullDraws: !params.has('nocull')
+    cullDraws: !params.has('nocull'),
+    // `?band`: draw only the viewport and a band (CompositorOptions.canvasFill).
+    canvasFill: params.has('band') ? 'band' : 'full'
     // No onGlyph: the perf fixture stays static, matching main.ts's
     // non-animated ?vr mode, so nothing dirties the text layer every frame.
   })

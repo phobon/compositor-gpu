@@ -436,10 +436,21 @@ perspective transforms · culling · WebGL2 backend.
       -12% in SwiftShader, unchanged on an M1 Pro (GPU p50 5.7 ms either
       way: fill-bound, not vertex-bound). See
       `docs/rd/experiments/2026-10-14-draw-culling.md`
-- [ ] Fill cost of the 3-viewport canvas: redraw only the viewport (plus a
-      band for scroll speed) while the margins keep their last contents
-- [ ] Opacity-group pass cost: ~3.2 ms p50 GPU on an M1 Pro for perf.html's
-      5 groups (main pass ~5.3 ms)
+- [x] Fill cost of the 3-viewport canvas measured (2026-10-14):
+      `canvasFill: 'band'` (viewport plus a scroll-sized band) cuts the
+      main pass 60% in SwiftShader but 26% on an M1 Pro at dpr 1, and a
+      stalled main thread then reveals blank canvas (`test/fill/run.ts`).
+      Default stays 'full'. See
+      `docs/rd/experiments/2026-10-14-fill-cost.md`
+- [ ] Fill follow-ups: the band A/B at dpr 2; cull draws to the band too;
+      keep the margins' last contents if a band is adopted
+- [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
+      was mostly overlap with the main pass (the profiler now prints
+      `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for
+      ~5 groups, mostly per pass. See
+      `docs/rd/experiments/2026-10-14-group-pass-cost.md`
+- [ ] Group atlas: render a frame's non-nested groups into one texture in
+      one pass instead of a pass each
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no
       registered face (text now shows before fonts load)

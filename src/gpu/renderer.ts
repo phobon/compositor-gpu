@@ -65,6 +65,22 @@ interface Target {
   xf: Affine | null
   /** Set when a region handler composites it (encoded in prepare). */
   region?: RegionFrame
+  /** Device-px rect (x, y, w, h) its passes draw within; absent: all of
+   * it (CompositorOptions.canvasFill: the main target's visible band). */
+  scissor?: [number, number, number, number]
+}
+
+/** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
+ * don't meet. */
+function meet(
+  a: readonly [number, number, number, number],
+  b: readonly [number, number, number, number]
+): [number, number, number, number] {
+  const x = Math.max(a[0], b[0])
+  const y = Math.max(a[1], b[1])
+  const w = Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - x)
+  const h = Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - y)
+  return [x, y, w, h]
 }
 
 function clamp(v: number, max: number): number {
@@ -269,6 +285,15 @@ export class Renderer {
   private culledRegion: Region | null = null
   /** Instances submitted in the last frame (stats().instances). */
   lastInstances = 0
+  /** 'band': draw only the viewport plus a band above and below it
+   * (CompositorOptions.canvasFill). */
+  canvasFill: 'full' | 'band' = 'full'
+  /** [time, |scroll step|] of the frames of the last 200 ms, CSS px
+   * (sizes the band). */
+  private steps: [number, number][] = []
+  private lastScrollY: number | null = null
+  /** Device-px rows the last frame's main pass drew (stats().fillRows). */
+  lastFillRows = 0
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
    * submit). Reused across frames. */
@@ -455,7 +480,50 @@ export class Renderer {
       ]
     })
     rp.setBindGroup(0, t.bindGroup)
+    if (t.scissor) {
+      rp.setScissorRect(...t.scissor)
+    }
     return rp
+  }
+
+  /** Back to `t`'s own scissor after a narrower one. */
+  private restoreScissor(rp: GPURenderPassEncoder, t: Target): void {
+    const [x, y, w, h] = t.scissor ?? [0, 0, t.devW, t.devH]
+    rp.setScissorRect(x, y, w, h)
+  }
+
+  /** The main target's visible band (device px), or undefined for all of
+   * it: the viewport plus twice the largest scroll step of the frames of
+   * the last 200 ms (at least 128 CSS px) above and below. */
+  private fillBand(
+    ctx: FrameContext,
+    t: Target
+  ): [number, number, number, number] | undefined {
+    const dy =
+      this.lastScrollY === null ? 0 : Math.abs(ctx.scrollY - this.lastScrollY)
+    this.lastScrollY = ctx.scrollY
+    const now = performance.now()
+    this.steps.push([now, dy])
+    while ((this.steps[0]?.[0] ?? now) < now - 200) {
+      this.steps.shift()
+    }
+    if (this.canvasFill !== 'band') {
+      return undefined
+    }
+    let step = 0
+    for (const [, d] of this.steps) {
+      step = Math.max(step, d)
+    }
+    const pad = Math.max(128, 2 * step)
+    const y0 = clamp(Math.floor((ctx.scrollY - pad - t.oy) * t.sy), t.devH)
+    const y1 = clamp(
+      Math.ceil((ctx.scrollY + ctx.height + pad - t.oy) * t.sy),
+      t.devH
+    )
+    if (y0 === 0 && y1 === t.devH) {
+      return undefined
+    }
+    return [0, y0, t.devW, y1 - y0]
   }
 
   /**
@@ -608,6 +676,8 @@ export class Renderer {
       py: 0,
       xf: null
     }
+    main.scissor = this.fillBand(ctx, main)
+    this.lastFillRows = main.scissor ? main.scissor[3] : main.devH
     this.composite.begin(scene.groups.length)
     this.groupBlur?.begin()
     if (scene.backdrops.length > 0) {
@@ -743,6 +813,23 @@ export class Renderer {
           // A layer transform at rest: its records draw in place.
           plan.set(i, 'in-place')
           prepare(parent, i + 1, j)
+          i = j
+          continue
+        }
+        // Outside the band being drawn (canvasFill: 'band'): nothing of it
+        // would land.
+        const band = parent.scissor
+        const e =
+          g && band && !xf && !region?.active()
+            ? (extents[batch.group] ?? groupExtent(g, ctx))
+            : null
+        if (
+          e &&
+          band &&
+          ((e[3] - parent.oy) * parent.sy < band[1] ||
+            (e[1] - parent.oy) * parent.sy > band[1] + band[3])
+        ) {
+          plan.set(i, 'skip')
           i = j
           continue
         }
@@ -1086,9 +1173,15 @@ export class Renderer {
     const region =
       g?.region !== undefined ? this.regions.get(g.region) : undefined
     if (top.region && region) {
-      rp.setScissorRect(top.px, top.py, top.w, top.h)
-      region.composite(rp, top.region)
-      rp.setScissorRect(0, 0, parent.devW, parent.devH)
+      const r = meet(
+        [top.px, top.py, top.w, top.h],
+        parent.scissor ?? [0, 0, parent.devW, parent.devH]
+      )
+      if (r[2] > 0 && r[3] > 0) {
+        rp.setScissorRect(...r)
+        region.composite(rp, top.region)
+      }
+      this.restoreScissor(rp, parent)
       this.composite.release(pooled)
       return true
     }
@@ -1125,7 +1218,14 @@ export class Renderer {
       this.composite.release(pooled)
       return false
     }
-    if (sc) {
+    if (sc && parent.scissor) {
+      const r = meet(sc, parent.scissor)
+      if (r[2] <= 0 || r[3] <= 0) {
+        this.composite.release(pooled)
+        return false
+      }
+      rp.setScissorRect(...r)
+    } else if (sc) {
       rp.setScissorRect(sc[0], sc[1], sc[2], sc[3])
     }
     // Inside a rounded/rotated ancestor clip (doc-space groups; the
@@ -1143,7 +1243,7 @@ export class Renderer {
       g?.filter?.matrices
     )
     if (sc) {
-      rp.setScissorRect(0, 0, parent.devW, parent.devH)
+      this.restoreScissor(rp, parent)
     }
     return true
   }

@@ -114,6 +114,12 @@ export interface CompositorOptions {
    * pages, at the cost of a few more draw calls (`stats().instances`).
    * Default true; false submits everything (for comparing). */
   cullDraws?: boolean
+  /** With `canvasPin: 'page'`: 'full' (default) redraws the whole canvas,
+   * viewport and margins, every frame; 'band' only the viewport plus a
+   * band above and below sized to recent scroll steps (at least 128 CSS
+   * px), clearing the rest (`stats().fillRows`). Experimental: canvas the
+   * compositor scrolls into view before the next frame can show blank. */
+  canvasFill?: 'full' | 'band'
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
@@ -161,6 +167,9 @@ export interface CompositorStats {
   draws: number
   /** Instances (records, glyphs) submitted in the most recent frame. */
   instances: number
+  /** Device-px rows of the canvas the most recent frame drew (all of it
+   * unless `canvasFill: 'band'`). */
+  fillRows: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
   /** The last frame ran the post chain on the previous frame's scene

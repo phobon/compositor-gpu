@@ -5,7 +5,7 @@
 // each hitch; the HUD (profile/hud.ts) draws the most recent frames live.
 // Nothing is sampled while neither is on.
 
-import type { GpuFrameTiming } from '../gpu/timer'
+import type { GpuFrameTiming, GpuSpan } from '../gpu/timer'
 import type { Layer } from '../types'
 import { Hud } from './hud'
 
@@ -117,7 +117,14 @@ export interface ProfileSummary {
   cpu: Record<keyof CpuBreakdown, Pct>
   /** GPU frame time and per pass label (summed per frame); null without
    * timestamp-query. */
-  gpu: { total: Pct; passes: Record<string, Pct> } | null
+  gpu: {
+    total: Pct
+    /** Per label: its passes' begin-to-end times, summed per frame. */
+    passes: Record<string, Pct>
+    /** Per label: the time per frame its passes ran while no other
+     * label's pass did (absent in reports from before 2026-10-14). */
+    alone?: Record<string, Pct>
+  } | null
   reads: Record<ReadKind, number> & {
     /** Escalation reasons and full-read causes, by count. */
     causes: Record<string, number>
@@ -436,6 +443,40 @@ export function estimateRefresh(samples: FrameSample[]): number {
   return est
 }
 
+/** Per label, the ms of the frame during which one of its spans ran and
+ * no other label's did. */
+function aloneTimes(spans: readonly GpuSpan[]): Map<string, number> {
+  const edges: [number, number, string][] = []
+  for (const sp of spans) {
+    if (sp.ms > 0) {
+      edges.push([sp.start, 1, sp.label], [sp.start + sp.ms, -1, sp.label])
+    }
+  }
+  edges.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const open = new Map<string, number>()
+  const out = new Map<string, number>()
+  for (const sp of spans) {
+    out.set(sp.label, 0)
+  }
+  let prev = 0
+  for (const [t, d, label] of edges) {
+    if (open.size === 1) {
+      const [only] = open.keys()
+      if (only !== undefined) {
+        out.set(only, (out.get(only) ?? 0) + (t - prev))
+      }
+    }
+    const n = (open.get(label) ?? 0) + d
+    if (n > 0) {
+      open.set(label, n)
+    } else {
+      open.delete(label)
+    }
+    prev = t
+  }
+  return out
+}
+
 export function summarize(
   samples: FrameSample[],
   refresh: number,
@@ -477,7 +518,29 @@ export function summarize(
     for (const [l, a] of byLabel) {
       passes[l] = pct(a)
     }
-    gpu = { total: pct(timed.map((s) => s.gpu?.totalMs ?? 0)), passes }
+    // Per label, the time its passes ran with no other label's pass
+    // running (passes overlap on the GPU, so the sums above can add up to
+    // more than the frame).
+    const aloneBy = new Map<string, number[]>()
+    for (const s of timed) {
+      for (const [l, ms] of aloneTimes(s.gpu?.spans ?? [])) {
+        let a = aloneBy.get(l)
+        if (!a) {
+          a = []
+          aloneBy.set(l, a)
+        }
+        a.push(ms)
+      }
+    }
+    const alone: Record<string, Pct> = {}
+    for (const [l, a] of aloneBy) {
+      alone[l] = pct(a)
+    }
+    gpu = {
+      total: pct(timed.map((s) => s.gpu?.totalMs ?? 0)),
+      passes,
+      alone
+    }
   }
   const reads = {
     none: 0,
@@ -630,6 +693,10 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
     )
     for (const [l, p] of passes.slice(0, 8)) {
       lines.push(row(`  ${l}`, p))
+      const a = r.gpu.alone?.[l]
+      if (a) {
+        lines.push(row('    alone', a))
+      }
     }
   }
   const causes = Object.entries(r.reads.causes).sort((a, b) => b[1] - a[1])

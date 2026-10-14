@@ -11,6 +11,8 @@
 export interface GpuSpan {
   label: string
   ms: number
+  /** Begin, ms after the frame's first pass began (passes can overlap). */
+  start: number
 }
 
 /** A frame's GPU timings. */
@@ -134,6 +136,7 @@ export class GpuTimer {
           }
           const ts = new BigInt64Array(target.getMappedRange(0, n * 8))
           const spans: GpuSpan[] = []
+          const begins: bigint[] = []
           let first = 0n
           let last = 0n
           for (let i = 0; i < labels.length; i++) {
@@ -141,8 +144,10 @@ export class GpuTimer {
             const e = ts[i * 2 + 1] ?? 0n
             spans.push({
               label: labels[i] ?? '',
-              ms: e > b ? Number(e - b) / 1e6 : 0
+              ms: e > b ? Number(e - b) / 1e6 : 0,
+              start: 0
             })
+            begins.push(b)
             if (b > 0n && (first === 0n || b < first)) {
               first = b
             }
@@ -150,6 +155,10 @@ export class GpuTimer {
               last = e
             }
           }
+          spans.forEach((sp, i) => {
+            const b = begins[i] ?? 0n
+            sp.start = b > first ? Number(b - first) / 1e6 : 0
+          })
           target.unmap()
           this.free.push(target)
           this.onResult({

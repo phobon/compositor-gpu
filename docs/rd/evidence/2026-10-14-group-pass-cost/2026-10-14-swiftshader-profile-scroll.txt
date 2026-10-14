@@ -1,0 +1,16 @@
+Cloud sandbox, headless Chromium 1194, SwiftShader (software WebGPU), 2 CPUs,
+1280x900, dpr 1, perf.html n=400. Run 2026-10-14.
+`npx tsx test/profile/run.ts --only scroll --frames 0.03` (7 frames), with
+and without --nodim. GPU timings here are CPU-emulated and sequential.
+
+with groups:
+  gpu total          6398.09 6571.73 6571.73 6571.73
+    main             5588.25 5730.50 5730.50 5730.50
+      alone          5588.25 5730.50 5730.50 5730.50
+    group             841.22  877.99  877.99  877.99
+      alone           841.22  877.99  877.99  877.99
+
+--nodim (no opacity groups):
+  gpu total          6242.40 6549.35 6549.35 6549.35
+    main             6242.40 6549.35 6549.35 6549.35
+      alone          6242.40 6549.35 6549.35 6549.35

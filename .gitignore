@@ -15,3 +15,5 @@ test/perf/out/
 test/site/out/
 # profile harness reports
 test/profile/out/
+# fill check screenshots
+test/fill/out/

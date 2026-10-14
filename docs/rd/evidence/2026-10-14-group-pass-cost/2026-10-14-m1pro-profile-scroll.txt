@@ -1,0 +1,35 @@
+Ben McCormick's MacBook Pro (Apple M1 Pro, metal-3), Chrome 155.0.8059.40,
+headed, 120 Hz, dpr 1, perf.html n=400. Run 2026-10-14, after the profiler
+gained the `alone` rows. Pasted from the terminal.
+
+$ pnpm test:profile -- --headed --only scroll           (with groups)
+scroll: 258 frames over 2.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.20    0.30    0.40    0.40
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.30    0.30
+    other               0.10    0.10    0.20    0.30
+  gpu total             5.53    7.02    8.76    9.66
+    main                5.16    6.49    7.27    8.59
+      alone             4.63    5.81    6.67    7.30
+    group               2.63    3.80    5.04    5.54
+      alone             0.43    0.66    0.86    1.13
+
+$ pnpm test:profile -- --headed --only scroll --nodim   (no opacity groups)
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.20    9.40
+  cpu total             0.10    0.20    0.30    0.30
+    read                0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.20    0.20
+    other               0.10    0.10    0.20    0.20
+  gpu total             4.63    5.68    6.47    7.77
+    main                4.63    5.68    6.47    7.77
+      alone             4.63    5.68    6.47    7.77

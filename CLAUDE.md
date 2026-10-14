@@ -63,9 +63,17 @@ upload, encode and other, the read kind (`none` / `partial` / `full` /
 `escalated`) with its cause (`SceneReader.lastRead`, the dirty flags),
 and GPU pass timings when the device has `timestamp-query`
 (`gpu/timer.ts`; labels `main`, `group`, `region`, `layer`, `post`,
-`fx:<pass>`). New render passes spread `timed(shared.timer, label)` into
+`fx:<pass>`; passes overlap on Chrome/Metal, so a label's summed time
+overstates its cost: the report's `alone` row under each label is the
+time its passes ran with no other pass running, and an A/B without the
+feature gives the real cost). New render passes spread `timed(shared.timer, label)` into
 their descriptor; never `timestampWrites: undefined`, which stalls
-SwiftShader. A frame is paced when the previous one asked for it or it
+SwiftShader. `canvasFill: 'band'` (experimental, page-pinned canvas)
+scissors the main pass to the viewport plus a band sized to the scroll
+steps of the last 200 ms (at least 128 CSS px) and skips groups outside
+it; everything a pass draws on the main target resets to that scissor
+(`Target.scissor`, `restoreScissor`). `npx tsx test/fill/run.ts` shows
+what a stalled main thread then reveals. A frame is paced when the previous one asked for it or it
 was requested within a refresh interval of it; lateness is its interval
 then, else its wait since the request. `stop()` reports percentiles,
 late/dropped frames, read causes and the worst hitches with a cause

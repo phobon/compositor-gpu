@@ -1,0 +1,26 @@
+Cloud sandbox, headless Chromium 1194, SwiftShader (software WebGPU), 2 CPUs,
+1280x900, dpr 1. Run 2026-10-14.
+
+1. `npx tsx test/profile/run.ts --only scroll --frames 0.03 --nodim [--band]`
+   (perf.html n=400 without opacity groups, 7 frames, 8 px scroll steps)
+
+full:
+  frame interval     6533.00 6866.50 6866.50 6866.50
+  cpu total             0.40    0.90    0.90    0.90
+  gpu total          6581.69 6828.78 6828.78 6828.78
+    main             6581.69 6828.78 6828.78 6828.78
+band:
+  frame interval     2533.10 2733.30 2733.30 2733.30
+  cpu total             0.50    0.60    0.60    0.60
+  gpu total          2605.33 2687.14 2687.14 2687.14
+    main             2605.33 2687.14 2687.14 2687.14
+
+2. Stall check (`npx tsx test/fill/run.ts`): perf.html n=400,
+   overlay mode with the page's paint hidden, scrolled to 3000 px, then
+   requestAnimationFrame disabled (the compositor stops redrawing, as in a
+   main-thread stall) and window.scrollBy(0, 600); screenshot of the
+   viewport. Rows with no variation across the width:
+   full: canvas 2700 rows drawn, 30 of 900 viewport rows flat (gaps
+         between card rows)
+   band: canvas 1156 rows drawn (900 + 2 x 128), 482 of 900 viewport rows
+         flat (the undrawn canvas below the band)
