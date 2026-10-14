@@ -109,6 +109,11 @@ export interface CompositorOptions {
    * redrawing (`stats().sceneReused`). Default true; false always
    * redraws (for comparing). */
   sceneReuse?: boolean
+  /** After a partial read, replace the re-read records in place when the
+   * edit kept their structure (same records, counts, clips; no stacking
+   * context), instead of rebuilding the scene, and re-pack only changed
+   * text. Default true; false always rebuilds (for comparing). */
+  patchEdits?: boolean
   /** Skip the instances of each draw that can't reach the canvas (records
    * more than half a canvas outside it): fewer vertices per frame on long
    * pages, at the cost of a few more draw calls (`stats().instances`).
@@ -185,6 +190,9 @@ export interface CompositorStats {
   readElements: number
   /** Running count of mutation-scoped (non-full) DOM reads. */
   partialReads: number
+  /** Of those, the ones applied by replacing records in place rather
+   * than rebuilding the scene (CompositorOptions.patchEdits). */
+  patchedReads: number
   /** Why the mirror was invalidated (cumulative counts per dirty flag),
    * how many elements are tracked as animating, and the last mutation's
    * target. `readMs` rising while `mutation`/`animating` tick at idle

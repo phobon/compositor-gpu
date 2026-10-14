@@ -12,6 +12,29 @@ import type {
 } from './records'
 import type { OpacityGroup } from './stacking'
 
+/** Index of the record with paint index `z` in `list` (sorted by z), or
+ * -1. */
+function indexByZ(
+  list: readonly ({ z: number } | undefined)[],
+  z: number
+): number {
+  let lo = 0
+  let hi = list.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    const v = list[mid]?.z ?? Number.NaN
+    if (v === z) {
+      return mid
+    }
+    if (v < z) {
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return -1
+}
+
 /**
  * Holds the current set of records and tracks which changed since last frame.
  * The Reader rebuilds records; the Renderer consumes them + the dirty set.
@@ -94,8 +117,12 @@ export class Scene {
 
   markDirty(layer: Layer): void {
     this.dirtyLayers.add(layer)
+    if (layer === 'text') {
+      this.runPatch = null
+    }
   }
   markAllDirty(): void {
+    this.runPatch = null
     this.dirtyLayers.add('boxes')
     this.dirtyLayers.add('images')
     this.dirtyLayers.add('text')
@@ -106,6 +133,77 @@ export class Scene {
   }
   clearDirty(layer: Layer): void {
     this.dirtyLayers.delete(layer)
+    if (layer === 'text') {
+      this.runPatch = null
+    }
+  }
+
+  /** While the text layer is dirty only through replace(): the runs
+   * replaced (old, new), so the text pass can re-pack just those. */
+  private runPatch: [GlyphRun, GlyphRun][] | null = null
+  get textPatch(): readonly (readonly [GlyphRun, GlyphRun])[] | null {
+    return this.dirtyLayers.has('text') ? this.runPatch : null
+  }
+
+  /**
+   * Replace records in place (each new record takes its old one's z and
+   * index; see dom/patch.ts for when that's valid). Batches are kept:
+   * call rebatch() when geometry or materials changed. Records' identity
+   * changes, so `version` is bumped. False (nothing changed) when an old
+   * record isn't in the scene.
+   */
+  replace(pairs: readonly (readonly [SceneRecord, SceneRecord])[]): boolean {
+    const listOf = (r: SceneRecord): { z: number }[] | null =>
+      r.kind === 'box'
+        ? this.boxes
+        : r.kind === 'image'
+          ? this.images
+          : r.kind === 'text'
+            ? this.runs
+            : r.kind === 'cutout'
+              ? this.cutouts
+              : null
+    const at: [({ z: number } | undefined)[], number][] = []
+    for (const [a] of pairs) {
+      const list = listOf(a)
+      const i = list ? indexByZ(list, a.z) : -1
+      if (!list || list[i] !== a) {
+        return false
+      }
+      at.push([list, i])
+    }
+    this.lastBatchesMs = 0
+    const runs: [GlyphRun, GlyphRun][] = []
+    for (let k = 0; k < pairs.length; k++) {
+      const [a, b] = pairs[k] as readonly [SceneRecord, SceneRecord]
+      const [list, i] = at[k] as [({ z: number } | undefined)[], number]
+      b.z = a.z
+      list[i] = b
+      if (a.kind === 'text' && b.kind === 'text') {
+        runs.push([a, b])
+      } else {
+        this.markDirty(
+          b.kind === 'image'
+            ? 'images'
+            : b.kind === 'cutout'
+              ? 'cutouts'
+              : 'boxes'
+        )
+      }
+      if (b.kind === 'image' && b.dynamic) {
+        this.hasDynamic = true
+      }
+    }
+    if (runs.length > 0) {
+      if (!this.dirtyLayers.has('text')) {
+        this.dirtyLayers.add('text')
+        this.runPatch = runs
+      } else if (this.runPatch) {
+        this.runPatch.push(...runs)
+      }
+    }
+    this.version++
+    return true
   }
 
   add(record: SceneRecord): void {
@@ -137,6 +235,9 @@ export class Scene {
     }
   }
 
+  /** ms the last sort() spent building batches (profile). */
+  lastBatchesMs = 0
+
   /** Paint order: back-to-front by z then insertion order. Rebuilds batches. */
   sort(): void {
     this.assign?.()
@@ -146,9 +247,21 @@ export class Scene {
     this.runs.sort(byZ)
     this.cutouts.sort(byZ)
     this.backdrops.sort(byZ)
+    this.buildBatchList()
+  }
+
+  /** Re-tag materials and rebuild batches over the current order (records
+   * replaced in place). */
+  rebatch(): void {
+    this.assign?.()
+    this.buildBatchList()
+  }
+
+  private buildBatchList(): void {
     const runRects = this.runs.map((r) =>
       unionRect(r.glyphs.map((g) => g.rect))
     )
+    const t0 = performance.now()
     this._batches = buildBatches(
       this.boxes,
       this.images,
@@ -159,6 +272,7 @@ export class Scene {
       this.anchors?.() ?? [],
       this.backdrops
     )
+    this.lastBatchesMs = performance.now() - t0
   }
 
   glyphCount(): number {

@@ -1,0 +1,62 @@
+Edit patch, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-14. perf.html n=400, 1280x900, dpr 1, --nodim.
+
+Note: in these runs mutate-class and mutate-text made one edit per frame.
+The scenario's rAF callback runs before the compositor's, so each read
+saw two toggles: no net change (class toggled on and off, word swapped
+and back). The --nopatch runs still rebuild the whole scene on every
+read; the patch runs exercise the patch path but never move glyphs
+(batches never rebuilt). Scenarios changed afterwards to an edit every
+other frame; see run 2.
+
+## pnpm test:edit -- --headed
+partial reads 18, patched 17; 0 px differ between the patched and rebuilt canvas
+
+## test:profile --headed --only mutate-class,mutate-text --nodim --nopatch
+mutate-class: 60 frames over 2.3 s, refresh 16.67 ms (60 Hz)
+  late 0, dropped 0; reads: 60 partial
+                         p50     p95     p99     max
+  cpu total            32.00   36.30   45.60   45.60
+    read               12.30   14.90   17.00   17.00
+      scene            11.60   14.20   16.00   16.00
+        batches         8.30   10.70   11.50   11.50
+    upload             17.80   18.70   23.60   23.60
+      text             16.50   17.40   19.20   19.20
+    encode              1.90    2.40    4.80    4.80
+      cull              1.70    2.20    4.50    4.50
+  gpu total            10.28   14.51   15.04   15.04
+mutate-text: 60 frames over 2.3 s, refresh 16.67 ms (60 Hz)
+  late 0, dropped 0; reads: 60 partial
+  cpu total            31.20   33.80   38.70   38.70
+    read               11.40   12.80   16.80   16.80
+      scene            11.00   12.40   16.50   16.50
+        batches         8.00    9.20   11.40   11.40
+    upload             17.40   18.10   18.70   18.70
+      text             16.30   16.70   17.50   17.50
+    encode              1.80    2.00    2.20    2.20
+      cull              1.70    1.90    2.10    2.10
+  gpu total             9.72   13.95   14.14   14.14
+
+## test:profile --headed --only mutate-class,mutate-text --nodim (patch on)
+mutate-class: 60 frames over 1.0 s, refresh 16.67 ms (60 Hz)
+  late 0, dropped 0; reads: 60 partial
+  frame interval       16.70   17.50   17.60   17.60
+  cpu total             2.40    2.70    8.00    8.00
+    read                0.70    0.80    1.80    1.80
+      scene             0.00    0.20    0.40    0.40
+        batches         0.00    0.00    0.00    0.00
+    upload              1.40    1.70    5.70    5.70
+      text              0.10    0.20    0.50    0.50
+    encode              0.10    0.20    0.20    0.20
+      cull              0.00    0.00    0.00    0.00
+  gpu total             6.28   15.51   15.77   15.77
+mutate-text: 60 frames over 1.0 s, refresh 16.67 ms (60 Hz)
+  late 0, dropped 0; reads: 60 partial
+  frame interval       16.70   17.60   17.60   17.60
+  cpu total             2.00    2.20    2.30    2.30
+    read                0.40    0.40    0.50    0.50
+      scene             0.00    0.10    0.20    0.20
+    upload              1.00    1.10    1.10    1.10
+      text              0.00    0.10    0.20    0.20
+    encode              0.10    0.20    0.20    0.20
+  gpu total             9.39   11.55   14.90   14.90

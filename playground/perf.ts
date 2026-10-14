@@ -172,6 +172,9 @@ async function boot(): Promise<void> {
     root: stage,
     layers: ['boxes', 'images', 'text'],
     fonts: 'auto',
+    // `?nopatch`: rebuild the scene on every partial read
+    // (CompositorOptions.patchEdits).
+    patchEdits: !params.has('nopatch'),
     // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
     // to the canvas rather than the band (CompositorOptions.cullDraws).
     cullDraws: params.has('nocull')
@@ -248,6 +251,24 @@ async function boot(): Promise<void> {
     async mutate() {
       for (let f = 0, n = k(120); f < n; f++) {
         window.__perf?.mutate(f % 2 ? 'text' : 'class')
+        await raf()
+      }
+    },
+    // The same, one kind at a time: a class toggle (paint only) and a
+    // word swap (glyphs move). An edit every other frame: the scenario's
+    // rAF callback runs before the compositor's, so with one each frame
+    // every read would see two toggles (no net change).
+    async 'mutate-class'() {
+      for (let f = 0, n = k(120); f < n; f++) {
+        window.__perf?.mutate('class')
+        await raf()
+        await raf()
+      }
+    },
+    async 'mutate-text'() {
+      for (let f = 0, n = k(120); f < n; f++) {
+        window.__perf?.mutate('text')
+        await raf()
         await raf()
       }
     },

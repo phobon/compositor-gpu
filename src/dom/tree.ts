@@ -32,6 +32,7 @@ import {
   propagateDecorations
 } from './decorations'
 import { IGNORE_ATTR, isIgnored } from './observer'
+import { matchRecords, type RecordPair, subtreeRecords } from './patch'
 import {
   type GlyphRef,
   type OrdinalCache,
@@ -426,6 +427,9 @@ export class SceneReader {
   /** Elements visited (DOM-read) by the most recent read, incl. any work
    * discarded by an escalation. */
   readElements = 0
+  /** ms the last read spent rebuilding the scene from the tree (flatten,
+   * paint order, batches; profile). */
+  lastSceneMs = 0
   /** Inside an ignored `display: contents` subtree: children become
    * cutouts too. */
   private inIgnored = false
@@ -434,6 +438,11 @@ export class SceneReader {
   readonly isolated = new Map<Element, number>()
   /** Partial reads that completed without escalating. */
   partialReads = 0
+  /** Of those, the ones applied by replacing records in place instead of
+   * rebuilding the scene (see patchScene). */
+  patchedReads = 0
+  /** Try patchScene() after a partial read (CompositorOptions.patchEdits). */
+  patchEdits = true
   /** What the most recent read did (the profiler's hitch attribution):
    * 'escalated' is a partial read that fell back to a full one, with why
    * and on which boundary. */
@@ -472,6 +481,7 @@ export class SceneReader {
     beginTextRead()
     beginSelectionRead()
     this.readElements = 0
+    this.lastSceneMs = 0
     this.ordinals.clear()
     this.lastRead = { kind: 'full', reason: '', scopes: 0, el: null }
     this.readAll()
@@ -517,6 +527,7 @@ export class SceneReader {
     beginTextRead()
     beginSelectionRead()
     this.readElements = 0
+    this.lastSceneMs = 0
     this.ordinals.clear()
     this.lastRead = {
       kind: 'partial',
@@ -555,6 +566,7 @@ export class SceneReader {
         }
       }
     }
+    const swaps: [ElNode, ElNode][] = []
     for (const b of bounds) {
       const old = this.nodes.get(b)
       if (!old) {
@@ -595,6 +607,7 @@ export class SceneReader {
         this.escalate(why, b)
         return
       }
+      swaps.push([old, fresh])
       if (p) {
         const i = p.kids.indexOf(old)
         if (i < 0) {
@@ -607,7 +620,60 @@ export class SceneReader {
       }
     }
     this.partialReads++
+    if (this.patchEdits && this.patchScene(swaps)) {
+      this.patchedReads++
+      return
+    }
     this.rebuildScene()
+  }
+
+  /**
+   * Apply re-read subtrees (old node, new node) to the scene in place:
+   * when each yields the same records as before (dom/patch.ts), the new
+   * records take the old ones' places, and batches are rebuilt only if
+   * geometry or materials changed. Records that moved inside an opacity
+   * group would change its bounds: those rebuild. False (scene untouched)
+   * when the scene has to be rebuilt instead.
+   */
+  private patchScene(swaps: readonly [ElNode, ElNode][]): boolean {
+    const t0 = performance.now()
+    const scene = this.scene
+    const pairs: RecordPair[] = []
+    let moved = false
+    for (const [old, fresh] of swaps) {
+      const before = subtreeRecords(old)
+      const after = subtreeRecords(fresh)
+      const m = before && after ? matchRecords(before, after) : null
+      if (!m) {
+        return false
+      }
+      pairs.push(...m.pairs)
+      moved ||= m.moved
+    }
+    if (
+      moved &&
+      pairs.some(([r]) =>
+        scene.groups.some((g) => g.first <= r.z && r.z < g.last)
+      )
+    ) {
+      return false
+    }
+    const material = (r: SceneRecord): number | undefined =>
+      'material' in r ? r.material : undefined
+    const materials = pairs.map(([r]) => material(r))
+    if (!scene.replace(pairs)) {
+      return false
+    }
+    if (moved) {
+      scene.rebatch()
+    } else {
+      scene.assign?.()
+      if (pairs.some(([, r], i) => material(r) !== materials[i])) {
+        scene.rebatch()
+      }
+    }
+    this.lastSceneMs += performance.now() - t0
+    return true
   }
 
   /**
@@ -663,6 +729,7 @@ export class SceneReader {
   }
 
   private rebuildScene(): void {
+    const t0 = performance.now()
     const scene = this.scene
     scene.clear()
     if (this.tree) {
@@ -673,6 +740,7 @@ export class SceneReader {
       }
     }
     scene.sort()
+    this.lastSceneMs += performance.now() - t0
   }
 
   /** All DOM reads for `el` and its subtree. Registers every new node. */

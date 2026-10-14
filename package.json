@@ -50,7 +50,8 @@
     "test:fx": "tsx test/fx/run.ts",
     "test:site": "tsx test/site/run.ts",
     "test:profile": "tsx test/profile/run.ts",
-    "test:atlas": "tsx test/atlas/run.ts"
+    "test:atlas": "tsx test/atlas/run.ts",
+    "test:edit": "tsx test/edit/run.ts"
   },
   "dependencies": {
     "opentype.js": "^2.0.0",

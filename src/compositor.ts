@@ -149,6 +149,7 @@ export async function createCompositor(
     sync.invalidateScope(el)
   )
   reader.canvasZ = options.zIndex ?? 2147483646
+  reader.patchEdits = options.patchEdits ?? true
   let pendingReadFlags = Dirty.ALL
   /** Elements whose isolation changed (a region pass or layer transform
    * started or ended): re-read as partial-read scopes on the next frame. */
@@ -459,6 +460,9 @@ export async function createCompositor(
           upload,
           encode,
           cull: renderer.lastCullMs,
+          scene: read === 'none' ? 0 : reader.lastSceneMs,
+          batches: read === 'none' ? 0 : scene.lastBatchesMs,
+          text: renderer.lastUploadByLayer.text ?? 0,
           other: Math.max(0, frameMs - frameReadMs - hooksMs - upload - encode)
         },
         read,
@@ -1071,6 +1075,7 @@ export async function createCompositor(
       sceneReused: renderer.lastReused,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
+      patchedReads: reader.patchedReads,
       sync: { ...sync.diag },
       textRead: { ...textReadStats },
       readMs,
@@ -1190,6 +1195,7 @@ function inert(): Compositor & { text: null; scene: null } {
       sceneReused: false,
       readElements: 0,
       partialReads: 0,
+      patchedReads: 0,
       sync: {
         layout: 0,
         style: 0,

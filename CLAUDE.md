@@ -304,7 +304,19 @@ re-anchor the canvas if the viewport left it (`place()`; reads
 `onGlyph`/`onFrame` hooks → `renderer.render()`. All DOM reads happen in one
 batched phase before any GPU write. A partial read escalates to a full read when
 the mutated element's border-box rect changed (siblings could move); inline and
-`display:contents` elements are never boundaries. **Never call
+`display:contents` elements are never boundaries. A partial read that
+leaves each re-read subtree's records the same in number, kind, order,
+space, clip (no exact shape), per-run glyph and shadow counts, with no
+stacking context or region in it (`dom/patch.ts`), is applied by
+`Scene.replace` (new records take the old ones' z and index; `version`
+bumps) instead of `rebuildScene`; batches are rebuilt (`Scene.rebatch`)
+only if geometry or materials changed, and records that moved inside an
+opacity group fall back to the rebuild. The text pass then re-packs only
+the replaced runs (`patchRuns`), falling back to a full pack on a slot
+eviction, atlas reset or newly live pipeline. `patchEdits: false`
+(`perf.html?nopatch`, `test:profile --nopatch`) always rebuilds;
+`stats().patchedReads` counts patches; `npm run test:edit` checks a
+patched canvas against a rebuilt one. **Never call
 `getBoundingClientRect` / `getClientRects` from a pass, a shader upload, or
 anything downstream of the reader** — per-glyph rects are already a
 forced-reflow hazard.

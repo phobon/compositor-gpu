@@ -452,8 +452,13 @@ perspective transforms · culling · WebGL2 backend.
       unoptimised call (`stats().cullMs`); a y index cut it in band mode
       on the M1 Pro (1.0 ms max) but not in full mode (2.9 ms). See `docs/rd/experiments/2026-10-14-cull-recompute.md`,
       `-cull-spike.md`, `-cull-index.md`
-- [ ] Text-edit cost: ~11 ms read and ~18 ms instance upload per edit on
-      perf.html (M1 Pro, `mutate`)
+- [x] Edit cost (2026-10-14): partial reads that keep the scene's structure
+      patch it in place; on an M1 Pro a class toggle 32 -> 2.3 ms, a word
+      swap 31 -> 11.8 ms. See `docs/rd/experiments/2026-10-14-edit-cost.md`
+      and `2026-10-14-edit-patch.md`
+- [ ] Moved-glyph edits: keep or locally rebuild batches and update cull
+      bounds for replaced records (word swap 11.8 ms, ~9 ms of it
+      page-wide batching and culling)
 - [x] Kept margins for the band (2026-10-14): `canvasFill: 'band'` keeps
       them (`'band-clear'` for the A/B); at dpr 2 on an M1 Pro, 45-50% of a
       full redraw with no dropped frames. See

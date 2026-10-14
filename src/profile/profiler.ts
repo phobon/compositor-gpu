@@ -24,6 +24,13 @@ export interface CpuBreakdown {
   encode: number
   /** Part of `encode`: recomputing draw culling (0 when reused). */
   cull: number
+  /** Part of `read`: rebuilding the scene from the element tree
+   * (flatten, paint order, batches). */
+  scene: number
+  /** Part of `scene`: building the draw batches. */
+  batches: number
+  /** Part of `upload`: the text layer. */
+  text: number
   /** The rest: dirty tracking, canvas placement, bookkeeping. */
   other: number
 }
@@ -493,6 +500,9 @@ export function summarize(
     'upload',
     'encode',
     'cull',
+    'scene',
+    'batches',
+    'text',
     'other'
   ]
   const cpu = {} as Record<keyof CpuBreakdown, Pct>
@@ -677,6 +687,8 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
   const f = (v: number): string => ` ${v.toFixed(2).padStart(7)}`
   const row = (label: string, p: Pct): string =>
     `  ${label.padEnd(18)}${f(p.p50)}${f(p.p95)}${f(p.p99)}${f(p.max)}`
+  // Rows added later than a saved report: zero.
+  const none: Pct = { n: 0, mean: 0, p50: 0, p95: 0, p99: 0, max: 0 }
   const lines = [
     `${title}: ${r.frames} frames over ${(r.durationMs / 1000).toFixed(1)} s, refresh ${r.refreshMs.toFixed(2)} ms (${(1000 / r.refreshMs).toFixed(0)} Hz)`,
     `  late ${r.late}, dropped ${r.dropped}; reads: ${r.reads.partial} partial, ${r.reads.full} full, ${r.reads.escalated} escalated`,
@@ -684,10 +696,13 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
     row('frame interval', r.dt),
     row('cpu total', r.cpu.total),
     row('  read', r.cpu.read),
+    row('    scene', r.cpu.scene ?? none),
+    row('      batches', r.cpu.batches ?? none),
     row('  hooks', r.cpu.hooks),
     row('  upload', r.cpu.upload),
+    row('    text', r.cpu.text ?? none),
     row('  encode', r.cpu.encode),
-    row('    cull', r.cpu.cull ?? { p50: 0, p95: 0, p99: 0, max: 0 }),
+    row('    cull', r.cpu.cull ?? none),
     row('  other', r.cpu.other)
   ]
   if (r.gpu) {
