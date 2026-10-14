@@ -428,7 +428,18 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Inset `box-shadow`; `text-shadow` (hard = offset Slug instances, blurred =
       atlas-rasterised shadow glyphs; extra instances after the glyph range)
 - [ ] text-shadow on pseudo text; inset shadows on replaced elements
-- [ ] Culling via IntersectionObserver in the draw path
+- [x] Draw culling (2026-10-14): each draw batch split into the instance
+      runs whose records reach the canvas region (grown by half a canvas,
+      cached until the canvas leaves it; `gpu/cull.ts`,
+      `CompositorOptions.cullDraws`, `stats().instances`). perf.html:
+      instances per frame 75.9k -> 11.4k, draws 123 -> 33; frame time
+      -12% in SwiftShader, unchanged on an M1 Pro (GPU p50 5.7 ms either
+      way: fill-bound, not vertex-bound). See
+      `docs/rd/experiments/2026-10-14-draw-culling.md`
+- [ ] Fill cost of the 3-viewport canvas: redraw only the viewport (plus a
+      band for scroll speed) while the margins keep their last contents
+- [ ] Opacity-group pass cost: ~3.2 ms p50 GPU on an M1 Pro for perf.html's
+      5 groups (main pass ~5.3 ms)
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no
       registered face (text now shows before fonts load)

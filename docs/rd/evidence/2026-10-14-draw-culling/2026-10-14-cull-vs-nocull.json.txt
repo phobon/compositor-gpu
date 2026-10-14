@@ -1,0 +1,83 @@
+8:29:46 AM [vite] (client) [console.error] [compositor-gpu] WebGPU init failed; passthrough Error: Could not find a compatible GPU
+[cull] falling back to swiftshader (software WebGPU)
+{
+ "usedSwiftshader": true,
+ "cull": {
+  "frames": [
+   {
+    "ms": 26.100000000093132,
+    "instances": 11357,
+    "draws": 33,
+    "encode": 0.39999999990686774
+   },
+   {
+    "ms": 12850.100000000093,
+    "instances": 11357,
+    "draws": 33,
+    "encode": 0.5
+   },
+   {
+    "ms": 12755,
+    "instances": 11357,
+    "draws": 33,
+    "encode": 0.5
+   },
+   {
+    "ms": 12584.899999999907,
+    "instances": 11357,
+    "draws": 33,
+    "encode": 0.2999999998137355
+   },
+   {
+    "ms": 12486.799999999814,
+    "instances": 11357,
+    "draws": 33,
+    "encode": 0.2999999998137355
+   }
+  ],
+  "docH": 29115,
+  "glyphs": 84168,
+  "boxes": 2723,
+  "images": 400,
+  "batches": 123
+ },
+ "nocull": {
+  "frames": [
+   {
+    "ms": 37.5,
+    "instances": 75919,
+    "draws": 123,
+    "encode": 1.099999999627471
+   },
+   {
+    "ms": 14472.200000000186,
+    "instances": 75919,
+    "draws": 123,
+    "encode": 0.3000000002793968
+   },
+   {
+    "ms": 14693.100000000093,
+    "instances": 75919,
+    "draws": 123,
+    "encode": 0.5
+   },
+   {
+    "ms": 14314.100000000093,
+    "instances": 75919,
+    "draws": 123,
+    "encode": 0.5
+   },
+   {
+    "ms": 6947.699999999721,
+    "instances": 75919,
+    "draws": 123,
+    "encode": 0.39999999990686774
+   }
+  ],
+  "docH": 29115,
+  "glyphs": 84168,
+  "boxes": 2723,
+  "images": 400,
+  "batches": 123
+ }
+}

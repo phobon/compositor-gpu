@@ -6,6 +6,7 @@ import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext, Layer } from '../types'
 import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
+import { cullRuns, type Region, type Runs } from './cull'
 import type { GpuContext } from './device'
 import {
   CLIP_FLOATS,
@@ -258,6 +259,16 @@ export class Renderer {
   private backdrop: BackdropPass | null = null
   /** The canvas was configured with TEXTURE_BINDING (for backdrops). */
   private canvasSampled = false
+  /** Skip instances outside the canvas region (CompositorOptions.cullDraws). */
+  cullDraws = true
+  /** Cached culling: for these batches, within `culledRegion` (the canvas
+   * region grown by half its size each way, kept while the canvas stays
+   * inside it). */
+  private culled: Runs | null = null
+  private culledBatches: readonly DrawBatch[] | null = null
+  private culledRegion: Region | null = null
+  /** Instances submitted in the last frame (stats().instances). */
+  lastInstances = 0
   /** Frame uniforms for group targets, one per group slot in a frame
    * (sibling groups need distinct buffers: writeBuffer lands before
    * submit). Reused across frames. */
@@ -610,6 +621,8 @@ export class Renderer {
     let batches = 0
     let groups = 0
     let draws = 0
+    let instances = 0
+    const culled = this.cullDraws ? this.cullFor(scene, ctx) : null
     let slot = 0
     const list = scene.batches
     // Two phases. Every group's texture is rendered first (children before
@@ -689,12 +702,18 @@ export class Renderer {
             batch.material !== undefined
               ? this.materials.get(batch.material)
               : undefined
-          draws += pass.draw(
-            rp,
-            batch.first,
-            batch.count,
-            mat?.active() ? mat : null
-          )
+          const binding = mat?.active() ? mat : null
+          const runs = target.group === -1 ? culled?.[i] : null
+          if (runs) {
+            for (let r = 0; r < runs.length; r += 2) {
+              const n = runs[r + 1] ?? 0
+              draws += pass.draw(rp, runs[r] ?? 0, n, binding)
+              instances += n
+            }
+          } else {
+            draws += pass.draw(rp, batch.first, batch.count, binding)
+            instances += batch.count
+          }
           batches++
         }
       }
@@ -788,6 +807,7 @@ export class Renderer {
     this.lastBatches = batches
     this.lastGroups = groups
     this.lastDraws = draws
+    this.lastInstances = instances
     rp.end()
     if (chain && this.sceneView) {
       this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
@@ -1152,6 +1172,37 @@ export class Renderer {
     this.composite.release(mid)
     child.pooled = out
     child.view = out.view
+  }
+
+  /** The main target's culled runs (see gpu/cull.ts), recomputed when the
+   * batches change or the canvas leaves the cached region. */
+  private cullFor(scene: Scene, ctx: FrameContext): Runs {
+    const x0 = ctx.canvasX
+    const y0 = ctx.canvasY
+    const x1 = x0 + ctx.canvasWidth
+    const y1 = y0 + ctx.canvasHeight
+    const r = this.culledRegion
+    if (
+      this.culled &&
+      this.culledBatches === scene.batches &&
+      r &&
+      x0 >= r[0] &&
+      y0 >= r[1] &&
+      x1 <= r[2] &&
+      y1 <= r[3]
+    ) {
+      return this.culled
+    }
+    const mx = ctx.canvasWidth / 2
+    const my = ctx.canvasHeight / 2
+    const region: Region = [x0 - mx, y0 - my, x1 + mx, y1 + my]
+    this.culled = cullRuns(scene, scene.batches, region, (id) => {
+      const m = this.materials.get(id)
+      return m !== undefined && !m.builtin
+    })
+    this.culledBatches = scene.batches
+    this.culledRegion = region
+    return this.culled
   }
 
   /** End `rp`, filter what `target` holds under `rec` into a pooled

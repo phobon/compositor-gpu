@@ -102,6 +102,7 @@ export async function createCompositor(
   gpu.device.pushErrorScope('validation')
   const renderer = new Renderer(gpu)
   renderer.reuseScene = options.sceneReuse ?? true
+  renderer.cullDraws = options.cullDraws ?? true
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
   for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
     renderer.materials.set(m.id, m)
@@ -1061,6 +1062,7 @@ export async function createCompositor(
       uploads: renderer.lastUploads,
       batches: renderer.lastBatches,
       draws: renderer.lastDraws,
+      instances: renderer.lastInstances,
       groups: renderer.lastGroups,
       sceneReused: renderer.lastReused,
       readElements: reader.readElements,
@@ -1177,6 +1179,7 @@ function inert(): Compositor & { text: null; scene: null } {
       uploads: 0,
       batches: 0,
       draws: 0,
+      instances: 0,
       groups: 0,
       sceneReused: false,
       readElements: 0,

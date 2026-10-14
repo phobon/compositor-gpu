@@ -5,6 +5,7 @@
 // Usage:
 //   npm run test:perf                 # n=400
 //   npm run test:perf -- --n 1000
+//   npm run test:perf -- --nocull   # CompositorOptions.cullDraws off (A/B)
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,6 +36,7 @@ interface Stats {
   uploads: number
   batches: number
   draws: number
+  instances: number
   groups: number
   readElements: number
   partialReads: number
@@ -155,7 +157,8 @@ async function main(): Promise<void> {
       reducedMotion: 'reduce'
     })
 
-    await page.goto(`${url}perf.html?n=${n}`, { waitUntil: 'load' })
+    const cull = process.argv.includes('--nocull') ? '&nocull' : ''
+    await page.goto(`${url}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
     await page.waitForFunction(() => Boolean(window.__perf), null, {
       timeout: 30_000
     })
@@ -232,6 +235,7 @@ async function main(): Promise<void> {
         fallback: finalStats.fallback,
         batches: finalStats.batches,
         draws: finalStats.draws,
+        instances: finalStats.instances,
         groups: finalStats.groups,
         readElements: finalStats.readElements
       },
@@ -292,6 +296,7 @@ function printTable(r: {
     fallback: number
     batches: number
     draws: number
+    instances: number
     groups: number
     readElements: number
   }
@@ -321,6 +326,7 @@ function printTable(r: {
     `  scene: boxes=${r.counts.boxes} glyphs=${r.counts.glyphs} ` +
       `images=${r.counts.images} fallback=${r.counts.fallback} ` +
       `batches=${r.counts.batches} draws=${r.counts.draws} ` +
+      `instances=${r.counts.instances} ` +
       `groups=${r.counts.groups} readElements=${r.counts.readElements}`
   )
   const t = r.textRead

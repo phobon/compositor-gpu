@@ -1,0 +1,58 @@
+{
+  "n": 400,
+  "usedSwiftshader": true,
+  "counts": {
+    "boxes": 2723,
+    "glyphs": 84168,
+    "images": 400,
+    "fallback": 0,
+    "batches": 123,
+    "draws": 123,
+    "groups": 5,
+    "readElements": 192
+  },
+  "textRead": {
+    "graphemes": 84168,
+    "perGrapheme": 2692,
+    "ranges": 7762
+  },
+  "fullRead": {
+    "medianMs": 580.5499999999884,
+    "p90Ms": 666.4000000000233
+  },
+  "partialReadText": {
+    "medianMs": 72.24999999994179,
+    "p90Ms": 86.80000000004657
+  },
+  "partialReadClass": {
+    "medianMs": 74.29999999998836,
+    "p90Ms": 85.69999999995343
+  },
+  "steadyFrame": {
+    "encodeMsMedian": 0.39999999990686774,
+    "encodeMsP90": 2.199999999953434,
+    "uploadMsMedian": 0,
+    "uploadMsP90": 0,
+    "fpsMedian": 0
+  },
+  "steadyBlur": {
+    "encodeMsMedian": 0.19999999995343387,
+    "encodeMsP90": 3.5999999998603016,
+    "fpsMedian": 1
+  },
+  "animate": {
+    "cards": 16,
+    "dom": {
+      "frameMedianMs": 3399.9000000000233,
+      "frameP90Ms": 7083.100000000093,
+      "cpuMedianMs": 157.85000000009313,
+      "cpuP90Ms": 250.69999999995343
+    },
+    "gpu": {
+      "frameMedianMs": 7066.399999999907,
+      "frameP90Ms": 7399.800000000047,
+      "cpuMedianMs": 0.8000000000465661,
+      "cpuP90Ms": 2.7000000001862645
+    }
+  }
+}

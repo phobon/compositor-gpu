@@ -148,7 +148,9 @@ async function boot(): Promise<void> {
   const compositor = await createCompositor({
     root: stage,
     layers: ['boxes', 'images', 'text'],
-    fonts: 'auto'
+    fonts: 'auto',
+    // `?nocull`: submit every instance (CompositorOptions.cullDraws).
+    cullDraws: !params.has('nocull')
     // No onGlyph: the perf fixture stays static, matching main.ts's
     // non-animated ?vr mode, so nothing dirties the text layer every frame.
   })

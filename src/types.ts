@@ -109,6 +109,11 @@ export interface CompositorOptions {
    * redrawing (`stats().sceneReused`). Default true; false always
    * redraws (for comparing). */
   sceneReuse?: boolean
+  /** Skip the instances of each draw that can't reach the canvas (records
+   * more than half a canvas outside it): fewer vertices per frame on long
+   * pages, at the cost of a few more draw calls (`stats().instances`).
+   * Default true; false submits everything (for comparing). */
+  cullDraws?: boolean
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
@@ -154,6 +159,8 @@ export interface CompositorStats {
    * `batches` when a pass collapses several instances into one draw (e.g.
    * atlas-backed images). */
   draws: number
+  /** Instances (records, glyphs) submitted in the most recent frame. */
+  instances: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
   /** The last frame ran the post chain on the previous frame's scene

@@ -19,6 +19,7 @@
 //   --frames 0.25   scale each scenario's frame count
 //   --viewport 1280x900
 //   --dpr 2        device pixel ratio (default 1; a Retina display is 2)
+//   --nocull       perf.html with CompositorOptions.cullDraws off (A/B)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -362,7 +363,8 @@ async function main(): Promise<void> {
       }
       reports.push(['page', r])
     } else {
-      await page.goto(`${base}perf.html?n=${n}`, { waitUntil: 'load' })
+      const cull = flag('nocull') ? '&nocull' : ''
+      await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)
       console.log(`[profile] perf.html n=${n} ready`)

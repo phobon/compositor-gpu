@@ -1,0 +1,29 @@
+[perf] vite dev server at http://localhost:36687/
+[perf] falling back to swiftshader (software WebGPU)
+[perf] chromium launched (swiftshader), n=400
+[perf] full reads
+[perf] partial reads
+[perf] steady frames
+[perf] steady frames (blur)
+[perf] animated transforms
+
+[perf] n=400 (swiftshader)
+  scene: boxes=2723 glyphs=84168 images=400 fallback=0 batches=123 draws=123 groups=5 readElements=192
+  full-read text: graphemes=84168 perGrapheme=2692 (3.2%) ranges=7762
+
+  metric                median (ms)   p90 (ms)
+  --------------------------------------------
+  full read                580.550    666.400
+  partial read (text)       72.250     86.800
+  partial read (class)      74.300     85.700
+  steady encode               0.400      2.200
+  steady encode (blur)        0.200      3.600
+  steady upload               0.000      0.000
+  steady fps (median)     0.0
+  steady fps (blur)       1.0
+
+  animated transforms, 16 cards (frame interval / compositor CPU)
+  CSS transform frame     3399.900   7083.100
+  CSS transform cpu        157.850    250.700
+  fx.transform  frame     7066.400   7399.800
+  fx.transform  cpu          0.800      2.700

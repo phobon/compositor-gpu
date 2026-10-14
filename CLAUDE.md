@@ -44,7 +44,15 @@ reads. Timings swing ±30% run to run in the sandbox (more when other
 jobs share the machine), so compare A/B in the same session. That page draws in ~114 calls: the batch builder indexes
 members in a 128px grid and tests text runs per glyph (a run's union rect
 spans whole paragraphs and blocked every merge), and shadow records use a
-1.5σ `batchRect` footprint.
+1.5σ `batchRect` footprint. On the main target each batch draws only
+the instance runs whose records reach the canvas region grown by half a
+canvas (`gpu/cull.ts`, cached per batch list until the canvas leaves that
+region; gaps under 64 instances are drawn through; batches with a
+non-builtin material are drawn whole, their vertex hooks may move
+geometry): perf.html submits ~11k instances in 33 draws instead of ~76k
+in 123. `cullDraws: false` turns it off; `test:perf` and `test:profile`
+take `--nocull` for A/B, and `stats().instances` counts what was
+submitted. Group targets are not culled.
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
 in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
 
