@@ -21,15 +21,16 @@ struct Effect {
   texel      : vec2f,  // one device px in uv (1 / viewport)
   scroll     : vec2f,  // the viewport's document-space origin, CSS px
   dpr        : f32,
-  _pad       : f32,
+  scale      : f32,    // runtime: device px per output texel (1 unless the
+                       // stage is downsampled; 0 is read as 1)
   origin     : vec2f,  // runtime: viewport top-left in canvas device px
   src_origin : vec2f,  // runtime: src texel (0,0) in canvas device px
-  src_size   : vec2f,  // runtime: src's valid region, device px
+  src_size   : vec2f,  // runtime: src's valid region, src texels
   dst_origin : vec2f,  // runtime: target texel (0,0) in canvas device px
   src_texel  : vec2f,  // runtime: 1 / src texture size
   page_scroll : vec2f, // runtime: the real document scroll, CSS px
   alpha      : f32,    // runtime: region group opacity (1 fullscreen)
-  _pad2      : f32,
+  src_scale  : f32,    // runtime: device px per source texel (as scale)
 };
 `
 
@@ -44,7 +45,7 @@ const BINDINGS_WGSL = /* wgsl */ `
 // clamped half a texel inside its valid region (edge texels repeat; a
 // pooled texture can be larger than what was drawn into it).
 fn src_uv(uv : vec2f) -> vec2f {
-  let p = fx.origin + uv * fx.viewport - fx.src_origin;
+  let p = (fx.origin + uv * fx.viewport - fx.src_origin) / max(fx.src_scale, 1.0);
   return clamp(p, vec2f(0.5), fx.src_size - 0.5) * fx.src_texel;
 }
 
@@ -82,7 +83,7 @@ fn fx_vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 
 @fragment
 fn fx_fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
-  let uv = (pos.xy + fx.dst_origin - fx.origin) / fx.viewport;
+  let uv = (pos.xy * max(fx.scale, 1.0) + fx.dst_origin - fx.origin) / fx.viewport;
   return effect(uv, fx_src, fx_smp);
 }
 

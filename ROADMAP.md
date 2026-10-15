@@ -467,7 +467,10 @@ perspective transforms · culling · WebGL2 backend.
       chain; `canvasPin: 'viewport'` stays 'full'; stall checks match
       'full' on an M1 Pro and in SwiftShader (fixed header, upward stall,
       blur pass). See `docs/rd/experiments/2026-10-14-band-default.md`
-- [ ] Fullscreen blur pass cost at dpr 2 (~9.4 ms of passes on an M1 Pro)
+- [x] Fullscreen blur at dpr 2 (2026-10-15): `downsample` pass option,
+      `blur` at half resolution from 8 device px of radius; frame 12.0 ->
+      7.5 ms on an M1 Pro, no dropped frames at 120 Hz. See
+      `docs/rd/experiments/2026-10-15-blur-downsample.md`
 - [ ] Spread a re-anchor's newly covered rows over a few frames (p99 10 ms
       at dpr 2 on `scroll-long`)
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms

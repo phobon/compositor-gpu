@@ -1,0 +1,27 @@
+Blur downsample, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-15
+
+## test:profile --only blur-scroll --nodim --frames 0.05 --band (before)
+blur-scroll: 7 frames over 15.0 s, refresh 2833.30 ms (0 Hz)
+  gpu total          2883.29 3258.77 3258.77 3258.77
+    main             2338.24 2666.63 2666.63 2666.63
+      alone          2338.24 2666.63 2666.63 2666.63
+    post              285.15  297.30  297.30  297.30
+      alone           285.15  297.30  297.30  297.30
+    fx:blur           245.29  292.65  292.65  292.65
+      alone           245.29  292.65  292.65  292.65
+
+## test:profile --only blur-scroll --nodim --frames 0.05 --band (after)
+blur-scroll: 7 frames over 15.0 s, refresh 2399.90 ms (0 Hz)
+  gpu total          2415.27 2658.03 2658.03 2658.03
+    main             2302.47 2541.37 2541.37 2541.37
+      alone          2302.47 2541.37 2541.37 2541.37
+    fx:blur            75.13  112.21  112.21  112.21
+      alone            75.13  112.21  112.21  112.21
+    post               39.78   47.89   47.89   47.89
+      alone            39.78   47.89   47.89   47.89
+
+## fx harness blur shots vs goldens (0.5% gate): fx-blur, fx-blur-scissor, fx-blur-then-off(-pre/-on/invariant), fx-region: all 0.00% ok
+Raw pixel difference to the full-resolution goldens (max channel / mean / pixels > 8):
+fx-blur 8 / 0.370 / 0; fx-blur-scissor 31 / 0.028 / 38; fx-blur-then-off-on 6 / 0.369 / 0
+
+## test:fx full run: same failures as before (fx-trail*, fx-displace*, fx-dissolve), 62 ok

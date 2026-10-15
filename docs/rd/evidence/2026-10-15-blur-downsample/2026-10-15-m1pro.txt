@@ -1,0 +1,35 @@
+Blur downsample, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-15. perf.html n=400, 1280x900,
+test:profile --headed --only blur-scroll --nodim --dpr 2 --band.
+Before: src/fx/{effects,shader,presets/blur}.ts stashed (HEAD); after: popped.
+
+---- before
+blur-scroll: 137 frames over 1.5 s, refresh 8.33 ms (120 Hz)
+  late 49, dropped 49
+                         p50     p95     p99     max
+  frame interval        8.60   17.20   17.60   17.60
+  cpu total             0.20    0.40    0.90    1.60
+  gpu total            12.00   12.10   12.94   18.81
+    post               11.92   12.02   12.86   12.86  (alone 2.61)
+    fx:blur             9.40    9.49    9.80    9.80  (alone 0.00)
+    copy                6.41    6.91    6.91    6.91  (alone 0.48)
+    main                6.58    6.66    6.75    9.37  (alone 0.00)
+
+---- after
+blur-scroll: 139 frames over 1.2 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.20    0.40    0.90    1.00
+  gpu total             7.49    8.21   10.02   12.93
+    fx:blur            13.74   15.14   16.81   17.26  (alone 0.00)
+    post                6.54    8.12    8.14    8.99  (alone 0.41)
+    main                5.91    6.64    7.43    9.30  (alone 0.00)
+    copy                4.47    5.97    5.97    5.97  (alone 0.47)
+
+## pnpm test:fx -- --only fx-blur (headless, fell back to SwiftShader)
+fx-blur 0.00 ok
+
+Spans overlap on Chrome/Metal; `alone` and the GPU total are the
+comparable figures. Same scroll without the blur, band at dpr 2:
+7.06 ms GPU total p50 (2026-10-14-band-margins, `scroll`).

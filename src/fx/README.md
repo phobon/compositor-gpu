@@ -45,6 +45,7 @@ fx.pass({
   fragment: wgsl | tgpuFn | [ ... ],
   params?: { ...schema },          // see Params
   radius?: number | (params) => number,  // CSS px sampled past the viewport
+  downsample?: number | (params, dpr) => number,  // 1-4, see below
   enabled?: true,
   continuous?: false,
   region?: target | element         // see Region passes
@@ -53,7 +54,14 @@ fx.pass({
 
 - Passes run in creation order, each on the previous one's output. An
   array `fragment` is one Pass with several stages (sharing `params`), run
-  in order; `blur` uses it for its two axes.
+  in order; `blur` uses it for its two axes and a copy.
+- `downsample: n` runs every stage of a fullscreen pass but its last at
+  1/n resolution per axis; the last samples that bilinearly while writing
+  full resolution. For low-frequency passes: `blur` uses 2 from 8 device
+  px of radius (its axes run at half resolution, the copy upsamples).
+  Region passes ignore it. `fx.scale` / `fx.src_scale` are the device px
+  per texel of the stage's output and source (1 at full resolution);
+  `uv`, `sample` and `fx.texel` stay in full-resolution terms.
 - "Fullscreen" is the **visible viewport**. The chain writes the viewport
   grown by the largest `radius` of the enabled passes (× dpr, clamped to
   the canvas); the rest of the canvas (it is up to three viewports tall)

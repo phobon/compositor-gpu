@@ -73,6 +73,12 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** CSS px the fragment samples beyond the viewport (a blur's reach), or
    * a function of the params. Default 0. */
   radius?: number | ((params: ParamValues<S>) => number)
+  /** Run every stage but the last at 1/n resolution (each axis), the last
+   * upsampling as it writes full resolution: for low-frequency passes
+   * such as wide blurs. A number, or a function of the params and dpr
+   * (re-evaluated each frame); 1 (default) keeps full resolution, up to
+   * 4. Fullscreen passes only. */
+  downsample?: number | ((params: ParamValues<S>, dpr: number) => number)
   /** Default true. */
   enabled?: boolean
   /** Keep the frame loop running while enabled (time-based motion).
@@ -190,12 +196,16 @@ interface Source {
   h: number
   texW: number
   texH: number
+  /** Device px per texel (a downsampled stage's output: > 1). */
+  scale: number
 }
 
 interface PassState {
   name: string
   block: ParamBlock<ParamSchema>
   radius: () => number
+  /** Resolution divisor for all stages but the last (PassOptions). */
+  downsample: (dpr: number) => number
   enabled: boolean
   continuous: boolean
   /** ctx.time (ms) of the first frame after enabling; null until then. */
@@ -251,6 +261,20 @@ function passHandle<S extends ParamSchema>(
     region: s.region,
     destroy: remove
   }
+}
+
+function downsampleFn<S extends ParamSchema>(
+  opts: PassOptions<S>,
+  values: ParamValues<S>
+): (dpr: number) => number {
+  const d = opts.downsample
+  const clampTo = (n: number): number =>
+    Math.min(4, Math.max(1, Math.round(n) || 1))
+  if (typeof d === 'function') {
+    return (dpr) => clampTo(d(values, dpr))
+  }
+  const n = clampTo(d ?? 1)
+  return () => n
 }
 
 function radiusFn<S extends ParamSchema>(
@@ -313,6 +337,7 @@ function inertEffects(): Effects {
         name: opts.name,
         block,
         radius: radiusFn(opts, block.values),
+        downsample: downsampleFn(opts, block.values),
         enabled: opts.enabled ?? true,
         continuous:
           opts.continuous ??
@@ -606,8 +631,9 @@ function buildEffects(compositor: Compositor): Effects {
   let timeMs = 0
   let clockSet = false
   const effectData = new Float32Array(EFFECT_BYTES / 4)
-  /** This frame's running stages, in order (filled by encode). */
-  const running: { pass: PassState; stage: Stage }[] = []
+  /** This frame's running stages, in order (filled by encode), with the
+   * device px per texel each one renders at. */
+  const running: { pass: PassState; stage: Stage; scale: number }[] = []
 
   /** In the fullscreen chain this frame (region passes never are). */
   const live = (p: PassState): boolean =>
@@ -618,7 +644,8 @@ function buildEffects(compositor: Compositor): Effects {
     stage: Stage,
     frame: PostFrame,
     src: Source,
-    dst: { x: number; y: number }
+    dst: { x: number; y: number },
+    scale = 1
   ): void => {
     const d = effectData
     const v = frame.viewport
@@ -631,7 +658,7 @@ function buildEffects(compositor: Compositor): Effects {
     d[6] = frame.ctx.scrollX
     d[7] = frame.ctx.scrollY
     d[8] = frame.dpr
-    d[9] = 0
+    d[9] = scale
     d[10] = v.x
     d[11] = v.y
     d[12] = src.x
@@ -645,7 +672,7 @@ function buildEffects(compositor: Compositor): Effects {
     d[20] = frame.ctx.scrollX
     d[21] = frame.ctx.scrollY
     d[22] = 1
-    d[23] = 0
+    d[23] = src.scale
     device.queue.writeBuffer(stage.effect, 0, d)
   }
 
@@ -669,9 +696,11 @@ function buildEffects(compositor: Compositor): Effects {
         if (p.block.dirty && p.paramsBuf) {
           device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
         }
-        for (const stage of p.stages) {
-          running.push({ pass: p, stage })
-        }
+        const down = p.downsample(frame.dpr)
+        const last = p.stages.length - 1
+        p.stages.forEach((stage, k) => {
+          running.push({ pass: p, stage, scale: k < last ? down : 1 })
+        })
       }
       if (frame.scene !== lastScene) {
         if (lastScene) {
@@ -692,7 +721,8 @@ function buildEffects(compositor: Compositor): Effects {
           continue
         }
         const src = sourceOf(i, frame)
-        writeEffect(run.pass, run.stage, frame, src, { x: r.x, y: r.y })
+        const s = run.scale
+        writeEffect(run.pass, run.stage, frame, src, { x: r.x, y: r.y }, s)
         const rp = frame.encoder.beginRenderPass({
           label: `fx:${run.pass.name}`,
           ...timed(graph.shared.timer, `fx:${run.pass.name}`),
@@ -706,7 +736,7 @@ function buildEffects(compositor: Compositor): Effects {
           ]
         })
         rp.setBindGroup(0, graph.shared.frameBindGroup)
-        rp.setScissorRect(0, 0, r.width, r.height)
+        rp.setScissorRect(0, 0, Math.ceil(r.width / s), Math.ceil(r.height / s))
         draw(rp, run.stage, src.view)
         rp.end()
       }
@@ -729,17 +759,19 @@ function buildEffects(compositor: Compositor): Effects {
     if (!view || !t) {
       const w = frame.sceneWidth
       const h = frame.sceneHeight
-      return { view: frame.scene, x: 0, y: 0, w, h, texW: w, texH: h }
+      return { view: frame.scene, x: 0, y: 0, w, h, texW: w, texH: h, scale: 1 }
     }
     const r = frame.rect
+    const scale = running[i - 1]?.scale ?? 1
     return {
       view,
       x: r.x,
       y: r.y,
-      w: r.width,
-      h: r.height,
+      w: Math.ceil(r.width / scale),
+      h: Math.ceil(r.height / scale),
       texW: t.width,
-      texH: t.height
+      texH: t.height,
+      scale
     }
   }
 
@@ -1053,7 +1085,8 @@ function buildEffects(compositor: Compositor): Effects {
         w: f.width,
         h: f.height,
         texW: f.sourceWidth,
-        texH: f.sourceHeight
+        texH: f.sourceHeight,
+        scale: 1
       }
     }
     return {
@@ -1063,7 +1096,8 @@ function buildEffects(compositor: Compositor): Effects {
       w: f.width,
       h: f.height,
       texW: view.width,
-      texH: view.height
+      texH: view.height,
+      scale: 1
     }
   }
   const regionHandler = (p: PassState): RegionHandler => ({
@@ -1155,6 +1189,7 @@ function buildEffects(compositor: Compositor): Effects {
         name: opts.name,
         block: generic,
         radius: radiusFn(opts, block.values),
+        downsample: downsampleFn(opts, block.values),
         enabled: opts.enabled ?? true,
         continuous:
           opts.continuous ??
