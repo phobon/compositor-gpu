@@ -1,0 +1,19 @@
+Group atlas, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-15. perf.html n=400, 1280x900,
+test:profile --headed --only scroll [flags]. 0 late / 0 dropped in all six.
+
+GPU p50 / p95 / p99 (ms); pass rows p50 (alone p50)
+
+dpr 1, full canvas (perf.html default)
+  --noatlas      gpu 5.45 / 5.95 / 6.36   main 4.92 (4.49)   group 2.61 (0.52)
+  (atlas)        gpu 5.31 / 5.84 / 6.25   main 4.95 (4.60)   group 0.70 (0.34)
+  --nodim        gpu 5.27 / 5.77 / 6.85   main 5.27 (5.27)
+
+dpr 2, --band
+  --noatlas      gpu 7.45 / 7.98 / 8.42   main 6.87 (0.27)   copy 5.94 (0.43)   group 2.42 (0.08)
+  (atlas)        gpu 6.68 / 7.26 / 8.47   main 6.13 (0.33)   copy 5.22 (0.47)   group 1.16 (0.00)
+  --nodim        gpu 7.11 / 7.65 / 7.87   main 6.62 (1.38)   copy 5.73 (0.46)
+
+Groups' cost (GPU p50 with groups minus --nodim):
+  dpr 1: 0.18 ms without the atlas, 0.04 ms with it
+  dpr 2: 0.34 ms without, -0.43 ms with (below run-to-run spread)

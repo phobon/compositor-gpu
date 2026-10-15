@@ -1,0 +1,28 @@
+Group atlas, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-15
+
+## perf.html n=400 scrolled to 1200 px, source hidden, 6 frames (scratch script)
+atlas   {groups: 5, groupPasses: 1}
+noatlas {groups: 5, groupPasses: 5}
+px differ (> 2/255): 28, max 14/255, at glyph edges in card 21 (dimmed)
+Control: two ?noatlas runs: 0 px differ
+Likely cause: vertex positions computed against a larger target (the atlas) round differently in float32; not confirmed.
+
+## test:visual (atlas on)
+textshadow      0.14         1.09  fail
+emoji           0.84         4.18  fail
+bglayers-select    0.99         9.11  fail
+selcolor-select    0.65         8.90  fail
+duo-s900        0.70        19.97  fail
+29 ok (same failures and numbers as before)
+
+## test:fx (atlas on)
+fx-displace                      1.00  fail
+fx-displace-push                 1.07  fail
+fx-dissolve                      2.68  fail
+fx-trail-off                   100.00  fail
+fx-trail                       100.00  fail
+fx-trail-pixel                 100.00  fail
+fx-trail-reuse                 100.00  fail
+fx-trail-reuse-off             100.00  fail
+fx-trail-clear                 100.00  fail
+62 ok (same as before)

@@ -478,8 +478,12 @@ perspective transforms · culling · WebGL2 backend.
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for
       ~5 groups, mostly per pass. See
       `docs/rd/experiments/2026-10-14-group-pass-cost.md`
-- [ ] Group atlas: render a frame's non-nested groups into one texture in
-      one pass instead of a pass each
+- [x] Group atlas (2026-10-15): a parent's leaf groups share one texture
+      and pass (`groupAtlas`, default on); 5 groups 5 passes -> 1, cost
+      0.18 -> 0.04 ms at dpr 1 on an M1 Pro. See
+      `docs/rd/experiments/2026-10-15-group-atlas.md`
+- [ ] A many-groups profile scenario (dozens of fading elements) to
+      measure how the group atlas scales
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no
       registered face (text now shows before fonts load)

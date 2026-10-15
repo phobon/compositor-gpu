@@ -32,7 +32,8 @@ struct Comp {
   uv   : vec4f,   // u, v extent of the used region; alpha; clip shape
                   // index (frame_clip_cov; 0 none)
   ops  : vec4f,   // CSS filter colour functions (scene/filter.ts): x the
-                  // count (0 none), y the first matrix in mats
+                  // count (0 none), y the first matrix in mats; zw the
+                  // uv of the region's origin (a group atlas; else 0)
 };
 @group(1) @binding(0) var<storage, read> comps : array<Comp>;
 // Colour matrices, five vec4 each: rows r, g, b, a, then the offsets.
@@ -61,7 +62,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   let q = array<vec2f, 4>(c.c01.xy, c.c01.zw, c.c23.xy, c.c23.zw);
   var out : VOut;
   out.pos = doc_to_clip(q[at[vi]]);
-  out.uv = k * c.uv.xy;
+  out.uv = c.ops.zw + k * c.uv.xy;
   out.alpha = c.uv.z;
   out.shape = c.uv.w;
   out.docp = q[at[vi]];
@@ -111,6 +112,9 @@ export interface GroupTarget {
   bindGroup: GPUBindGroup | null
   inUse: boolean
   lastUsed: number
+  /** A group atlas: composites still to draw from it; it stays in use
+   * until the last (absent: one group's own texture). */
+  refs?: number
 }
 
 export class GroupCompositor {
@@ -198,6 +202,13 @@ export class GroupCompositor {
     this.frame++
     this.data.length = 0
     this.mats.length = 0
+    // A group atlas whose groups weren't all composited last frame.
+    for (const t of this.pool) {
+      if (t.refs !== undefined) {
+        t.refs = undefined
+        t.inUse = false
+      }
+    }
     if (this.ensureCapacity(maxGroups)) {
       for (const t of this.pool) {
         t.bindGroup = null
@@ -249,9 +260,28 @@ export class GroupCompositor {
     return best
   }
 
+  /** A target of at least w×h device px shared by `refs` groups (a group
+   * atlas): free again after `refs` draws or releases. */
+  acquireShared(w: number, h: number, refs: number): GroupTarget {
+    const t = this.acquire(w, h)
+    t.refs = refs
+    return t
+  }
+
   /** Release `target` for reuse without compositing it (a region handler
    * drew it instead). */
   release(target: GroupTarget): void {
+    this.unref(target)
+  }
+
+  private unref(target: GroupTarget): void {
+    if (target.refs !== undefined) {
+      target.refs--
+      if (target.refs > 0) {
+        return
+      }
+      target.refs = undefined
+    }
     target.inUse = false
   }
 
@@ -271,11 +301,13 @@ export class GroupCompositor {
     alpha: number,
     shape = 0,
     /** A CSS filter's colour matrices, in order (scene/filter.ts). */
-    matrices: readonly (readonly number[])[] = []
+    matrices: readonly (readonly number[])[] = [],
+    /** Where the region starts in `target`, device px (a group atlas). */
+    origin: readonly [number, number] = [0, 0]
   ): void {
     const index = this.data.length / FLOATS_PER_COMP
     const buffer = this.buffer
-    target.inUse = false
+    this.unref(target)
     if (!buffer || index >= this.capacity) {
       return
     }
@@ -294,7 +326,12 @@ export class GroupCompositor {
         this.mats.push(m[r * 5 + 4] ?? 0)
       }
     }
-    this.data.push(n, first, 0, 0)
+    this.data.push(
+      n,
+      first,
+      origin[0] / target.width,
+      origin[1] / target.height
+    )
     const matBuffer = this.matBuffer
     if (!target.bindGroup && matBuffer) {
       target.bindGroup = this.device.createBindGroup({

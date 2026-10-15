@@ -464,7 +464,14 @@ Conventions each pass must follow:
   origin), children before parents, each in its own pass; then each
   target's single pass draws its batches and composites its child groups
   at their push (`compositeGroup`; `gpu/composite.ts` draws a quad of four
-  corners with the group alpha). The main pass is split only at a
+  corners with the group alpha). A parent's leaf groups (nothing nested,
+  no backdrop or extra layer inside, no layer transform, region, blur or
+  drop shadow) share one texture and pass instead (`renderLeaves`,
+  `packGroups`: shelf-packed with a 2 px gutter, each drawn in its rect
+  with its own frame and scissor, composited from its `uv0`; the pooled
+  texture's `refs` keep it in use until the last composite);
+  `groupAtlas: false` (`?noatlas`, `--noatlas`) gives each its own;
+  `stats().groupPasses` counts the passes. The main pass is split only at a
   backdrop (below). Records
   therefore carry `opacity = 1`; passes stay unaware. A context with a
   CSS `filter` is a group too (`scene/filter.ts`): its colour functions

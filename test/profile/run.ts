@@ -25,6 +25,7 @@
 //   --bandcanvas   with --band, cull draws to the canvas, not the band
 //   --bandclear    perf.html with canvasFill 'band-clear' (margins cleared)
 //   --nopatch      perf.html with CompositorOptions.patchEdits off
+//   --noatlas      perf.html with CompositorOptions.groupAtlas off
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -377,7 +378,8 @@ async function main(): Promise<void> {
         (flag('band') ? '&band' : '') +
         (flag('bandcanvas') ? '&bandcanvas' : '') +
         (flag('bandclear') ? '&bandclear' : '') +
-        (flag('nopatch') ? '&nopatch' : '')
+        (flag('nopatch') ? '&nopatch' : '') +
+        (flag('noatlas') ? '&noatlas' : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)

@@ -103,6 +103,7 @@ export async function createCompositor(
   const renderer = new Renderer(gpu)
   renderer.reuseScene = options.sceneReuse ?? true
   renderer.cullDraws = options.cullDraws ?? true
+  renderer.groupAtlas = options.groupAtlas ?? true
   // A viewport-pinned canvas has no margins to keep.
   renderer.canvasFill = pinned ? 'full' : (options.canvasFill ?? 'band')
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
@@ -1072,6 +1073,7 @@ export async function createCompositor(
       instances: renderer.lastInstances,
       fillRows: renderer.lastFillRows,
       groups: renderer.lastGroups,
+      groupPasses: renderer.lastGroupPasses,
       sceneReused: renderer.lastReused,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
@@ -1192,6 +1194,7 @@ function inert(): Compositor & { text: null; scene: null } {
       instances: 0,
       fillRows: 0,
       groups: 0,
+      groupPasses: 0,
       sceneReused: false,
       readElements: 0,
       partialReads: 0,

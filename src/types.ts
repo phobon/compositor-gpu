@@ -109,6 +109,11 @@ export interface CompositorOptions {
    * redrawing (`stats().sceneReused`). Default true; false always
    * redraws (for comparing). */
   sceneReuse?: boolean
+  /** Render a parent's leaf opacity groups (nothing nested, no layer
+   * transform, region, blur or drop shadow) into one shared texture in
+   * one pass instead of a texture and pass each. Default true; false for
+   * comparing. */
+  groupAtlas?: boolean
   /** After a partial read, replace the re-read records in place when the
    * edit kept their structure (same records, counts, clips; no stacking
    * context), instead of rebuilding the scene, and re-pack only changed
@@ -183,6 +188,9 @@ export interface CompositorStats {
   fillRows: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
+  /** Render passes those groups' textures took (CompositorOptions
+   * .groupAtlas shares one among leaf groups). */
+  groupPasses: number
   /** The last frame ran the post chain on the previous frame's scene
    * instead of redrawing it (nothing feeding the scene had changed). */
   sceneReused: boolean

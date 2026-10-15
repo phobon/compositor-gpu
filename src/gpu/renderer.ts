@@ -67,8 +67,46 @@ interface Target {
   /** Set when a region handler composites it (encoded in prepare). */
   region?: RegionFrame
   /** Device-px rect (x, y, w, h) its passes draw within; absent: all of
-   * it (CompositorOptions.canvasFill: the main target's visible band). */
+   * it (CompositorOptions.canvasFill: the main target's visible band; a
+   * group in a group atlas: its rect). */
   scissor?: [number, number, number, number]
+  /** In a group atlas: the device px of `pooled` where this group's
+   * texture starts (absent: 0, 0). */
+  uv0?: [number, number]
+}
+
+/** A group deferred to a parent's group atlas (Renderer.render): its
+ * push and pop batch indices, Scene.groups index and placement. */
+interface Leaf {
+  i: number
+  j: number
+  group: number
+  m: GroupPlace
+}
+
+/** Device px between rects in a group atlas (bilinear sampling at an edge
+ * must not reach a neighbour). */
+const ATLAS_GUTTER = 2
+
+/** A group's texture placement before a texture is chosen (see
+ * Renderer.measureGroup). */
+interface GroupPlace {
+  /** Texture size, device px. */
+  w: number
+  h: number
+  /** Texture device px per CSS px. */
+  sx: number
+  sy: number
+  /** Doc-space origin of the group's region. */
+  ox: number
+  oy: number
+  /** Top-left in the parent's device px. */
+  px: number
+  py: number
+  /** The transform's scale the texture renders at. */
+  kx: number
+  ky: number
+  xf: Affine | null
 }
 
 /** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
@@ -287,6 +325,12 @@ export class Renderer {
   private culledRegion: Region | null = null
   /** Instances submitted in the last frame (stats().instances). */
   lastInstances = 0
+  /** Render passes the last frame spent on group textures
+   * (stats().groupPasses). */
+  lastGroupPasses = 0
+  /** Render leaf groups into one shared texture and pass
+   * (CompositorOptions.groupAtlas). */
+  groupAtlas = true
   /** ms the last frame spent recomputing culled runs; 0 when cached
    * (stats().cullMs). */
   lastCullMs = 0
@@ -732,6 +776,7 @@ export class Renderer {
     }
     let batches = 0
     let groups = 0
+    let groupPasses = 0
     let draws = 0
     let instances = 0
     this.lastCullMs = 0
@@ -835,7 +880,83 @@ export class Renderer {
 
     /** Plan and render the groups in list[start, end) drawn into
      * `parent` (recursing into in-place groups' contents). */
+    // Groups with nothing inside that needs a pass of its own (nested
+    // groups, backdrops, extra layers), no layer transform, region or
+    // texture post-processing: they can share one atlas texture and pass.
+    const isLeaf = (from: number, to: number): boolean => {
+      for (let k = from; k < to; k++) {
+        const kind = list[k]?.kind
+        if (kind === 'push' || kind === 'backdrop' || kind === 'extra') {
+          return false
+        }
+      }
+      return true
+    }
+    /** Render `leaves` of `parent` (measured, not yet rendered): those
+     * that fit share one atlas texture and pass, the rest get their own. */
+    const renderLeaves = (leaves: Leaf[]): void => {
+      const packed = leaves.length > 1 ? this.packGroups(leaves) : null
+      const shared = packed
+        ? leaves.filter((_, k) => packed.at[k] !== null).length
+        : 0
+      for (let k = 0; k < leaves.length; k++) {
+        const l = leaves[k] as Leaf
+        if (shared > 1 && packed?.at[k]) {
+          continue
+        }
+        const child = this.finishGroup(
+          l.m,
+          this.composite.acquire(l.m.w, l.m.h),
+          0,
+          0,
+          slot++,
+          ctx
+        )
+        child.group = l.group
+        plan.set(l.i, child)
+        groupPasses++
+        drawRange(
+          this.beginPass(encoder, child, 'clear', 'group'),
+          child,
+          l.i + 1,
+          l.j,
+          'group'
+        ).end()
+      }
+      if (!packed || shared < 2) {
+        return
+      }
+      const atlas = this.composite.acquireShared(packed.w, packed.h, shared)
+      groupPasses++
+      const rp = encoder.beginRenderPass({
+        ...timed(this.shared.timer, 'group'),
+        colorAttachments: [
+          {
+            view: atlas.view,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store'
+          }
+        ]
+      })
+      for (let k = 0; k < leaves.length; k++) {
+        const l = leaves[k] as Leaf
+        const at = packed.at[k]
+        if (!at) {
+          continue
+        }
+        const child = this.finishGroup(l.m, atlas, at[0], at[1], slot++, ctx)
+        child.group = l.group
+        plan.set(l.i, child)
+        rp.setBindGroup(0, child.bindGroup)
+        this.restoreScissor(rp, child)
+        drawRange(rp, child, l.i + 1, l.j, 'group')
+      }
+      rp.end()
+    }
+
     const prepare = (parent: Target, start: number, end: number): void => {
+      const leaves: Leaf[] = []
       for (let i = start; i < end; i++) {
         const batch = list[i]
         if (batch?.kind !== 'push') {
@@ -876,6 +997,32 @@ export class Renderer {
           i = j
           continue
         }
+        if (
+          this.groupAtlas &&
+          g &&
+          !t &&
+          !xf &&
+          !region?.active() &&
+          g.alpha > 0 &&
+          !(g.filter && (g.filter.blur > 0 || g.filter.shadows.length > 0)) &&
+          isLeaf(i + 1, j)
+        ) {
+          const m = this.measureGroup(
+            g,
+            parent,
+            ctx,
+            0,
+            null,
+            extents[batch.group] ?? groupExtent(g, ctx)
+          )
+          if (m) {
+            leaves.push({ i, j, group: batch.group, m })
+          } else {
+            plan.set(i, 'skip')
+          }
+          i = j
+          continue
+        }
         const child =
           g && g.alpha * tAlpha > 0
             ? this.openGroup(
@@ -898,6 +1045,7 @@ export class Renderer {
         plan.set(i, child)
         prepare(child, i + 1, j)
         const label = region?.active() ? 'region' : t ? 'layer' : 'group'
+        groupPasses++
         const rp = drawRange(
           this.beginPass(encoder, child, 'clear', label),
           child,
@@ -921,6 +1069,9 @@ export class Renderer {
         }
         i = j
       }
+      if (leaves.length > 0) {
+        renderLeaves(leaves)
+      }
     }
 
     if (this.transforms.size > 0) {
@@ -936,6 +1087,7 @@ export class Renderer {
     const rp = drawRange(first, main, 0, list.length, 'main')
     this.lastBatches = batches
     this.lastGroups = groups
+    this.lastGroupPasses = groupPasses
     this.lastDraws = draws
     this.lastInstances = instances
     rp.end()
@@ -1374,7 +1526,8 @@ export class Renderer {
       top.h,
       a,
       shape,
-      g?.filter?.matrices
+      g?.filter?.matrices,
+      top.uv0
     )
     if (sc) {
       this.restoreScissor(rp, parent)
@@ -1576,6 +1729,22 @@ export class Renderer {
     xf: Affine | null = null,
     extent: Box4 | null = groupExtent(g, ctx)
   ): Target | null {
+    const m = this.measureGroup(g, parent, ctx, pad, xf, extent)
+    return m
+      ? this.finishGroup(m, this.composite.acquire(m.w, m.h), 0, 0, slot, ctx)
+      : null
+  }
+
+  /** Where `g`'s texture sits in `parent` and at what scale (see
+   * openGroup); null when nothing of it can land. */
+  private measureGroup(
+    g: OpacityGroup,
+    parent: Target,
+    ctx: FrameContext,
+    pad: number,
+    xf: Affine | null,
+    extent: Box4 | null
+  ): GroupPlace | null {
     if (!extent) {
       return null
     }
@@ -1642,33 +1811,99 @@ export class Renderer {
       kx = Math.min(kx, max / (x1 - x0))
       ky = Math.min(ky, max / (y1 - y0))
     }
-    const w = Math.max(1, Math.ceil((x1 - x0) * kx))
-    const h = Math.max(1, Math.ceil((y1 - y0) * ky))
-    const sx = parent.sx * kx
-    const sy = parent.sy * ky
-    const pooled = this.composite.acquire(w, h)
-    const ox = parent.ox + x0 / parent.sx
-    const oy = parent.oy + y0 / parent.sy
+    return {
+      w: Math.max(1, Math.ceil((x1 - x0) * kx)),
+      h: Math.max(1, Math.ceil((y1 - y0) * ky)),
+      sx: parent.sx * kx,
+      sy: parent.sy * ky,
+      ox: parent.ox + x0 / parent.sx,
+      oy: parent.oy + y0 / parent.sy,
+      px: x0,
+      py: y0,
+      kx,
+      ky,
+      xf: inv ? xf : null
+    }
+  }
+
+  /**
+   * Shelf-pack `leaves`' textures (tallest first) into one atlas no wider
+   * or taller than the device allows, with ATLAS_GUTTER between rects.
+   * Returns the used size and each one's top-left (null: didn't fit).
+   */
+  private packGroups(leaves: readonly Leaf[]): {
+    w: number
+    h: number
+    at: ([number, number] | null)[]
+  } {
+    const max = this.device.limits.maxTextureDimension2D
+    let area = 0
+    let widest = 0
+    for (const l of leaves) {
+      area += (l.m.w + ATLAS_GUTTER) * (l.m.h + ATLAS_GUTTER)
+      widest = Math.max(widest, l.m.w + ATLAS_GUTTER)
+    }
+    const width = Math.min(max, Math.max(widest, Math.ceil(Math.sqrt(area))))
+    const order = leaves.map((_, k) => k)
+    order.sort((a, b) => (leaves[b]?.m.h ?? 0) - (leaves[a]?.m.h ?? 0))
+    const at: ([number, number] | null)[] = leaves.map(() => null)
+    let x = 0
+    let y = 0
+    let shelf = 0
+    let used = 0
+    for (const k of order) {
+      const m = (leaves[k] as Leaf).m
+      if (x + m.w > width) {
+        x = 0
+        y += shelf + ATLAS_GUTTER
+        shelf = 0
+      }
+      if (m.w > width || y + m.h > max) {
+        continue
+      }
+      at[k] = [x, y]
+      x += m.w + ATLAS_GUTTER
+      used = Math.max(used, x)
+      shelf = Math.max(shelf, m.h)
+    }
+    return { w: Math.max(1, used), h: Math.max(1, y + shelf), at }
+  }
+
+  /** The target for a measured group drawn from device px (ax, ay) of
+   * `pooled` (a texture of its own: 0, 0; a group atlas: its rect). */
+  private finishGroup(
+    m: GroupPlace,
+    pooled: GroupTarget,
+    ax: number,
+    ay: number,
+    slot: number,
+    ctx: FrameContext
+  ): Target {
+    const { w, h, sx, sy, ox, oy, kx, ky } = m
+    // The frame maps the texture's origin, (ax, ay) device px before the
+    // group's own.
+    const tx = ox - ax / sx
+    const ty = oy - ay / sy
     const frame = this.groupFrame(slot)
     const f = this.frameData
     f[0] = pooled.width / sx
     f[1] = pooled.height / sy
-    f[2] = ox
-    f[3] = oy
+    f[2] = tx
+    f[3] = ty
     f[4] = ctx.time
     // Device px per CSS px in this target (Slug's AA pad reads it).
     f[5] = this.shared.dpr * Math.max(kx, ky)
     // The target origin in viewport space, for viewport-space records: doc
     // origin minus the real scroll (not the parent's origin, which is the
     // canvas anchor on the main target).
-    f[6] = ox - ctx.scrollX
-    f[7] = oy - ctx.scrollY
+    f[6] = tx - ctx.scrollX
+    f[7] = ty - ctx.scrollY
     this.device.queue.writeBuffer(frame.buffer, 0, f)
-    return {
+    const t: Target = {
       view: pooled.view,
       bindGroup: frame.bindGroup,
-      ox,
-      oy,
+      ox: tx,
+      oy: ty,
       devW: pooled.width,
       devH: pooled.height,
       sx,
@@ -1678,10 +1913,15 @@ export class Renderer {
       rect: [ox, oy, ox + w / sx, oy + h / sy],
       w,
       h,
-      px: x0,
-      py: y0,
-      xf: inv ? xf : null
+      px: m.px,
+      py: m.py,
+      xf: m.xf
     }
+    if (pooled.refs !== undefined) {
+      t.uv0 = [ax, ay]
+      t.scissor = [ax, ay, w, h]
+    }
+    return t
   }
 
   /** Time render passes on the GPU (needs `timestamp-query`); results

@@ -172,6 +172,9 @@ async function boot(): Promise<void> {
     root: stage,
     layers: ['boxes', 'images', 'text'],
     fonts: 'auto',
+    // `?noatlas`: a texture and pass per opacity group
+    // (CompositorOptions.groupAtlas).
+    groupAtlas: !params.has('noatlas'),
     // `?nopatch`: rebuild the scene on every partial read
     // (CompositorOptions.patchEdits).
     patchEdits: !params.has('nopatch'),
