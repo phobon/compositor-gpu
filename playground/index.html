@@ -586,6 +586,21 @@
       .bd-badge { left: 320px; top: 30px; width: 40px; height: 40px; border-radius: 50%; background: rgb(255 255 255 / 0.6); backdrop-filter: blur(8px); }
       .bd-gray { left: 400px; top: 24px; width: 180px; height: 150px; border-radius: 8px 40px; backdrop-filter: grayscale(1); outline: 1px solid #fff; }
       .bd-rot { left: 640px; top: 40px; width: 140px; height: 100px; border-radius: 14px; transform: rotate(-8deg); backdrop-filter: blur(4px) invert(1); }
+      .gencontent { display: grid; grid-template-columns: repeat(3, auto); gap: 8px 40px; justify-content: start; font-size: 16px; }
+      .gencontent ol.sec { counter-reset: sec; list-style: none; padding: 0; margin: 0; }
+      .gencontent ol.sec > li { counter-increment: sec; }
+      .gencontent ol.sec > li::before { content: counters(sec, ".") " "; color: #8ab4ff; }
+      .gencontent .roman { counter-reset: r 3; }
+      .gencontent .roman > p { counter-increment: r; margin: 0; }
+      .gencontent .roman > p::before { content: "Part " counter(r, upper-roman) ": "; color: #f472b6; }
+      .gencontent .icon2::before { content: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='7' cy='7' r='6' fill='%23f472b6'/%3E%3C/svg%3E") " "; }
+      .gencontent .bgicon::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 6px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10' fill='%2306b6d4'/%3E%3C/svg%3E") center / contain no-repeat; }
+      .gencontent ul.img { list-style-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10' fill='%2306b6d4'/%3E%3C/svg%3E"); margin: 0; padding-left: 24px; }
+      .shadowgaps { display: flex; gap: 24px; align-items: center; font-size: 22px; }
+      .shadowgaps img { width: 120px; height: 80px; border-radius: 10px; box-shadow: inset 0 0 0 6px #f472b6, inset 0 0 18px 4px #000; }
+      .shadowgaps img.pad { padding: 8px; background: #1e293b; }
+      .shadowgaps .ps::before { content: 'Glow '; color: #e8e6ff; text-shadow: 0 0 8px #6a5cff; }
+      .shadowgaps .ps::after { content: ' hard'; text-shadow: 2px 2px 0 #f472b6; }
       .bgdemo { display: flex; gap: 20px; padding: 16px; background: linear-gradient(90deg, #f6c, #3cf); }
       .bgdemo > div { width: 150px; height: 70px; position: relative; }
       .bgdemo .card { background: #fff; color: #000; font: 600 20px/70px Inter, sans-serif; text-align: center; }
@@ -1140,6 +1155,32 @@
           <div class="blendbox mul"><span></span></div>
           <div class="blendbox scr"><span></span></div>
           <div class="blendbox exc"><span></span></div>
+        </div>
+      </section>
+
+      <section data-vr="gencontent">
+        <div class="gencontent">
+          <ol class="sec">
+            <li>Intro
+              <ol class="sec"><li>Scope</li><li>Terms</li></ol>
+            </li>
+            <li>Method</li>
+          </ol>
+          <div class="roman"><p>first</p><p>second</p></div>
+          <div>
+            <p style="margin: 0;"><q>Outer <q>inner</q> quote</q></p>
+            <p class="icon2" style="margin: 0;">Image content</p>
+            <p class="bgicon" style="margin: 0;">Background icon</p>
+          </div>
+          <ul class="img"><li>Image bullet</li><li>Second</li></ul>
+        </div>
+      </section>
+
+      <section data-vr="shadowgaps">
+        <div class="shadowgaps">
+          <img src="./test.png" alt="">
+          <img class="pad" src="./test.png" alt="">
+          <span class="ps">pseudo</span>
         </div>
       </section>
 

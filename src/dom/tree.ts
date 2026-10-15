@@ -24,6 +24,7 @@ import type { Layer } from '../types'
 import {
   backgroundLayerRecords,
   disposeBackgrounds,
+  loadBackground,
   readBackgroundImage
 } from './backgrounds'
 import {
@@ -31,6 +32,7 @@ import {
   type Decoration,
   propagateDecorations
 } from './decorations'
+import { GeneratedState } from './generated'
 import { IGNORE_ATTR, isIgnored } from './observer'
 import { matchRecords, type RecordPair, subtreeRecords } from './patch'
 import {
@@ -517,6 +519,9 @@ export class SceneReader {
   private nodes = new WeakMap<Element, ElNode>()
   /** List-item ordinals, per list, for the current read (see pseudo.ts). */
   private ordinals: OrdinalCache = new Map()
+  /** Counters and quote depth for generated content, for the current
+   * read (generated.ts). */
+  private readonly generated = new GeneratedState()
   /** Elements visited (DOM-read) by the most recent read, incl. any work
    * discarded by an escalation. */
   readElements = 0
@@ -576,6 +581,7 @@ export class SceneReader {
     this.readElements = 0
     this.lastSceneMs = 0
     this.ordinals.clear()
+    this.generated.clear()
     this.lastRead = { kind: 'full', reason: '', scopes: 0, el: null }
     this.readAll()
   }
@@ -622,6 +628,7 @@ export class SceneReader {
     this.readElements = 0
     this.lastSceneMs = 0
     this.ordinals.clear()
+    this.generated.clear()
     this.lastRead = {
       kind: 'partial',
       reason: '',
@@ -990,19 +997,17 @@ export class SceneReader {
         own = [...own, ...bg]
       }
     }
+    let replaced: ImageRecord | null = null
     if (
       layers.has('images') &&
       (el.tagName === 'IMG' ||
         el.tagName === 'CANVAS' ||
         el.tagName === 'VIDEO')
     ) {
-      const rec = readImageRecord(el, s, rect, scene.allocId(), clip, place)
-      if (rec) {
-        own = own.length ? [...own, rec] : [rec]
-      }
+      replaced = readImageRecord(el, s, rect, scene.allocId(), clip, place)
     }
     if (layers.has('images') && svgRoot) {
-      const rec = readSvgRecord(
+      replaced = readSvgRecord(
         el as SVGSVGElement,
         s,
         rect,
@@ -1012,9 +1017,6 @@ export class SceneReader {
         this,
         () => this.onAsset(el)
       )
-      if (rec) {
-        own = own.length ? [...own, rec] : [rec]
-      }
     }
     if (layers.has('boxes') && s.boxShadow.includes('inset')) {
       // Inset shadows paint above the backgrounds, below the content.
@@ -1025,6 +1027,10 @@ export class SceneReader {
       if (inset.length) {
         own = [...own, ...inset]
       }
+    }
+    // A replaced element's content paints over its inset shadows.
+    if (replaced) {
+      own = own.length ? [...own, replaced] : [replaced]
     }
 
     // backdrop-filter: the filtered backdrop paints first, under the
@@ -1336,7 +1342,23 @@ export class SceneReader {
       cb: node.cb,
       boxes: layers.has('boxes'),
       text: layers.has('text'),
-      alloc: () => scene.allocId()
+      images: layers.has('images'),
+      alloc: () => scene.allocId(),
+      loadImage: (url) =>
+        loadBackground(url, this, node.el, () => this.onAsset(node.el)),
+      bgImage: (ps, box, clip, bgLayers, i) =>
+        readBackgroundImage(
+          node.el,
+          ps,
+          scene.allocId(),
+          clip,
+          this,
+          () => this.onAsset(node.el),
+          box,
+          bgLayers,
+          i
+        ),
+      gen: this.generated
     }
     const head: ElKid[] = []
     if (display === 'list-item') {
@@ -1362,41 +1384,56 @@ export class SceneReader {
    * is wrapped in a synthetic context node. */
   private pseudoKids(node: ElNode, out: PseudoOut): ElKid[] {
     const ctx = out.context
-    if (!ctx) {
-      return out.items
+    const images = out.items.some((r) => r.kind === 'image')
+    if (!ctx && !images) {
+      return out.items as ElKid[]
     }
+    // Leading boxes and images are the node's own records; an image
+    // after text (ElKid has no image) rides in a node of its own.
     const own: OwnRecord[] = []
     const kids: ElKid[] = []
     for (const r of out.items) {
-      if (r.kind === 'box' && kids.length === 0) {
+      if (r.kind !== 'text' && kids.length === 0) {
         own.push(r)
+      } else if (r.kind === 'image') {
+        kids.push(this.pseudoNode(node, [r], [], null, node.rect))
       } else {
         kids.push(r)
       }
     }
-    return [
-      {
-        kind: 'element',
-        el: node.el,
-        parent: node,
-        kids,
-        rect: ctx.rect,
-        space: node.space,
-        trapsFixed: node.trapsFixed,
-        own,
-        isContext: true,
-        realContext: true,
-        ctxZ: ctx.z,
-        childClip: node.childClip,
-        alpha: ctx.alpha,
-        fragmented: false,
-        float: false,
-        lin: node.lin,
-        decor: null,
-        cb: node.cb,
-        pseudo: true
-      }
-    ]
+    return [this.pseudoNode(node, own, kids, ctx, ctx?.rect ?? node.rect)]
+  }
+
+  /** A synthetic node holding a pseudo-element's records: a stacking
+   * context when `ctx` is set, else painted in place in its parent's. */
+  private pseudoNode(
+    node: ElNode,
+    own: OwnRecord[],
+    kids: ElKid[],
+    ctx: PseudoOut['context'],
+    rect: Rect
+  ): ElNode {
+    return {
+      kind: 'element',
+      el: node.el,
+      parent: node,
+      kids,
+      rect,
+      space: node.space,
+      trapsFixed: node.trapsFixed,
+      own,
+      isContext: ctx !== null,
+      realContext: ctx !== null,
+      ctxZ: ctx?.z ?? 0,
+      childClip: node.childClip,
+      alpha: ctx?.alpha ?? 1,
+      fragmented: false,
+      float: false,
+      lin: node.lin,
+      decor: null,
+      cb: node.cb,
+      pseudo: true
+    }
   }
 }
 

@@ -4,6 +4,11 @@ import { log } from '../util/log'
 
 /** Transparent border kept around every entry, in atlas px (mip bleeding). */
 export const GUTTER = 4
+/** Entries start on multiples of this (atlas px), so mip levels up to
+ * log2(ALIGN) average the same source pixels wherever an entry lands: an
+ * unaligned entry's lower mips straddle its pixel grid and blur, and how
+ * much depended on what else was packed before it. */
+const ALIGN = 16
 const START_SIZE = 2048
 const HARD_MAX = 4096
 /** Images bigger than this (in either dimension) never enter the atlas. */
@@ -147,27 +152,27 @@ export class ImageAtlas {
     this.device.queue.submit([encoder.finish()])
   }
 
-  /** Shelf-pack a `w`x`h` cell (plus its gutter). Null if it can't fit at
-   * the current size. */
+  /** Shelf-pack a `w`x`h` cell (plus its gutter, at an ALIGN-aligned
+   * origin). Null if it can't fit at the current size. */
   private pack(w: number, h: number): { x: number; y: number } | null {
-    const cw = w + 2 * GUTTER
-    const ch = h + 2 * GUTTER
     const s = this.size
-    if (cw > s || ch > s) {
+    const up = (v: number) => Math.ceil(v / ALIGN) * ALIGN
+    if (up(GUTTER) + w + GUTTER > s || up(GUTTER) + h + GUTTER > s) {
       return null
     }
-    if (this.shelfX + cw > s) {
+    let x = up(this.shelfX + GUTTER)
+    if (x + w + GUTTER > s) {
       this.shelfY += this.shelfH
       this.shelfX = 0
       this.shelfH = 0
+      x = up(GUTTER)
     }
-    if (this.shelfY + ch > s) {
+    const y = up(this.shelfY + GUTTER)
+    if (y + h + GUTTER > s) {
       return null
     }
-    const x = this.shelfX + GUTTER
-    const y = this.shelfY + GUTTER
-    this.shelfX += cw
-    this.shelfH = Math.max(this.shelfH, ch)
+    this.shelfX = x + w + GUTTER
+    this.shelfH = Math.max(this.shelfH, y + h + GUTTER - this.shelfY)
     return { x, y }
   }
 

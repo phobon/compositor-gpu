@@ -132,9 +132,12 @@ Measuring notes learned along the way:
    styles done 2026-10-15 (`decorstyles` shot, parity 0.54%; solid line
    positions moved to Blink's formulas too, `decorations` 0.49 -> 0.34%);
    `mix-blend-mode` on a subtree done the same day (`blendgroup` shot,
-   7.71 -> 0.73%); still open: pseudo-content gaps
-   (`counter()`, quotes, `url()`, multi-line pseudo text); text-shadow on
-   pseudo text; inset shadows on replaced elements.
+   7.71 -> 0.73%), and pseudo content (`counter()`, quotes, `url()`,
+   `list-style-image`; `gencontent` shot), text-shadow on pseudo text and
+   inset shadows / content box on replaced elements (`shadowgaps` shot),
+   16px-aligned image atlas entries; still open: multi-line pseudo text.
+   Goldens of sections with decorations or images changed on purpose:
+   run `test:visual -- --update` once on the Mac.
 2. **Many-groups scenario**: a `perf.html` mode with dozens of fading
    elements to measure how the group atlas scales.
 3. **16-bit PNG crash** under SwiftShader on upload (untested on

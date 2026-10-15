@@ -68,6 +68,8 @@ const SECTIONS = [
   'transforms',
   'mutations',
   'pseudo',
+  'gencontent',
+  'shadowgaps',
   'blend',
   'blendgroup',
   'filters',

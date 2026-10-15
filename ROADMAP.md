@@ -440,7 +440,18 @@ perspective transforms · culling · WebGL2 backend.
       masked outside the border box)
 - [x] Inset `box-shadow`; `text-shadow` (hard = offset Slug instances, blurred =
       atlas-rasterised shadow glyphs; extra instances after the glyph range)
-- [ ] text-shadow on pseudo text; inset shadows on replaced elements
+- [x] text-shadow on pseudo text; inset shadows on replaced elements
+      (2026-10-15): the `<img>`/`<canvas>`/`<video>`/inline `<svg>`
+      content paints over the element's inset shadows, and replaced
+      content is drawn in the content box with the inner radii (it filled
+      the border box, over borders and padding). Shot `shadowgaps`:
+      9.51% -> 1.97%; `images` parity 3.23% -> 1.99%
+- [x] Image atlas entries start on 16px multiples (2026-10-15): an
+      unaligned entry's mip levels 1-4 straddled its pixel grid, so how
+      blurred a downscaled image looked depended on what had been packed
+      before it (adding images in one section changed `filters` parity
+      0.59 -> 0.94). Parity improved in `gradients`, `bglayers`, `png16`,
+      `roundclip`, `canvas`; goldens with images need `--update`
 - [x] Draw culling (2026-10-14): each draw batch split into the instance
       runs whose records reach the canvas region (grown by half a canvas,
       cached until the canvas leaves it; `gpu/cull.ts`,
@@ -513,8 +524,16 @@ perspective transforms · culling · WebGL2 backend.
       computed pseudo styles + measured text: bullets as Chrome-sized shapes,
       numbered/custom markers, string/attr() content as inline, block or
       absolutely positioned boxes)
-- [ ] Pseudo content gaps: `counter()`, quotes, `url()` images,
-      `list-style-image`, multi-line pseudo text (pseudo `transform` /
+- [x] Pseudo content (2026-10-15): `counter()` / `counters()` and quote
+      keywords from one walk of the document per read, run only when some
+      pseudo's content needs it (`dom/generated.ts`: reset / increment /
+      set scopes, implicit `list-item`, quote depth; reads every element's
+      and its pseudos' computed style, so a page with `<q>` or counters pays
+      for it on each read); `url()` content at natural size, bottom on the
+      baseline; background `url()` layers on pseudo boxes;
+      `list-style-image` markers (Chrome's 7px padding). Shot `gencontent`:
+      parity 0.97%
+- [ ] Multi-line pseudo text, `disclosure-*` markers (pseudo `transform` /
       `translate` / `rotate` / `scale`: done 2026-10-10, `boxAffine` in
       `dom/transform.ts`; a pseudo scaled to nothing paints nothing)
 - [x] Replace-mode handoff (2026-10-11): the source stays painted until

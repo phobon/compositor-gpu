@@ -725,30 +725,70 @@ export function readImageRecord(
   } else {
     return null
   }
-  if (rect.width <= 0 || rect.height <= 0) {
+  // The content box (CSS paints replaced content there, clipped to the
+  // inner radii).
+  const ci = boxInset(s, 'content-box')
+  const area = subPlacement(
+    place,
+    ci[3],
+    ci[0],
+    place.local.w - ci[1] - ci[3],
+    place.local.h - ci[0] - ci[2]
+  )
+  if (rect.width <= 0 || area.local.w <= 0 || area.local.h <= 0) {
     return null
   }
   const of = s.objectFit
   return {
     kind: 'image',
     id,
-    rect,
-    xform: place.xform,
-    local: place.local,
+    rect: ci.some((v) => v !== 0) ? placementAabb(area) : rect,
+    xform: area.xform,
+    local: area.local,
     source,
     objectFit: of === 'cover' ? 'cover' : of === 'contain' ? 'contain' : 'fill',
     position: mapBackgroundPosition(s.objectPosition || '50% 50%', [0.5, 0.5]),
     repeat: false,
-    ...recordRadii(s, {
-      x: 0,
-      y: 0,
-      width: place.local.w,
-      height: place.local.h
-    }),
+    ...clipRadii(s, place, ci),
     opacity: 1,
     z: 0,
     clip,
     dynamic
+  }
+}
+
+/** The element's radii inset to the painting area (`ci`, per side):
+ * circular as insetCorners does, elliptical per axis. */
+export function clipRadii(
+  s: CSSStyleDeclaration,
+  place: Placement,
+  ci: [number, number, number, number]
+): { radius: Corners; radiusY?: Corners } {
+  const rr = recordRadii(s, {
+    x: 0,
+    y: 0,
+    width: place.local.w,
+    height: place.local.h
+  })
+  if (!rr.radiusY) {
+    return { radius: insetCorners(rr.radius, ci) }
+  }
+  const [t, r, b, l] = ci
+  const x = rr.radius
+  const y = rr.radiusY
+  return {
+    radius: [
+      Math.max(0, x[0] - l),
+      Math.max(0, x[1] - r),
+      Math.max(0, x[2] - r),
+      Math.max(0, x[3] - l)
+    ],
+    radiusY: [
+      Math.max(0, y[0] - t),
+      Math.max(0, y[1] - t),
+      Math.max(0, y[2] - b),
+      Math.max(0, y[3] - b)
+    ]
   }
 }
 

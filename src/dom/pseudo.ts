@@ -18,19 +18,34 @@
 // U+2022 glyph, so those become BoxRecords with Chrome's symbol geometry
 // (`ListMarker::RelativeSymbolMarkerRect` / `InlineMarginsForOutside`).
 //
-// Gaps: `counter()` / `counters()` / quotes / `url()` content pieces are
-// dropped; `list-style-image` and `disclosure-*` markers are not drawn;
-// `float`, `text-transform` and multi-line pseudo text are ignored (a
+// `counter()` / `counters()` and quote keywords take their values from
+// generated.ts; `url()` content pieces are images at their natural size,
+// bottom on the baseline; `list-style-image` markers are drawn.
+//
+// Gaps: `disclosure-*` markers are not drawn; `float` and multi-line
+// pseudo text are ignored (a
 // pseudo's `transform` / `translate` / `rotate` / `scale` apply, except
 // matrix3d's translation); right-to-left and vertical writing modes are laid out as
 // horizontal LTR; a `position: fixed` pseudo uses the containing block of an
 // absolute one.
 import { blendMaterialId } from '../scene/blend'
-import type { BoxRecord, Glyph, GlyphRun, Rect } from '../scene/records'
+import type {
+  BoxRecord,
+  Glyph,
+  GlyphRun,
+  ImageRecord,
+  Rect
+} from '../scene/records'
 import { contextZIndex, createsStackingContext } from '../scene/stacking'
 import type { Layer } from '../types'
 import { parseColor } from '../util/color'
-import { backgroundLayerRecords } from './backgrounds'
+import { backgroundLayerRecords, urlOfLayer } from './backgrounds'
+import {
+  type GeneratedAt,
+  type GeneratedState,
+  needsGenerated,
+  type PseudoKind
+} from './generated'
 import { px, readBox, readOpacity, readShadows } from './styles'
 import {
   type FontStyleLike,
@@ -40,6 +55,7 @@ import {
   langOf,
   ligaturesEnabled,
   opticalSize,
+  readTextShadows,
   textTransformOf,
   transformText
 } from './textRuns'
@@ -70,11 +86,28 @@ export interface PseudoHost {
   cb: Placement
   boxes: boolean
   text: boolean
+  /** The images layer is on: `url()` content, background `url()` layers
+   * and `list-style-image` are drawn. */
+  images: boolean
   alloc: () => number
+  /** A loaded image for `url`, or null while it loads (the host is
+   * re-read when it settles) or when it failed. */
+  loadImage: (url: string) => HTMLImageElement | null
+  /** A background `url()` layer of a pseudo box (backgrounds.ts
+   * readBackgroundImage, for the pseudo's style and box). */
+  bgImage: (
+    s: CSSStyleDeclaration,
+    place: Placement,
+    clip: Rect | null,
+    layers: readonly string[],
+    i: number
+  ) => ImageRecord | null
+  /** Counters and quote depth (generated.ts), walked on first use. */
+  gen: GeneratedState
 }
 
 export interface PseudoOut {
-  items: (BoxRecord | GlyphRun)[]
+  items: (BoxRecord | GlyphRun | ImageRecord)[]
   /** Set when the pseudo is positioned (or otherwise creates a stacking
    * context): tree.ts wraps the items in a context node. */
   context: { z: number; alpha: number; rect: Rect } | null
@@ -192,18 +225,67 @@ function lineHeight(s: CSSStyleDeclaration): number {
 
 const HEX = /[0-9a-fA-F]/
 
+/** A piece of `content`: text, or a `url()` image. */
+export type ContentPiece =
+  | { kind: 'text'; text: string }
+  | { kind: 'url'; url: string }
+
+/** Counters and quotes for `counter()` / `counters()` / quote keywords
+ * (generated.ts), with the pseudo-element's computed `quotes`. */
+export interface ContentContext {
+  at: GeneratedAt
+  quotes: string
+}
+
+/** Quote pairs of a computed `quotes` value (`auto`: English curly
+ * quotes, outer and inner). */
+function quotePairs(value: string, el: Element): string[] {
+  if (value === 'none') {
+    return []
+  }
+  if (!value || value === 'auto') {
+    return ['\u201c', '\u201d', '\u2018', '\u2019']
+  }
+  const out: string[] = []
+  for (const m of value.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)) {
+    out.push(parseContent(`"${m[1] ?? m[2] ?? ''}"`, el) ?? '')
+  }
+  return out
+}
+
 /**
- * Parse a computed `content` value into its text, or null for `none` /
- * `normal`. Strings (with CSS escapes) and `attr(name)` are supported;
- * `counter()`, `counters()`, quotes keywords and `url()` contribute
- * nothing. Alt text after `/` is ignored.
+ * Parse a computed `content` value into pieces, or null for `none` /
+ * `normal`. Strings (with CSS escapes), `attr(name)` and `url()` are
+ * read; `counter()`, `counters()` and quote keywords need `ctx` and
+ * contribute nothing without it. Alt text after `/` is ignored.
  */
-export function parseContent(value: string, el: Element): string | null {
+export function contentPieces(
+  value: string,
+  el: Element,
+  ctx?: ContentContext
+): ContentPiece[] | null {
   const v = value.trim()
   if (!v || v === 'none' || v === 'normal') {
     return null
   }
-  let out = ''
+  const out: ContentPiece[] = []
+  let text = ''
+  const flush = (): void => {
+    if (text) {
+      out.push({ kind: 'text', text })
+      text = ''
+    }
+  }
+  let depth = ctx?.at.quoteDepth ?? 0
+  const pairs = ctx ? quotePairs(ctx.quotes, el) : []
+  const quote = (open: boolean): string => {
+    const n = pairs.length / 2
+    if (n === 0) {
+      return ''
+    }
+    const level = Math.min(depth, n - 1)
+    return pairs[level * 2 + (open ? 0 : 1)] ?? ''
+  }
   let i = 0
   while (i < v.length) {
     const ch = v[i] as string
@@ -219,18 +301,18 @@ export function parseContent(value: string, el: Element): string | null {
             i++
           }
           if (hex) {
-            out += String.fromCodePoint(Number.parseInt(hex, 16) || 0xfffd)
+            text += String.fromCodePoint(Number.parseInt(hex, 16) || 0xfffd)
             if (v[i] === ' ') {
               i++
             }
           } else if (i < v.length) {
             if (v[i] !== '\n') {
-              out += v[i]
+              text += v[i]
             }
             i++
           }
         } else {
-          out += c
+          text += c
           i++
         }
       }
@@ -244,32 +326,94 @@ export function parseContent(value: string, el: Element): string | null {
         i++
       }
       if (v[i] === '(') {
-        let depth = 0
+        let level = 0
         let args = ''
         for (; i < v.length; i++) {
           const c = v[i] as string
           if (c === '(') {
-            depth++
+            level++
           } else if (c === ')') {
-            depth--
-            if (depth === 0) {
+            level--
+            if (level === 0) {
               i++
               break
             }
           }
-          if (depth > 0 && !(depth === 1 && c === '(')) {
+          if (level > 0 && !(level === 1 && c === '(')) {
             args += c
           }
         }
         if (name === 'attr') {
           const attr = args.trim().split(/[\s,]+/)[0] ?? ''
           if (attr) {
-            out += el.getAttribute(attr) ?? ''
+            text += el.getAttribute(attr) ?? ''
           }
+        } else if (name === 'url') {
+          const url = urlOfLayer(`url(${args})`)
+          if (url) {
+            flush()
+            out.push({ kind: 'url', url })
+          }
+        } else if (ctx && (name === 'counter' || name === 'counters')) {
+          text += counterValue(name === 'counters', args, ctx.at, el)
         }
+      } else if (name === 'open-quote') {
+        text += quote(true)
+        depth++
+      } else if (name === 'close-quote') {
+        depth = Math.max(0, depth - 1)
+        text += quote(false)
+      } else if (name === 'no-open-quote') {
+        depth++
+      } else if (name === 'no-close-quote') {
+        depth = Math.max(0, depth - 1)
       }
     } else {
       i++
+    }
+  }
+  flush()
+  return out
+}
+
+/** `counter(name, style)` / `counters(name, sep, style)`. */
+function counterValue(
+  all: boolean,
+  args: string,
+  at: GeneratedAt,
+  el: Element
+): string {
+  const parts: string[] = []
+  for (const m of args.matchAll(
+    /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\s]+/g
+  )) {
+    parts.push(m[0])
+  }
+  const name = parts[0] ?? ''
+  const values = at.counters.get(name) ?? [0]
+  if (!all) {
+    return formatCounter(values[values.length - 1] ?? 0, parts[1] ?? 'decimal')
+  }
+  const sep = parseContent(parts[1] ?? '""', el) ?? ''
+  const style = parts[2] ?? 'decimal'
+  return values.map((n) => formatCounter(n, style)).join(sep)
+}
+
+/** The text of a computed `content` value (its text pieces, joined), or
+ * null for `none` / `normal`. */
+export function parseContent(
+  value: string,
+  el: Element,
+  ctx?: ContentContext
+): string | null {
+  const pieces = contentPieces(value, el, ctx)
+  if (!pieces) {
+    return null
+  }
+  let out = ''
+  for (const p of pieces) {
+    if (p.kind === 'text') {
+      out += p.text
     }
   }
   return out
@@ -435,6 +579,7 @@ function buildRun(
     ligatures: ligaturesEnabled(s),
     color,
     glyphs,
+    textShadows: readTextShadows(s.textShadow, s.color),
     opacity: 1,
     z: 0,
     clip
@@ -444,48 +589,83 @@ function buildRun(
 /** Background/border/shadow records for a pseudo box at frame-local
  * (x, y, w, h), in paint order (shadows under the box). */
 function boxRecords(
+  host: PseudoHost,
   s: CSSStyleDeclaration,
   frame: Placement,
   x: number,
   y: number,
   w: number,
-  h: number,
-  clip: Rect | null,
-  alloc: () => number
-): BoxRecord[] {
+  h: number
+): (BoxRecord | ImageRecord)[] {
   if (w <= 0 || h <= 0) {
     return []
   }
+  const { clip, alloc } = host
   const place = subPlacement(frame, x, y, w, h)
   const rect = placementAabb(place)
-  const out = readShadows(s, rect, place, alloc)
-  const box = readBox(s, rect, alloc(), place)
-  if (box) {
-    out.push(box)
-  }
-  // Gradient layers above the bottom one (url layers aren't mirrored for
-  // pseudo-elements).
-  for (const r of backgroundLayerRecords(
-    box ?? undefined,
-    s,
-    place,
-    rect,
-    clip,
-    alloc,
-    PSEUDO_LAYERS,
-    () => null
-  )) {
-    if (r.kind === 'box') {
-      out.push(r)
+  const out: (BoxRecord | ImageRecord)[] = []
+  let box: BoxRecord | null = null
+  if (host.boxes) {
+    out.push(...readShadows(s, rect, place, alloc))
+    box = readBox(s, rect, alloc(), place)
+    if (box) {
+      out.push(box)
     }
   }
+  const layers = new Set<Layer>()
+  if (host.boxes) {
+    layers.add('boxes')
+  }
+  if (host.images) {
+    layers.add('images')
+  }
+  // The background layers above the bottom one's gradient (in `box`).
+  out.push(
+    ...backgroundLayerRecords(
+      box ?? undefined,
+      s,
+      place,
+      rect,
+      clip,
+      alloc,
+      layers,
+      (bgLayers, i) => host.bgImage(s, place, clip, bgLayers, i)
+    )
+  )
   for (const r of out) {
     r.clip = clip
   }
   return out
 }
 
-const PSEUDO_LAYERS: ReadonlySet<Layer> = new Set(['boxes'])
+/** An image record at frame-local (x, y), w×h, drawn whole. */
+function imageRecord(
+  img: HTMLImageElement,
+  frame: Placement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  clip: Rect | null,
+  id: number
+): ImageRecord {
+  const p = subPlacement(frame, x, y, w, h)
+  return {
+    kind: 'image',
+    id,
+    rect: placementAabb(p),
+    xform: p.xform,
+    local: p.local,
+    source: img,
+    objectFit: 'fill',
+    position: [0.5, 0.5],
+    repeat: false,
+    radius: [0, 0, 0, 0],
+    opacity: 1,
+    z: 0,
+    clip
+  }
+}
 
 // ---- ::marker --------------------------------------------------------
 
@@ -569,27 +749,54 @@ function roman(n: number, upper: boolean): string {
   return upper ? s.toUpperCase() : s
 }
 
-/** Marker text (with Chrome's ". " suffix) for a counter style, or null
- * when the style isn't supported. */
-function counterText(type: string, n: number): string | null {
+/** A counter value in a counter style; unsupported styles fall back to
+ * decimal. */
+function formatCounter(n: number, style: string): string {
+  switch (style) {
+    case 'none':
+      return ''
+    case 'disc':
+      return '\u2022'
+    case 'circle':
+      return '\u25e6'
+    case 'square':
+      return '\u25aa'
+    default:
+      return counterStyle(n, style) ?? String(n)
+  }
+}
+
+/** A counter value in one of the supported numeric styles, or null. */
+function counterStyle(n: number, type: string): string | null {
   switch (type) {
     case 'decimal':
-      return `${n}. `
+      return String(n)
     case 'decimal-leading-zero':
-      return `${n >= 0 && n < 10 ? `0${n}` : n > -10 && n < 0 ? `-0${-n}` : n}. `
+      return n >= 0 && n < 10
+        ? `0${n}`
+        : n > -10 && n < 0
+          ? `-0${-n}`
+          : String(n)
     case 'lower-alpha':
     case 'lower-latin':
-      return `${alpha(n, false)}. `
+      return alpha(n, false)
     case 'upper-alpha':
     case 'upper-latin':
-      return `${alpha(n, true)}. `
+      return alpha(n, true)
     case 'lower-roman':
-      return `${roman(n, false)}. `
+      return roman(n, false)
     case 'upper-roman':
-      return `${roman(n, true)}. `
+      return roman(n, true)
     default:
       return null
   }
+}
+
+/** Marker text (with Chrome's ". " suffix) for a counter style, or null
+ * when the style isn't supported. */
+function counterText(type: string, n: number): string | null {
+  const t = counterStyle(n, type)
+  return t === null ? null : `${t}. `
 }
 
 /** Chrome's `kCMarkerPaddingPx`: gap after an outside symbol marker. */
@@ -609,7 +816,11 @@ export function readMarker(
   if (ms.visibility !== 'visible' || ms.display === 'none') {
     return null
   }
-  const content = parseContent(ms.content, el)
+  const content = parseContent(
+    ms.content,
+    el,
+    contentContext(host, ms, '::marker')
+  )
   const type = s.listStyleType
   const outside = s.listStylePosition !== 'inside'
   const cbox = contentBox(s, place)
@@ -617,6 +828,19 @@ export function readMarker(
   const baseline = first
     ? refBaseline(place, first)
     : cbox.y + (lineHeight(s) - m.height) / 2 + m.ascent
+
+  // `list-style-image`: the image at its natural size, bottom on the
+  // baseline, 7px before the content box when outside (Chrome's
+  // InlineMarginsForOutside). The type's marker shows while it loads.
+  const lsi = content === null ? urlOfLayer(s.listStyleImage) : null
+  const img = lsi && host.images ? host.loadImage(lsi) : null
+  if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+    const w = img.naturalWidth
+    const h = img.naturalHeight
+    const x = outside ? cbox.x - w - MARKER_PADDING : cbox.x
+    const rec = imageRecord(img, place, x, baseline - h, w, h, clip, alloc())
+    return { items: [rec], context: null }
+  }
 
   const symbol =
     content === null &&
@@ -693,6 +917,59 @@ export function readMarker(
   return run ? { items: [run], context: null } : null
 }
 
+/** `content` context for a pseudo-element whose content needs counters
+ * or quotes. */
+function contentContext(
+  host: PseudoHost,
+  ps: CSSStyleDeclaration,
+  which: PseudoKind
+): ContentContext | undefined {
+  return needsGenerated(ps.content)
+    ? { at: host.gen.at(host.el, which), quotes: ps.quotes }
+    : undefined
+}
+
+interface Flow {
+  laid: Laid
+  /** `url()` pieces at their pen x, natural size (CSS px). */
+  images: { img: HTMLImageElement; x: number; w: number; h: number }[]
+  /** The tallest image's height, 0 without one. */
+  imgH: number
+}
+
+/** Lay out content pieces on one line: text by layoutLine, each loaded
+ * `url()` image at its natural size. */
+function layoutPieces(
+  pieces: readonly ContentPiece[],
+  ps: CSSStyleDeclaration,
+  el: Element,
+  host: PseudoHost
+): Flow {
+  const cells: Cell[] = []
+  const images: Flow['images'] = []
+  let pen = 0
+  let imgH = 0
+  for (const p of pieces) {
+    if (p.kind === 'text') {
+      const l = layoutLine(p.text, ps, el, null, false)
+      for (const c of l.cells) {
+        cells.push({ ...c, x: c.x + pen })
+      }
+      pen += l.width
+      continue
+    }
+    const img = host.images ? host.loadImage(p.url) : null
+    const w = img?.naturalWidth ?? 0
+    const h = img?.naturalHeight ?? 0
+    if (img && w > 0 && h > 0) {
+      images.push({ img, x: pen, w, h })
+      pen += w
+      imgH = Math.max(imgH, h)
+    }
+  }
+  return { laid: { cells, width: pen }, images, imgH }
+}
+
 // ---- ::before / ::after ----------------------------------------------
 
 const BLOCKISH = new Set([
@@ -716,8 +993,8 @@ export function readBeforeAfter(
 ): PseudoOut | null {
   const { el, s, place, clip, alloc } = host
   const ps = getComputedStyle(el, which)
-  const text = parseContent(ps.content, el)
-  if (text === null) {
+  const pieces = contentPieces(ps.content, el, contentContext(host, ps, which))
+  if (pieces === null) {
     return null
   }
   const display = ps.display
@@ -738,9 +1015,16 @@ export function readBeforeAfter(
   const chUsed = usedH === null ? null : borderBox ? usedH - padY : usedH
   const m = fontMetrics(ps)
   const lh = lineHeight(ps)
-  const laid = layoutLine(text, ps, el, null, false)
+  const flow = layoutPieces(pieces, ps, el, host)
+  const laid = flow.laid
   const tw = laid.width
-  const hasText = laid.cells.some((c) => c.text.trim().length > 0)
+  const glyphs = laid.cells.some((c) => c.text.trim().length > 0)
+  const hasText = glyphs || flow.images.length > 0
+  // An image taller than the text's ascent raises the line box (its
+  // bottom sits on the baseline).
+  const asc = (lh - m.height) / 2 + m.ascent
+  const lineAsc = Math.max(asc, flow.imgH)
+  const lineH = lh + lineAsc - asc
   const cbox = contentBox(s, place)
   const before = which === '::before'
   const pos = ps.position
@@ -779,7 +1063,7 @@ export function readBeforeAfter(
       (top !== null && bottom !== null
         ? cbH - top - bottom - i.mt - i.mb - padY
         : hasText
-          ? lh
+          ? lineH
           : 0)
     cw = Math.max(0, cw)
     ch = Math.max(0, ch)
@@ -805,7 +1089,7 @@ export function readBeforeAfter(
           : sty
   } else if (BLOCKISH.has(display)) {
     cw = Math.max(0, cwUsed ?? cbox.width - i.ml - i.mr - padX)
-    ch = Math.max(0, chUsed ?? (hasText ? lh : 0))
+    ch = Math.max(0, chUsed ?? (hasText ? lineH : 0))
     bx = cbox.x + i.ml
     by = before ? cbox.y + i.mt : cbox.y + cbox.height - (ch + padY) - i.mb
   } else {
@@ -823,9 +1107,9 @@ export function readBeforeAfter(
       bx = cbox.x + i.ml
     }
     if (inlineBlock) {
-      ch = Math.max(0, chUsed ?? (hasText ? lh : 0))
+      ch = Math.max(0, chUsed ?? (hasText ? lineH : 0))
       by = hasText
-        ? baseline - m.ascent - (lh - m.height) / 2 - i.pt - i.bt
+        ? baseline - lineAsc - i.pt - i.bt
         : baseline - i.mb - (ch + padY)
     } else {
       // A non-atomic inline's background covers its content area.
@@ -849,11 +1133,9 @@ export function readBeforeAfter(
       frame = { xform: composeAffine(frame.xform, a), local: frame.local }
     }
   }
-  const items: (BoxRecord | GlyphRun)[] = []
-  if (host.boxes) {
-    items.push(...boxRecords(ps, frame, bx, by, bw, bh, clip, alloc))
-  }
-  if (host.text && hasText) {
+  const items: (BoxRecord | GlyphRun | ImageRecord)[] = []
+  items.push(...boxRecords(host, ps, frame, bx, by, bw, bh))
+  if (hasText) {
     let ax = 0
     const ta = ps.textAlign
     const justifyCenter = isFlex && ps.justifyContent === 'center'
@@ -867,18 +1149,28 @@ export function readBeforeAfter(
     let baseline = inlineBaseline
     if (baseline === null) {
       const centre = isFlex && ps.alignItems === 'center'
-      const lineTop = by + i.bt + i.pt + (centre ? (ch - lh) / 2 : 0)
-      baseline = lineTop + (lh - m.height) / 2 + m.ascent
+      const lineTop = by + i.bt + i.pt + (centre ? (ch - lineH) / 2 : 0)
+      baseline = lineTop + lineAsc
     }
-    const run = buildRun(
-      laid,
-      ps,
-      frame,
-      bx + i.bl + i.pl + ax,
-      baseline,
-      clip,
-      alloc
-    )
+    const x0 = bx + i.bl + i.pl + ax
+    for (const im of flow.images) {
+      items.push(
+        imageRecord(
+          im.img,
+          frame,
+          x0 + im.x,
+          baseline - im.h,
+          im.w,
+          im.h,
+          clip,
+          alloc()
+        )
+      )
+    }
+    const run =
+      host.text && glyphs
+        ? buildRun(laid, ps, frame, x0, baseline, clip, alloc)
+        : null
     if (run) {
       items.push(run)
     }
