@@ -471,8 +471,11 @@ perspective transforms · culling · WebGL2 backend.
       `blur` at half resolution from 8 device px of radius; frame 12.0 ->
       7.5 ms on an M1 Pro, no dropped frames at 120 Hz. See
       `docs/rd/experiments/2026-10-15-blur-downsample.md`
-- [ ] Spread a re-anchor's newly covered rows over a few frames (p99 10 ms
-      at dpr 2 on `scroll-long`)
+- [ ] Re-anchor tail (p99 ~10-11 ms at dpr 2 on `scroll-long`, no dropped
+      frames): spreading the rows over strip frames was tried and reverted
+      (p95 worse, `docs/rd/experiments/2026-10-15-reanchor-spread.md`);
+      untried: cull a strip's draw to its rows, or re-anchor in smaller
+      steps
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
       was mostly overlap with the main pass (the profiler now prints
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for

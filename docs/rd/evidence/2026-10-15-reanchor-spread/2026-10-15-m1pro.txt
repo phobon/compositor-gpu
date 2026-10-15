@@ -1,0 +1,20 @@
+Re-anchor spread, M1 Pro (Apple M1 Pro, Metal 3), Chrome 155.0.8059.40 headed,
+run by Ben McCormick, 2026-10-15. perf.html n=400, 1280x900,
+test:profile --headed --only scroll,scroll-long --nodim --dpr 2 --band.
+Before: src/gpu/renderer.ts stashed (HEAD: rows drawn at once); after: popped
+(strips of an eighth of the canvas per frame). 0 late / 0 dropped in all.
+
+GPU total p50 / p95 / p99 / max (ms)
+                 before                          after
+scroll           6.43 / 7.16 / 8.49 / 10.34      6.40 / 6.64 / 8.24 / 11.95
+scroll-long      6.41 / 7.30 / 11.19 / 11.31     6.53 / 8.81 / 9.12 / 9.31
+
+main alone p50 / p99: scroll-long 1.44 / 2.59 before, 1.30 / 3.60 after.
+
+## npx tsx test/fill/run.ts --headed (after)
+full       rows drawn 2700, instances 15030, flat 34 of 900, 0 px differ (apple)
+band       rows drawn 1252, instances 28554, flat 34 of 900, 0 px differ (apple)
+bandcanvas rows drawn 1252, instances 28554, flat 34 of 900, 0 px differ (apple)
+bandclear  rows drawn 1156, instances 6347, flat 492 of 900, 529184 px differ (apple)
+
+The implementation tried is in reanchor-spread-renderer.diff (reverted).

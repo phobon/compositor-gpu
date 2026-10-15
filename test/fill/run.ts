@@ -11,11 +11,13 @@
 // the band (`cullDraws: 'canvas'`); 'bandclear' clears the margins.
 //
 // Usage: npx tsx test/fill/run.ts [--headed] [--fixed] [--blur] [--up]
+//   [--nodim]
 //   --headed   installed Chrome, headed (a real GPU; headless Chrome falls
 //              back to SwiftShader)
 //   --fixed    perf.html?fixed: a fixed header bar (viewport-space records)
 //   --blur     the fullscreen blur post pass on (a post chain)
 //   --up       the stalled scroll goes up instead of down
+//   --nodim    perf.html?nodim: no opacity groups
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -92,7 +94,7 @@ async function main(): Promise<void> {
     throw new Error('vite dev server produced no resolved URL')
   }
   const browser = await launch(`${base}perf.html`)
-  const variant = flag('fixed') ? '&fixed' : ''
+  const variant = (flag('fixed') ? '&fixed' : '') + (flag('nodim') ? '&nodim' : '')
   const suffix =
     (flag('fixed') ? '-fixed' : '') +
     (flag('blur') ? '-blur' : '') +

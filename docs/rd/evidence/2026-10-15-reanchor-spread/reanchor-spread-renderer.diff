@@ -1,0 +1,182 @@
+diff --git a/src/gpu/renderer.ts b/src/gpu/renderer.ts
+index 73e814b..efa65da 100644
+--- a/src/gpu/renderer.ts
++++ b/src/gpu/renderer.ts
+@@ -109,6 +109,16 @@ interface GroupPlace {
+   xf: Affine | null
+ }
+ 
++/** The rows spanning two full-width device-px rects (x, y, w, h). */
++function hullRows(
++  a: readonly [number, number, number, number],
++  b: readonly [number, number, number, number]
++): [number, number, number, number] {
++  const y0 = Math.min(a[1], b[1])
++  const y1 = Math.max(a[1] + a[3], b[1] + b[3])
++  return [a[0], y0, Math.max(a[2], b[2]), y1 - y0]
++}
++
+ /** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
+  * don't meet. */
+ function meet(
+@@ -346,6 +356,9 @@ export class Renderer {
+   private keptSpare: GPUTexture | null = null
+   /** The main target's ox, oy, sx, sy when `kept` was last drawn. */
+   private keptAt: [number, number, number, number] | null = null
++  /** Device rows [y0, y1) of `kept` a re-anchor newly covered and not yet
++   * drawn (cleared), filled a strip per frame (see nextStrip). */
++  private pendingRows: [number, number] | null = null
+   private clearRect: ClearRect | null = null
+   /** [time, |scroll step|] of the frames of the last 200 ms, CSS px
+    * (sizes the band). */
+@@ -742,29 +755,45 @@ export class Renderer {
+     }
+     let band = this.fillBand(ctx, main)
+     let mainLoad: GPULoadOp = 'clear'
++    /** Rows newly covered by a re-anchor this frame: cleared first. */
++    let cleared: [number, number] | null = null
++    /** Pending rows drawn this frame after the band (a second draw). */
++    let strip: [number, number, number, number] | undefined
+     if (this.canvasFill === 'band') {
+       const stale = this.keepMargins(encoder, texture, main)
+       main.view = this.keptView ?? canvasView
+       if (stale === 'all' || !band) {
+         band = undefined
+         this.bandY = null
++        this.pendingRows = null
+       } else {
++        mainLoad = 'load'
+         if (stale) {
+-          // Rows the canvas newly covers after a re-anchor: drawn with
+-          // the band (and not culled to it).
+-          const y0 = Math.min(band[1], stale[0])
+-          const y1 = Math.max(band[1] + band[3], stale[1])
++          cleared = stale
++        }
++        const pending = this.pendingRows
++        if (pending && scene.backdrops.length > 0) {
++          // A backdrop restarts the pass: draw the rows with the band.
++          const y0 = Math.min(band[1], pending[0])
++          const y1 = Math.max(band[1] + band[3], pending[1])
+           band = [0, y0, main.devW, y1 - y0]
++          this.pendingRows = null
+           this.bandY = null
++        } else if (pending) {
++          strip = this.nextStrip(band, pending, main)
++          if (strip || this.pendingRows) {
++            this.bandY = null
++          }
+         }
+-        mainLoad = 'load'
+       }
+     } else if (this.kept) {
+       this.releaseKept()
+     }
+     main.scissor = band
+-    this.lastFillRows = main.scissor ? main.scissor[3] : main.devH
+-    this.composite.begin(scene.groups.length)
++    this.lastFillRows =
++      (main.scissor ? main.scissor[3] : main.devH) + (strip ? strip[3] : 0)
++    // A strip composites every group a second time.
++    this.composite.begin(scene.groups.length * (strip ? 2 : 1))
+     this.groupBlur?.begin()
+     if (scene.backdrops.length > 0) {
+       this.backdrop ??= new BackdropPass(this.shared)
+@@ -1077,14 +1106,32 @@ export class Renderer {
+     if (this.transforms.size > 0) {
+       this.growExtents(scene.groups, ctx, xfs, extents)
+     }
++    // Groups reaching the band or the strip get textures.
++    main.scissor = strip && band ? hullRows(band, strip) : band
+     prepare(main, 0, list.length)
++    main.scissor = band
+     const first = this.beginPass(encoder, main, mainLoad, 'main')
+     if (mainLoad === 'load') {
+-      // Kept pixels outside the band stay; the band is redrawn from clear.
++      // Kept pixels outside the band stay; the band is redrawn from clear,
++      // and rows a re-anchor newly covered are cleared until drawn.
+       this.clearRect ??= new ClearRect(this.shared)
++      if (cleared) {
++        first.setScissorRect(0, cleared[0], main.devW, cleared[1] - cleared[0])
++        this.clearRect.draw(first)
++        this.restoreScissor(first, main)
++      }
+       this.clearRect.draw(first)
+     }
+-    const rp = drawRange(first, main, 0, list.length, 'main')
++    let rp = drawRange(first, main, 0, list.length, 'main')
++    if (strip) {
++      // The next strip of pending rows: the same batches again under its
++      // scissor.
++      main.scissor = strip
++      this.restoreScissor(rp, main)
++      this.clearRect?.draw(rp)
++      rp = drawRange(rp, main, 0, list.length, 'main')
++      main.scissor = band
++    }
+     this.lastBatches = batches
+     this.lastGroups = groups
+     this.lastGroupPasses = groupPasses
+@@ -1230,10 +1277,61 @@ export class Renderer {
+     this.keptSpare = spare
+     this.keptView = this.kept.createView()
+     this.copy?.release()
+-    return r > 0 ? [0, r] : [h + r, h]
++    const fresh: [number, number] = r > 0 ? [0, r] : [h + r, h]
++    // Rows still pending move with the pixels; one interval covers both.
++    const p = this.pendingRows
++    const moved = p
++      ? ([clamp(p[0] + r, h), clamp(p[1] + r, h)] as [number, number])
++      : null
++    this.pendingRows =
++      moved && moved[1] > moved[0]
++        ? [Math.min(moved[0], fresh[0]), Math.max(moved[1], fresh[1])]
++        : fresh
++    return fresh
++  }
++
++  /**
++   * The strip of pending rows to draw this frame after `band` (full
++   * width; at most an eighth of the target, next to the band), updating
++   * `pendingRows`; undefined when nothing is left. Rows the band covers
++   * count as drawn. A band strictly inside the pending rows (two
++   * remainders) draws them all now.
++   */
++  private nextStrip(
++    band: [number, number, number, number],
++    pending: [number, number],
++    t: Target
++  ): [number, number, number, number] | undefined {
++    const b0 = band[1]
++    const b1 = band[1] + band[3]
++    let [p0, p1] = pending
++    if (b0 > p0 && b1 < p1) {
++      this.pendingRows = null
++      return [0, p0, t.devW, p1 - p0]
++    }
++    if (b0 <= p0 && b1 > p0) {
++      p0 = Math.min(b1, p1)
++    }
++    if (b1 >= p1 && b0 < p1) {
++      p1 = Math.max(b0, p0)
++    }
++    if (p1 <= p0) {
++      this.pendingRows = null
++      return undefined
++    }
++    const k = Math.max(1, Math.ceil(t.devH / 8))
++    if (p0 >= b1) {
++      const e = Math.min(p1, p0 + k)
++      this.pendingRows = e < p1 ? [e, p1] : null
++      return [0, p0, t.devW, e - p0]
++    }
++    const s0 = Math.max(p0, p1 - k)
++    this.pendingRows = s0 > p0 ? [p0, s0] : null
++    return [0, s0, t.devW, p1 - s0]
+   }
+ 
+   private releaseKept(): void {
++    this.pendingRows = null
+     this.kept?.destroy()
+     this.keptSpare?.destroy()
+     this.kept = null

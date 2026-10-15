@@ -1,0 +1,39 @@
+Re-anchor spread, SwiftShader (cloud container, Chromium 141, headless, dpr 1, 1280x900), 2026-10-15
+
+## Strips logged during the stall check (device rows of the kept texture, canvas 2700 rows)
+frame A: cleared [1780,2700], band [772,1928], strip [1928,2266]
+frame B: band [772,1928], strip [2266,2604]
+frame C: band [772,1928], strip [2604,2700]
+
+## npx tsx test/fill/run.ts [variant]
+### (down)
+full       rows drawn 2700, instances 14827, flat 34 of 900, 0 px differ
+band       rows drawn 1252, instances 28140, flat 34 of 900, 5 px differ
+bandclear  rows drawn 1156, flat 482 of 900
+### --nodim (no opacity groups)
+full 33 flat / band 33 flat, 0 px differ
+### --up
+full       rows drawn 2700, instances 14827, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (google)
+band       rows drawn 1252, instances 28140, flat viewport rows after a -600 px stall 39 of 900, 49 px differ from full (google)
+bandcanvas rows drawn 1252, instances 28140, flat viewport rows after a -600 px stall 39 of 900, 49 px differ from full (google)
+bandclear  rows drawn 1156, instances 6457, flat viewport rows after a -600 px stall 496 of 900, 517994 px differ from full (google)
+### --fixed --up
+full       rows drawn 2700, instances 14839, flat viewport rows after a -600 px stall 88 of 900, 0 px differ from full (google)
+band       rows drawn 1252, instances 28164, flat viewport rows after a -600 px stall 88 of 900, 49 px differ from full (google)
+bandcanvas rows drawn 1252, instances 28164, flat viewport rows after a -600 px stall 88 of 900, 49 px differ from full (google)
+bandclear  rows drawn 1156, instances 6469, flat viewport rows after a -600 px stall 545 of 900, 517994 px differ from full (google)
+### --blur
+full       rows drawn 2700, instances 14827, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+band       rows drawn 1494, instances 28140, flat viewport rows after a 600 px stall 33 of 900, 5 px differ from full (google)
+bandcanvas rows drawn 1494, instances 28140, flat viewport rows after a 600 px stall 33 of 900, 5 px differ from full (google)
+bandclear  rows drawn 1156, instances 6457, flat viewport rows after a 600 px stall 481 of 900, 516016 px differ from full (google)
+
+## Locating the differing pixels (down variant)
+27 px > 2/255, max 11/255, +- shifts at text edges inside card 63 (opacity 0.8, a group), whose rect crosses the first strip's lower edge.
+- strip = an eighth of the canvas (338 rows): 5 px differ
+- strip = the whole pending range in one frame: 0 px
+- strip = a quarter (675 rows, card 63 inside the first strip): 0 px
+- strips after the first frame disabled: still differ (the first frame's output differs)
+- group atlas off: still differ
+- no opacity groups (--nodim): 0 px
+Cause not identified.
