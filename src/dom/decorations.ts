@@ -10,15 +10,17 @@
 // entry records which element decorates and with what font, so geometry is
 // derived from the DECORATING element's metrics, not the text's.
 //
-// Only `text-decoration-style: solid` is drawn faithfully; dotted, dashed,
-// wavy and double all render as a plain solid line (no dash/wave pattern,
-// no second stroke) — a known gap, not a bug.
+// `text-decoration-style`: solid and double are plain boxes (double adds a
+// second one thickness + 1px away, as Blink does); dashed, dotted and wavy
+// are boxes with `line` set, whose pattern the box shader draws.
 import type { BoxRecord, Glyph, GlyphRun, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
 import { fontMetrics, measureGlyphInk } from './textRuns'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
 export type DecorationLine = 'underline' | 'overline' | 'line-through'
+
+export type DecorationStyle = 'solid' | 'double' | 'dotted' | 'dashed' | 'wavy'
 
 const LINES: readonly DecorationLine[] = [
   'underline',
@@ -28,6 +30,7 @@ const LINES: readonly DecorationLine[] = [
 
 export interface Decoration {
   line: DecorationLine
+  style: DecorationStyle
   color: RGBA
   /** Explicit `text-decoration-thickness` in px, or null for `auto`. */
   thicknessPx: number | null
@@ -96,8 +99,14 @@ export function readOwnDecorations(
   }
   const { ascent, descent } = fontMetrics(s)
   const skipInk = s.textDecorationSkipInk !== 'none'
+  const st = s.textDecorationStyle
+  const style: DecorationStyle =
+    st === 'double' || st === 'dotted' || st === 'dashed' || st === 'wavy'
+      ? st
+      : 'solid'
   return lines.map((line) => ({
     line,
+    style,
     color,
     thicknessPx,
     fontSize,
@@ -220,42 +229,108 @@ function fragmentBoxes(
   // font metrics, centred in the line box, not the text run's.
   const localH = g0.local.h
   const baseline = (localH - (d.ascent + d.descent)) / 2 + d.ascent
-  const fontSize = d.fontSize
-  const thickness = Math.max(
+  // Blink's resolved thickness: font-size / 10 for `auto`, else the
+  // length rounded (text_decoration_info.cc); at least 1px.
+  const t = Math.max(
     1,
-    Math.round(d.thicknessPx ?? Math.max(1, fontSize / 10))
+    d.thicknessPx === null ? d.fontSize / 10 : Math.round(d.thicknessPx)
   )
-
-  // Underline and line-through are positioned by their vertical CENTER
-  // (Chrome centers the stroke on the nominal position, it doesn't hang it
-  // from a top edge); overline's formula is already a top edge.
-  let top: number
+  // Line rect top (TextDecorationOffset / SetLineThroughLineData), from
+  // the text top: an underline sits max(1, ceil(t / 2)) under the
+  // baseline, an overline's bottom on the text top, a line-through's
+  // centre two thirds of the ascent down.
+  const textTop = baseline - d.ascent
+  let y0: number
   if (d.line === 'underline') {
-    const center = baseline + Math.max(1, 0.1 * fontSize)
-    top = center - thickness / 2
+    y0 = textTop + Math.round(d.ascent) + Math.max(1, Math.ceil(t / 2))
   } else if (d.line === 'overline') {
-    // `baseline - ascent` alone (the top of the font's own em box) sits
-    // ~0.1em too low against Chrome's overline for Inter; tuned by the
-    // same 0.1em margin the underline uses, on the other side of the text.
-    top = baseline - d.ascent - Math.max(1, 0.1 * fontSize)
+    y0 = textTop - Math.floor(t)
   } else {
-    const center = baseline - 0.3 * fontSize
-    top = center - thickness / 2
+    y0 = textTop + (2 * d.ascent) / 3 - t / 2
   }
-  top = Math.round(top)
 
-  if (d.line === 'underline' && d.skipInk) {
-    const segments = skipInkSegments(run, glyphs, start, end, g0, baseline, top)
-    const boxes: BoxRecord[] = []
-    for (const [xL, xR] of segments) {
-      boxes.push(
-        makeDecorationBox(g0, xL, xR, top, thickness, d, clip, allocId())
-      )
+  // DecorationLinePainter: solid and double lines are rects snapped to
+  // whole px, max(1, floor(t)) high; the second line of a double sits
+  // t + 1 below an underline (floor(t + 1) below a line-through) and above
+  // an overline, as does the wave's centreline (a line-through's stays on
+  // the line). Dashes and dots are a stroke of round(t) centred on
+  // floor(y + t / 2), +0.5 when odd.
+  const off =
+    d.line === 'overline'
+      ? -(t + 1)
+      : d.line === 'line-through' && d.style === 'double'
+        ? Math.floor(t + 1)
+        : t + 1
+  const solidH = Math.max(1, Math.floor(t))
+  // Paint band (local y, height) of each stroke, and the skip-ink stripe's
+  // top for it.
+  const bands: Array<[number, number, number]> = [
+    [Math.floor(y0 + 0.5), solidH, y0]
+  ]
+  let line: BoxRecord['line']
+  let mid = 0
+  if (d.style === 'double') {
+    bands.push([Math.floor(y0 + off + 0.5), solidH, y0 + off])
+  } else if (d.style === 'dashed' || d.style === 'dotted') {
+    const w = Math.max(1, Math.round(t))
+    const midY = Math.floor(y0 + Math.max(t / 2, 0.5))
+    bands[0] = [midY - Math.floor(w / 2), w, y0]
+    line = { style: d.style, thickness: w, start: 0, length: 0, mid: 0 }
+  } else if (d.style === 'wavy') {
+    // The centreline (MakeWave's y = 0.5) and the curve's reach either
+    // side of it: 0.289 of the control point distance, plus half the
+    // stroke; the box adds a pixel of AA.
+    mid = y0 + (d.line === 'line-through' ? 0 : off) + 0.5
+    const cp = 0.5 + Math.round(3 * t + 0.5)
+    const reach = 0.289 * cp + t / 2
+    const r = Math.ceil(reach + 1)
+    bands[0] = [Math.floor(mid) - r, 2 * r + 1, Math.floor(mid - reach)]
+    line = { style: 'wavy', thickness: t, start: 0, length: 0, mid: 0 }
+  }
+
+  // Dashes and dots run between end points truncated to whole px
+  // (DrawLineAsStroke's gfx::Point), here when the text is untransformed.
+  let x0 = 0
+  let x1 = xLast
+  const [la, lb, lc, ld, tx] = g0.xform
+  const plain = la === 1 && lb === 0 && lc === 0 && ld === 1
+  const whole = line !== undefined && line.style !== 'wavy' && plain
+  if (whole) {
+    x0 = Math.floor(tx) - tx
+    x1 = Math.floor(tx + xLast) - tx
+  }
+
+  const boxes: BoxRecord[] = []
+  for (const [y, h, stripe] of bands) {
+    const segments =
+      d.line === 'underline' && d.skipInk
+        ? skipInkSegments(run, glyphs, start, end, g0, baseline, stripe)
+        : [[0, xLast] as [number, number]]
+    for (const [sL, sR] of segments) {
+      let xL = sL === 0 ? x0 : Math.max(sL, x0)
+      let xR = sR === xLast ? x1 : Math.min(sR, x1)
+      if (whole) {
+        // Whole-px skip-ink cuts too: the box pass snaps a box's edges to
+        // device pixels, which would shift the pattern inside it.
+        xL = Math.round(tx + xL) - tx
+        xR = Math.round(tx + xR) - tx
+      }
+      if (xR <= xL) {
+        continue
+      }
+      const box = makeDecorationBox(g0, xL, xR, y, h, d, clip, allocId())
+      if (line) {
+        box.line = {
+          ...line,
+          start: xL - x0,
+          length: Math.round(x1 - x0),
+          mid: mid - y
+        }
+      }
+      boxes.push(box)
     }
-    return boxes
   }
-
-  return [makeDecorationBox(g0, 0, xLast, top, thickness, d, clip, allocId())]
+  return boxes
 }
 
 /** `max(1, 0.06 * fontSize)`: the padding added around each glyph's ink

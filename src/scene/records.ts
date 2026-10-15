@@ -118,6 +118,21 @@ export interface BoxRecord {
    */
   bgInset?: [number, number, number, number]
   /**
+   * A dashed, dotted or wavy text decoration (dom/decorations.ts): the box
+   * is the stroke's paint area and the box shader draws the pattern in it
+   * in `fill`. `thickness` is the stroke width (whole px); `start` is the
+   * box's left edge along the decoration's line fragment and `length` the
+   * fragment's length, so boxes split by skip-ink keep one pattern.
+   * `mid` is the wave's centreline, local y.
+   */
+  line?: {
+    style: 'dashed' | 'dotted' | 'wavy'
+    thickness: number
+    start: number
+    length: number
+    mid: number
+  }
+  /**
    * Per-side border, [top, right, bottom, left] (CSS order). A side with
    * style none/hidden has width 0. `styles` is the BorderStyle code per
    * side; groove/ridge/inset/outset draw solid. Null when no side paints.

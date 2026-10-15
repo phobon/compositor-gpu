@@ -419,10 +419,16 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Batch builder: grid-indexed members + per-glyph text footprints
       (400-card page: 841 → 114 draws)
 - [x] `text-decoration` underline / overline / line-through (per line fragment,
-      propagated to inline descendants, transform-aware; solid style only)
+      propagated to inline descendants, transform-aware); line positions and
+      thickness follow Blink's `TextDecorationOffset` (2026-10-15)
 - [x] `text-decoration-skip-ink` (descender stroke extents from a scratch
       canvas; gap 0.06em)
-- [ ] dotted/dashed/wavy/double decoration styles
+- [x] dotted/dashed/wavy/double decoration styles (2026-10-15, after
+      Blink's `DecorationLinePainter`): double is a second box t + 1 away;
+      dashed/dotted/wavy are boxes with `BoxRecord.line`, drawn by the box
+      shader (`line_cov`: `dash_cov` from the fragment's truncated start,
+      MakeWave's cubics by Newton steps). `decorstyles` section: parity
+      0.54%. Not matched: skip-ink cut placement (same heuristic as solid)
 - [x] Outer `box-shadow` (analytic Gaussian rounded rect, multi-layer, spread,
       masked outside the border box)
 - [x] Inset `box-shadow`; `text-shadow` (hard = offset Slug instances, blurred =

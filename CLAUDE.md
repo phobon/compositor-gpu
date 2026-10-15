@@ -408,7 +408,10 @@ Conventions each pass must follow:
   the element's background box, inset ones after it. The box shader draws a
   `shadow` record as a blurred rounded rect (Wallace's analytic method) masked
   outside (outer) or inside (inset) the element's box. Underlines are split
-  around descender ink (skip-ink). `text-shadow` lives in the text pass:
+  around descender ink (skip-ink). Line positions, thickness and styles
+  follow Blink (`TextDecorationOffset`, `DecorationLinePainter`): double is
+  a second box; dashed, dotted and wavy boxes carry `line` and the box
+  shader draws the pattern (`line_cov`, grad kind -1/-2/-3). `text-shadow` lives in the text pass:
   shadow instances are appended after the glyph range in both text buffers
   (per run, per layer) and drawn before the glyphs of each batch.
 - **Pseudo-elements** (`dom/pseudo.ts`): browsers expose pseudo STYLE but no

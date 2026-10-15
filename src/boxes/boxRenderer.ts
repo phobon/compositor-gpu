@@ -40,8 +40,8 @@ struct Box {
                     // shape index (frame_clip_cov; 0 none), space
   clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
   grad   : vec4f,   // kind (0 none, 1 linear, 2 radial, 3 conic;
-                    // +8 repeating),
-                    // angle, start, count
+                    // +8 repeating; -1 dashed, -2 dotted, -3 wavy
+                    // decoration), angle, start, count
   gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
   sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset;
                     // plain box: w = gradient tile repeats (1 x, 2 y)
@@ -57,7 +57,8 @@ struct Box {
   ry     : vec4f,   // vertical radii tl, tr, br, bl (= radius: circular)
   gt     : vec4f,   // gradient tile x, y (from the padding box), w, h;
                     // w = 0: the padding box. Shadows: inner vertical
-                    // radii (with shr)
+                    // radii (with shr). Decorations: thickness, start,
+                    // length, wave centreline y
 };
 @group(1) @binding(0) var<storage, read> boxes : array<Box>;
 // Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
@@ -403,6 +404,66 @@ fn border_style_cov(style : u32, p : vec2f, half : vec2f, r : vec4f,
                   floor(wr * 0.5), a);
 }
 
+// One wavelength of Blink's wavy decoration centreline (MakeWave in
+// core/paint/decoration_line_painter.cc): a cubic from (0, 0) to (l, 0)
+// with both control points at x = l/2, y = +c then -c (y down).
+fn wave_point(t : f32, l : f32, c : f32) -> vec2f {
+  return vec2f(l * t * (1.5 - 1.5 * t + t * t),
+               3.0 * c * t * (1.0 - t) * (1.0 - 2.0 * t));
+}
+
+fn wave_d1(t : f32, l : f32, c : f32) -> vec2f {
+  return vec2f(l * (1.5 - 3.0 * t + 3.0 * t * t),
+               3.0 * c * (1.0 - 6.0 * t + 6.0 * t * t));
+}
+
+// Distance from q (x in [0, l), y from the centreline) to the wave: the
+// nearest point on this wavelength's cubic or a neighbour's, by Newton
+// steps (x first, it is monotonic in t; then the squared distance).
+fn wave_dist(q : vec2f, l : f32, c : f32) -> f32 {
+  var best = 1e9;
+  for (var k = -1; k <= 1; k++) {
+    let p = q - vec2f(f32(k) * l, 0.0);
+    var t = clamp(p.x / l, 0.0, 1.0);
+    for (var i = 0; i < 2; i++) {
+      let x = wave_point(t, l, c).x - p.x;
+      t = clamp(t - x / wave_d1(t, l, c).x, 0.0, 1.0);
+    }
+    for (var i = 0; i < 2; i++) {
+      let e = wave_point(t, l, c) - p;
+      let d1 = wave_d1(t, l, c);
+      let d2 = vec2f(l * (6.0 * t - 3.0), 3.0 * c * (12.0 * t - 6.0));
+      let df = dot(d1, d1) + dot(e, d2);
+      t = clamp(t - dot(e, d1) / max(df, 1e-4), 0.0, 1.0);
+    }
+    best = min(best, distance(wave_point(t, l, c), p));
+  }
+  return best;
+}
+
+// Coverage of a dashed / dotted / wavy text decoration (BoxRecord.line) at
+// centred local p, after Blink's DecorationLinePainter: dashes and dots
+// run from the line fragment's start as on an open path of the fragment's
+// length (DrawLineAsStroke -> dash_cov; round dots pulled in by w/2); the
+// wave (MakeWave) has wavelength 1 + 2 round(2w + 0.5) and control points
+// 0.5 + round(3w + 0.5) off the centreline, stroked w wide. a: pixel size.
+fn line_cov(b : Box, p : vec2f, half : vec2f, a : f32) -> f32 {
+  let kind = u32(-b.grad.x + 0.5);
+  let w = b.gt.x;
+  let s = p.x + half.x + b.gt.y;
+  if (kind == 3u) {
+    let tw = max(w, 1.0);
+    // floor(v + 0.5): std::round, not WGSL's round half to even.
+    let l = 1.0 + 2.0 * floor(2.0 * tw + 1.0);
+    let c = 0.5 + floor(3.0 * tw + 1.0);
+    let u = s - floor(s / l) * l;
+    let d = wave_dist(vec2f(u, p.y + half.y - b.gt.w), l, c);
+    return clamp((w * 0.5 - d) / a + 0.5, 0.0, 1.0);
+  }
+  let x = select(s, s - w * 0.5, kind == 2u && w > 3.0);
+  return dash_cov(kind, x, b.gt.z, false, w, p.y + half.y, w * 0.5, a);
+}
+
 // The pass's output inside an exact (rounded/rotated) ancestor clip.
 fn base_fs(in : VOut) -> vec4f {
   return base_fs0(in) * frame_clip_cov(in.docp, boxes[in.idx].params.z);
@@ -429,6 +490,10 @@ fn base_fs0(in : VOut) -> vec4f {
   let ip = in.local + in.half - (b.sh1.xy + b.sh1.zw * 0.5);
   let di = sd_box(ip, b.sh1.zw * 0.5, b.shr, b.gt);
   let aai = max(fwidth(di), 1e-4);
+  if (b.grad.x < -0.5) {
+    let la = b.fill.a * line_cov(b, in.local, in.half, apx);
+    return vec4f(b.fill.rgb * la, la) * opacity;
+  }
   if (b.sh0.z > 0.5 && b.sh0.w > 0.5) {
     // Inset: the quad is the padding box (pad = 0), kept inside by the
     // outer mask; the shadow is everything outside the blurred shadow box.
@@ -869,7 +934,12 @@ export class BoxPass implements RenderPass {
           sd[so++] = 0
         }
       } else {
-        for (let k = 0; k < 8; k++) {
+        // A patterned decoration: kind -1 dashed, -2 dotted, -3 wavy.
+        const ln = b.line
+        d[o++] = ln
+          ? -(ln.style === 'dashed' ? 1 : ln.style === 'dotted' ? 2 : 3)
+          : 0
+        for (let k = 0; k < 7; k++) {
           d[o++] = 0
         }
       }
@@ -922,8 +992,14 @@ export class BoxPass implements RenderPass {
       for (let k = 0; k < 4; k++) {
         d[o++] = ry ? (ry[k] ?? 0) : (b.radius[k] ?? 0)
       }
-      // Shadows: the inner box's vertical radii; boxes: the gradient tile.
-      const gt = sh ? (sh.inner.radiusY ?? sh.inner.radius) : b.gradient?.tile
+      // Shadows: the inner box's vertical radii; decorations: the line;
+      // boxes: the gradient tile.
+      const ln = b.line
+      const gt = sh
+        ? (sh.inner.radiusY ?? sh.inner.radius)
+        : ln
+          ? [ln.thickness, ln.start, ln.length, ln.mid]
+          : b.gradient?.tile
       for (let k = 0; k < 4; k++) {
         d[o++] = gt ? (gt[k] ?? 0) : 0
       }

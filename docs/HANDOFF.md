@@ -128,8 +128,10 @@ Measuring notes learned along the way:
 
 ## Open items (in ROADMAP order of importance)
 
-1. **Rendering gaps** (next; affect how the sites look): dotted / dashed /
-   wavy / double text decorations; `mix-blend-mode` on an element with a
+1. **Rendering gaps** (next; affect how the sites look): text decoration
+   styles done 2026-10-15 (`decorstyles` shot, parity 0.54%; solid line
+   positions moved to Blink's formulas too, `decorations` 0.49 -> 0.34%);
+   still open: `mix-blend-mode` on an element with a
    subtree (records blend one by one today); pseudo-content gaps
    (`counter()`, quotes, `url()`, multi-line pseudo text); text-shadow on
    pseudo text; inset shadows on replaced elements.
