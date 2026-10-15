@@ -138,10 +138,14 @@ Measuring notes learned along the way:
    16px-aligned image atlas entries; still open: multi-line pseudo text.
    Goldens of sections with decorations or images changed on purpose:
    run `test:visual -- --update` once on the Mac.
-2. **Many-groups scenario**: a `perf.html` mode with dozens of fading
-   elements to measure how the group atlas scales.
-3. **16-bit PNG crash** under SwiftShader on upload (untested on
-   hardware): detect via the IHDR bit depth or redraw through a 2D canvas.
+2. **Opacity-only edits** (from `experiments/2026-10-15-many-groups.md`):
+   a style-driven fade of 16-48 elements runs at ~26 fps on perf.html
+   because each opacity change rebuilds the scene and re-packs all text
+   (~33 ms CPU); 48 held groups themselves cost only 0.70 ms with the
+   group atlas. Next: update a group's alpha in place, keep recently
+   faded elements as groups at opacity 1, skip the text re-pack when runs
+   are unchanged. Scenarios: `test:profile --only scroll,groups,fade`.
+3. **16-bit PNG**: confirmed handled (`pngDepth.ts`, `png16` shot).
 4. **Re-anchor tail** at dpr 2 (p99 ~10-11 ms, no drops): untried options
    are culling a strip's draw to its rows, or re-anchoring in smaller
    steps.

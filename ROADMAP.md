@@ -509,8 +509,15 @@ perspective transforms · culling · WebGL2 backend.
       and pass (`groupAtlas`, default on); 5 groups 5 passes -> 1, cost
       0.18 -> 0.04 ms at dpr 1 on an M1 Pro. See
       `docs/rd/experiments/2026-10-15-group-atlas.md`
-- [ ] A many-groups profile scenario (dozens of fading elements) to
-      measure how the group atlas scales
+- [x] Many-groups scenarios (2026-10-15, `test:profile` `groups` /
+      `fade`, `--groups N`): 48 held groups cost 0.70 ms per frame with
+      the atlas, 2.10 ms without, on an M1 Pro at dpr 2. A style-driven
+      fade runs at ~26 fps whatever the count: every opacity change
+      rebuilds the scene and re-packs all text (~33 ms CPU). See
+      `docs/rd/experiments/2026-10-15-many-groups.md`
+- [ ] Opacity-only edits without a rebuild: update a group's alpha when
+      an element stays below 1, keep a recently faded element a group at
+      opacity 1, and skip the text re-pack when runs are unchanged
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no
       registered face (text now shows before fonts load)

@@ -223,6 +223,17 @@ async function boot(): Promise<void> {
       })
       .slice(0, max)
   }
+  // The first `?groups=N` (default 48) of the in-view cards' title,
+  // paragraph and list items: the elements the `groups` and `fade`
+  // scenarios put below opacity 1 (many opacity groups at once, as a
+  // staggered reveal does).
+  const groupCount = Math.max(1, Number(params.get('groups')) || 48)
+  const groupTargets = (): HTMLElement[] =>
+    inView(400)
+      .flatMap(
+        (c) => Array.from(c.querySelectorAll('h3, p, li')) as HTMLElement[]
+      )
+      .slice(0, groupCount)
   // Scenarios for test/profile/run.ts: each runs a fixed number of frames
   // inside one recording.
   let scale = 1
@@ -322,6 +333,43 @@ async function boot(): Promise<void> {
       }
       for (const t of tfs) {
         t.destroy()
+      }
+      await raf2()
+    },
+    // `scroll`'s 8 px per frame down and up with `?groups` elements held
+    // at opacity 0.6: each one an opacity group re-rendered every frame.
+    async groups() {
+      const els = groupTargets()
+      for (const el of els) {
+        el.style.opacity = '0.6'
+      }
+      await raf2()
+      for (let f = 0, n = k(240); f < n; f++) {
+        window.scrollBy(0, f < n / 2 ? 8 : -8)
+        await raf()
+      }
+      for (const el of els) {
+        el.style.opacity = ''
+      }
+      await raf2()
+    },
+    // The same elements faded in through inline style, as GSAP does: 0 to
+    // 1 over 60 frames each, staggered by 2 frames. Every frame changes
+    // which elements are groups, so every read rebuilds the scene.
+    async fade() {
+      const els = groupTargets()
+      for (const el of els) {
+        el.style.opacity = '0'
+      }
+      await raf2()
+      const frames = k(60)
+      const stagger = Math.max(1, Math.round(2 * scale))
+      for (let f = 0; f <= frames + stagger * els.length; f++) {
+        els.forEach((el, i) => {
+          const p = Math.min(1, Math.max(0, (f - i * stagger) / frames))
+          el.style.opacity = p >= 1 ? '' : String(1 - (1 - p) ** 3)
+        })
+        await raf()
       }
       await raf2()
     },

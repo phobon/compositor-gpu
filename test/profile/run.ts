@@ -26,6 +26,8 @@
 //   --bandclear    perf.html with canvasFill 'band-clear' (margins cleared)
 //   --nopatch      perf.html with CompositorOptions.patchEdits off
 //   --noatlas      perf.html with CompositorOptions.groupAtlas off
+//   --groups N     elements the `groups` / `fade` scenarios put below
+//                  opacity 1 (default 48)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -58,7 +60,9 @@ export const SCENARIOS = [
   'css-transforms',
   'fx-transforms',
   'reveal',
-  'blur-scroll'
+  'blur-scroll',
+  'groups',
+  'fade'
 ]
 
 /** Unquantised GPU timestamps (Chrome rounds them to 100 µs otherwise). */
@@ -379,7 +383,8 @@ async function main(): Promise<void> {
         (flag('bandcanvas') ? '&bandcanvas' : '') +
         (flag('bandclear') ? '&bandclear' : '') +
         (flag('nopatch') ? '&nopatch' : '') +
-        (flag('noatlas') ? '&noatlas' : '')
+        (flag('noatlas') ? '&noatlas' : '') +
+        (arg('groups') ? `&groups=${arg('groups')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)
