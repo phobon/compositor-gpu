@@ -6,13 +6,13 @@ import { MAT_DEFAULT_WGSL } from './material'
 // an empty bind group 2, and the mode's blend state. Alpha always
 // composites normally (premultiplied over).
 
-const OVER: GPUBlendComponent = {
+export const OVER: GPUBlendComponent = {
   srcFactor: 'one',
   dstFactor: 'one-minus-src-alpha',
   operation: 'add'
 }
 
-const COLOR: Record<BlendMode, GPUBlendComponent> = {
+export const BLEND_COLOR: Record<BlendMode, GPUBlendComponent> = {
   multiply: { srcFactor: 'dst', dstFactor: 'one-minus-src-alpha' },
   screen: { srcFactor: 'one', dstFactor: 'one-minus-src' },
   'plus-lighter': { srcFactor: 'one', dstFactor: 'one' },
@@ -46,7 +46,7 @@ export function blendMaterials(
     subdivisions: 1,
     layout,
     bindGroup,
-    blend: { color: { operation: 'add', ...COLOR[mode] }, alpha: OVER },
+    blend: { color: { operation: 'add', ...BLEND_COLOR[mode] }, alpha: OVER },
     // Don't flash the normal blend while the variant compiles.
     hold: true,
     builtin: true,

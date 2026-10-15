@@ -341,10 +341,17 @@ perspective transforms · culling · WebGL2 backend.
       backdrop; a layer transform (GPU-only) acts as a backdrop root;
       `drop-shadow()` in a backdrop-filter is ignored
 - [ ] `url()` filters
-- [ ] `mix-blend-mode` on an element with a subtree as one blended group
-      (records blend one by one today); `multiply` over a transparent
-      backdrop (inside an isolated group) needs the full
-      `cs(1-αb) + cb(1-αs) + cs·cb`, which one blend state can't express
+- [x] `mix-blend-mode` on an element with a subtree as one blended group
+      (2026-10-15): when the element's records overlap (a box or image over
+      any other record), its context is a group composited with the mode
+      (`OpacityGroup.blend`, per-mode composite pipelines); otherwise the
+      records still blend one by one. Fallback-atlas glyphs now take the
+      blend state too. Shot `blendgroup`: parity 7.71% -> 0.73%. The choice
+      is made on a read of the element itself: a partial read below it
+      keeps the last one
+- [ ] `multiply` over a transparent backdrop (inside an isolated group)
+      needs the full `cs(1-αb) + cb(1-αs) + cs·cb`, which one blend state
+      can't express; `difference` stays exclusion
 - [x] `mix-blend-mode` per record (2026-10-10, `scene/blend.ts`,
       `gpu/blend.ts`): `multiply`, `screen`, `plus-lighter`, `exclusion`
       exact, `difference` as exclusion (exact for black/white sources);

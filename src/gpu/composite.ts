@@ -1,5 +1,7 @@
+import type { BlendMode } from '../scene/blend'
 import { MAX_FILTER_OPS } from '../scene/filter'
 import { reportShaderErrors } from '../util/log'
+import { BLEND_COLOR, OVER } from './blend'
 import { FRAME_WGSL, type Shared } from './frame'
 
 // Opacity-group compositing: an offscreen texture pool plus a pipeline that
@@ -120,6 +122,10 @@ export interface GroupTarget {
 export class GroupCompositor {
   private readonly device: GPUDevice
   private readonly pipeline: GPURenderPipeline
+  private readonly module: GPUShaderModule
+  private readonly pipelineLayout: GPUPipelineLayout
+  /** Composites with a `mix-blend-mode`, built on first use. */
+  private readonly blendPipelines = new Map<BlendMode, GPURenderPipeline>()
   private readonly layout: GPUBindGroupLayout
   private readonly sampler: GPUSampler
   private buffer: GPUBuffer | null = null
@@ -132,7 +138,7 @@ export class GroupCompositor {
   private frame = 0
 
   constructor(private readonly shared: Shared) {
-    const { device, format, frameLayout } = shared
+    const { device, frameLayout } = shared
     this.device = device
     this.layout = device.createBindGroupLayout({
       entries: [
@@ -163,33 +169,49 @@ export class GroupCompositor {
       code: COMPOSITE_WGSL
     })
     reportShaderErrors(module, 'composite')
-    this.pipeline = device.createRenderPipeline({
-      label: 'composite',
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [frameLayout, this.layout]
-      }),
-      vertex: { module, entryPoint: 'vs' },
-      fragment: {
-        module,
-        entryPoint: 'fs',
-        targets: [
-          {
-            format,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-            }
-          }
-        ]
-      },
-      primitive: { topology: 'triangle-list' }
+    this.module = module
+    this.pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [frameLayout, this.layout]
     })
+    this.pipeline = this.makePipeline('composite', OVER)
     this.sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     })
+  }
+
+  private makePipeline(
+    label: string,
+    color: GPUBlendComponent
+  ): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      label,
+      layout: this.pipelineLayout,
+      vertex: { module: this.module, entryPoint: 'vs' },
+      fragment: {
+        module: this.module,
+        entryPoint: 'fs',
+        targets: [{ format: this.shared.format, blend: { color, alpha: OVER } }]
+      },
+      primitive: { topology: 'triangle-list' }
+    })
+  }
+
+  private pipelineFor(mode: BlendMode | undefined): GPURenderPipeline {
+    if (!mode) {
+      return this.pipeline
+    }
+    let p = this.blendPipelines.get(mode)
+    if (!p) {
+      p = this.makePipeline(`composite:${mode}`, {
+        operation: 'add',
+        ...BLEND_COLOR[mode]
+      })
+      this.blendPipelines.set(mode, p)
+    }
+    return p
   }
 
   /**
@@ -303,7 +325,9 @@ export class GroupCompositor {
     /** A CSS filter's colour matrices, in order (scene/filter.ts). */
     matrices: readonly (readonly number[])[] = [],
     /** Where the region starts in `target`, device px (a group atlas). */
-    origin: readonly [number, number] = [0, 0]
+    origin: readonly [number, number] = [0, 0],
+    /** `mix-blend-mode` to composite with (scene/blend.ts). */
+    blend?: BlendMode
   ): void {
     const index = this.data.length / FLOATS_PER_COMP
     const buffer = this.buffer
@@ -344,7 +368,7 @@ export class GroupCompositor {
         ]
       })
     }
-    rp.setPipeline(this.pipeline)
+    rp.setPipeline(this.pipelineFor(blend))
     rp.setBindGroup(1, target.bindGroup)
     rp.draw(6, 1, 0, index)
   }

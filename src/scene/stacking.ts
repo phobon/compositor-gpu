@@ -9,7 +9,7 @@
 // child contexts (incl. positioned z-index:auto, step 6) in tree order, then
 // positive z-index child contexts (ascending).
 import { hasTransform } from '../dom/transform'
-import { BLEND_BASE } from './blend'
+import { BLEND_BASE, type BlendMode } from './blend'
 import { filterSpread, type GroupFilter } from './filter'
 import type { Glyph, GlyphRun, Rect, SceneRecord } from './records'
 
@@ -30,6 +30,9 @@ export interface StackingContext {
   /** `isolation: isolate`: a group when anything inside blends
    * (`mix-blend-mode`), so it blends against the group, not the page. */
   isolate?: boolean
+  /** `mix-blend-mode` blending the whole subtree (scene/blend.ts): the
+   * context becomes a group composited with the mode. */
+  blend?: BlendMode
   /** Isolated for a region effect (gpu/graph.ts `isolate`) or a layer
    * transform (`transform`): the context becomes a group even at alpha 1,
    * composited by the region's handler or through the transform. */
@@ -55,6 +58,9 @@ export interface OpacityGroup {
   /** Applied when compositing (colour matrix, blur). `bounds`/`vbounds`
    * already include the blur's spread. */
   filter?: GroupFilter
+  /** Composited with this `mix-blend-mode` (the element's subtree blends
+   * as one). */
+  blend?: BlendMode
   /** Doc-space union of the doc-space members' AABBs (nested groups
    * included); zero-size when there are none. */
   bounds: Rect
@@ -315,7 +321,7 @@ function inflate(r: Rect | null, d: number): Rect | null {
 function blends(ctx: StackingContext): boolean {
   for (const item of ctx.items) {
     if (isContext(item)) {
-      if (blends(item)) {
+      if (item.blend !== undefined || blends(item)) {
         return true
       }
     } else if (
@@ -349,6 +355,7 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       alpha < 1 ||
       ctx.region !== undefined ||
       ctx.filter !== undefined ||
+      ctx.blend !== undefined ||
       (ctx.isolate === true && blends(ctx))
     ) {
       const g: OpacityGroup = {
@@ -361,6 +368,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       }
       if (ctx.filter) {
         g.filter = ctx.filter
+      }
+      if (ctx.blend) {
+        g.blend = ctx.blend
       }
       if (ctx.region !== undefined) {
         g.region = ctx.region

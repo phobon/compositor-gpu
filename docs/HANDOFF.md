@@ -131,8 +131,8 @@ Measuring notes learned along the way:
 1. **Rendering gaps** (next; affect how the sites look): text decoration
    styles done 2026-10-15 (`decorstyles` shot, parity 0.54%; solid line
    positions moved to Blink's formulas too, `decorations` 0.49 -> 0.34%);
-   still open: `mix-blend-mode` on an element with a
-   subtree (records blend one by one today); pseudo-content gaps
+   `mix-blend-mode` on a subtree done the same day (`blendgroup` shot,
+   7.71 -> 0.73%); still open: pseudo-content gaps
    (`counter()`, quotes, `url()`, multi-line pseudo text); text-shadow on
    pseudo text; inset shadows on replaced elements.
 2. **Many-groups scenario**: a `perf.html` mode with dozens of fading

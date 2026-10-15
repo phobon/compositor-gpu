@@ -69,6 +69,7 @@ const SECTIONS = [
   'mutations',
   'pseudo',
   'blend',
+  'blendgroup',
   'filters',
   'drop-shadow',
   'backdrop',

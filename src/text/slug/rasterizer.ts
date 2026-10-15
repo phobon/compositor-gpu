@@ -114,6 +114,12 @@ export class SlugText implements TextBackend {
   private readonly atlas = new GlyphAtlas()
   private atlasPipeline: GPURenderPipeline
   private atlasLayout: GPUBindGroupLayout
+  /** Atlas pipelines with a material's blend state (the built-in
+   * `mix-blend-mode` materials), by material id; built on first use. */
+  private readonly atlasBlended = new Map<number, GPURenderPipeline>()
+  private readonly makeAtlasPipeline: (
+    blend: GPUBlendState
+  ) => GPURenderPipeline
   private readonly atlasSampler: GPUSampler
   private quadBuf: GPUBuffer | null = null
   private quadF32 = new Float32Array(0)
@@ -234,25 +240,23 @@ export class SlugText implements TextBackend {
     })
     const atlasModule = device.createShaderModule({ code: ATLAS_WGSL })
     reportShaderErrors(atlasModule, 'text-atlas')
-    this.atlasPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [frameLayout, this.atlasLayout]
-      }),
-      vertex: { module: atlasModule, entryPoint: 'vs' },
-      fragment: {
-        module: atlasModule,
-        entryPoint: 'fs',
-        targets: [
-          {
-            format,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-            }
-          }
-        ]
-      },
-      primitive: { topology: 'triangle-list' }
+    const atlasLayout = device.createPipelineLayout({
+      bindGroupLayouts: [frameLayout, this.atlasLayout]
+    })
+    this.makeAtlasPipeline = (blend) =>
+      device.createRenderPipeline({
+        layout: atlasLayout,
+        vertex: { module: atlasModule, entryPoint: 'vs' },
+        fragment: {
+          module: atlasModule,
+          entryPoint: 'fs',
+          targets: [{ format, blend }]
+        },
+        primitive: { topology: 'triangle-list' }
+      })
+    this.atlasPipeline = this.makeAtlasPipeline({
+      color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+      alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
     })
 
     this.bandBuf = device.createBuffer({
@@ -1202,7 +1206,17 @@ export class SlugText implements TextBackend {
       return 0
     }
     // A material re-shades the Slug glyphs (and their hard shadows); atlas
-    // (fallback) glyphs keep the default pipeline.
+    // (fallback) glyphs keep the default pipeline, with the material's
+    // blend state (`mix-blend-mode`) when it has one.
+    let atlasPipeline = this.atlasPipeline
+    if (material?.blend) {
+      let p = this.atlasBlended.get(material.id)
+      if (!p) {
+        p = this.makeAtlasPipeline(material.blend)
+        this.atlasBlended.set(material.id, p)
+      }
+      atlasPipeline = p
+    }
     const mp = this.materials.get(material)
     if (!mp && this.materials.held(material)) {
       return 0
@@ -1228,7 +1242,7 @@ export class SlugText implements TextBackend {
     const s1 = this.shadowStart[first + count] ?? s0
     if (s1 > s0) {
       if (atlas) {
-        encoder.setPipeline(this.atlasPipeline)
+        encoder.setPipeline(atlasPipeline)
         encoder.setBindGroup(1, atlas)
         encoder.draw(6, s1 - s0, 0, s0)
         draws++
@@ -1247,7 +1261,7 @@ export class SlugText implements TextBackend {
       draws++
     }
     if (atlas) {
-      encoder.setPipeline(this.atlasPipeline)
+      encoder.setPipeline(atlasPipeline)
       encoder.setBindGroup(1, atlas)
       encoder.draw(6, count, 0, first)
       draws++
@@ -1257,6 +1271,7 @@ export class SlugText implements TextBackend {
 
   dropMaterial(id: number): void {
     this.materials.drop(id)
+    this.atlasBlended.delete(id)
   }
 
   warmMaterial(mat: MaterialBinding): void {

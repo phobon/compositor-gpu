@@ -428,8 +428,11 @@ Conventions each pass must follow:
   exclusion) are built-in materials with no hooks and their own blend
   state (`MaterialBinding.blend`), registered at init (`builtin`, skipped by
   `Scene.assign`). The reader tags records directly (`ElNode.blend`,
-  inherited; pseudo items), per record rather than as an isolated group. An
-  `/fx` Material's tag replaces it and is undone back to it.
+  inherited; pseudo items), per record, unless the element's records
+  overlap: then its context is a group composited with the mode
+  (`OpacityGroup.blend`, `GroupCompositor` per-mode pipelines) and its
+  subtree is untagged. An `/fx` Material's tag replaces it and is undone
+  back to it.
 - **Image atlas.** Static `<img>`/background sources ≤1024px are packed into
   one mipmapped `rgba8unorm` atlas (`images/imageAtlas.ts`, 4px gutters, UVs
   clamped by a half texel in the shader); canvas/video and larger images keep

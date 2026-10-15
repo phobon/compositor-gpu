@@ -12,10 +12,13 @@
 //   difference    approximated by exclusion: identical where the source is
 //                 black or white (the usual invert idiom), close elsewhere
 //
-// CSS blends the element's whole subtree as one isolated group; here each
-// record blends on its own, which differs only where the subtree's own
-// records overlap. An `/fx` Material on the same records wins (they draw
-// with its pipeline and the normal blend). Other modes draw normally.
+// CSS blends the element's whole subtree as one isolated group. Where the
+// subtree's records overlap (dom/tree.ts `blendsAsGroup`) the element's
+// context is a group composited with the mode (OpacityGroup.blend,
+// gpu/composite.ts); otherwise each record blends on its own, which is the
+// same result without the offscreen pass. An `/fx` Material on the same
+// records wins (they draw with its pipeline and the normal blend). Other
+// modes draw normally.
 
 /** First built-in blend material id (fx materials count up from 1). */
 export const BLEND_BASE = 1 << 24

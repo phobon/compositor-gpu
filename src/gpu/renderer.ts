@@ -1527,7 +1527,8 @@ export class Renderer {
       a,
       shape,
       g?.filter?.matrices,
-      top.uv0
+      top.uv0,
+      g?.blend
     )
     if (sc) {
       this.restoreScissor(rp, parent)

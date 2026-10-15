@@ -1,4 +1,4 @@
-import { blendMaterialId } from '../scene/blend'
+import { type BlendMode, blendMaterialId } from '../scene/blend'
 import { type GroupFilter, parseFilter } from '../scene/filter'
 import type {
   BackdropRecord,
@@ -128,8 +128,14 @@ export interface ReadInfo {
 export interface ElNode {
   kind: 'element'
   /** Built-in `mix-blend-mode` material of this element or its nearest
-   * blended ancestor (scene/blend.ts), or undefined. */
+   * blended ancestor (scene/blend.ts), or undefined. Not inherited from an
+   * ancestor that blends as a group. */
   blend?: number
+  /** The element's own `mix-blend-mode` is a supported one. */
+  ownBlend?: boolean
+  /** The element blends its subtree as one group (scene/blend.ts): its
+   * records draw normally into the group, which composites with the mode. */
+  blendGroup?: BlendMode
   el: Element
   parent: ElNode | null
   /** Child elements, direct text-node runs and pseudo-element records
@@ -217,6 +223,90 @@ function tagBlend(node: ElNode, id: number): void {
   }
 }
 
+/** Undo tagBlend(node, id) below a nested blended element's records. */
+function untagBlend(node: ElNode, id: number): void {
+  const untag = (r: { material?: number }): void => {
+    if (r.material === id) {
+      r.material = undefined
+    }
+  }
+  for (const r of node.own) {
+    if (r.kind !== 'cutout' && r.kind !== 'backdrop') {
+      untag(r)
+    }
+  }
+  for (const kid of node.kids) {
+    if (kid.kind === 'element') {
+      if (!kid.ownBlend) {
+        untagBlend(kid, id)
+      }
+    } else {
+      untag(kid)
+      if (kid.kind === 'text') {
+        for (const d of kid.decorations ?? []) {
+          untag(d)
+        }
+        for (const d of kid.decorationsOver ?? []) {
+          untag(d)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Does a blended element need its subtree blended as one group? Only when
+ * its records overlap each other (a background under its text, a child's
+ * box over another's): records that don't overlap blend the same one by
+ * one. Tested as box/image AABBs against every other record's (glyphs
+ * one by one).
+ */
+function blendsAsGroup(node: ElNode): boolean {
+  const solid: Rect[] = []
+  const all: Rect[] = []
+  const visit = (n: ElNode): void => {
+    for (const r of n.own) {
+      if (r.kind === 'box' || r.kind === 'image') {
+        solid.push(r.rect)
+        all.push(r.rect)
+      }
+    }
+    for (const kid of n.kids) {
+      if (kid.kind === 'element') {
+        visit(kid)
+      } else if (kid.kind === 'text') {
+        for (const g of kid.glyphs) {
+          all.push(g.rect)
+        }
+        for (const d of kid.decorations ?? []) {
+          all.push(d.rect)
+        }
+      } else {
+        solid.push(kid.rect)
+        all.push(kid.rect)
+      }
+    }
+  }
+  visit(node)
+  if (all.length < 2 || solid.length === 0) {
+    return false
+  }
+  for (const a of solid) {
+    for (const b of all) {
+      if (
+        a !== b &&
+        a.x < b.x + b.width &&
+        b.x < a.x + a.width &&
+        a.y < b.y + b.height &&
+        b.y < a.y + a.height
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 function intersect(a: Rect | null, b: Rect | null): Rect | null {
   if (!a) {
     return b
@@ -302,6 +392,9 @@ export function flatten(
       }
       if (node.isolate) {
         c.isolate = true
+      }
+      if (node.blendGroup) {
+        c.blend = node.blendGroup
       }
       if (node.region !== undefined) {
         c.region = node.region
@@ -1025,9 +1118,13 @@ export class SceneReader {
         node.isolate = true
       }
     }
-    const blend = blendMaterialId(s.mixBlendMode) ?? parent?.blend
+    const ownBlend = blendMaterialId(s.mixBlendMode)
+    const blend = ownBlend ?? (parent?.blendGroup ? undefined : parent?.blend)
     if (blend !== undefined) {
       node.blend = blend
+    }
+    if (ownBlend !== undefined) {
+      node.ownBlend = true
     }
     this.nodes.set(el, node)
 
@@ -1108,6 +1205,11 @@ export class SceneReader {
     }
     if (node.blend !== undefined) {
       tagBlend(node, node.blend)
+      if (node.ownBlend && node.isContext && blendsAsGroup(node)) {
+        // Kids read before this decision tagged themselves: undo it.
+        untagBlend(node, node.blend)
+        node.blendGroup = s.mixBlendMode as BlendMode
+      }
     }
     return node
   }
