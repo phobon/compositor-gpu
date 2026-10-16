@@ -106,6 +106,7 @@ export async function createCompositor(
   renderer.groupAtlas = options.groupAtlas ?? true
   // A viewport-pinned canvas has no margins to keep.
   renderer.canvasFill = pinned ? 'full' : (options.canvasFill ?? 'band')
+  renderer.reanchorStrips = options.reanchorStrips ?? true
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
   for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
     renderer.materials.set(m.id, m)
@@ -455,12 +456,14 @@ export async function createCompositor(
     }
     frameMs = performance.now() - t0
     const wasContinued = continued
+    // A re-anchor's rows not yet drawn (reanchorStrips) also keep it.
     continued =
       animating ||
       scene.hasDynamic ||
       cssAnimating ||
       isScrolling() ||
-      hooksAlive()
+      hooksAlive() ||
+      renderer.pendingRowCount > 0
     if (continued) {
       scheduler.request()
     }
@@ -1093,6 +1096,7 @@ export async function createCompositor(
       draws: renderer.lastDraws,
       instances: renderer.lastInstances,
       fillRows: renderer.lastFillRows,
+      pendingRows: renderer.pendingRowCount,
       groups: renderer.lastGroups,
       groupPasses: renderer.lastGroupPasses,
       sceneReused: renderer.lastReused,
@@ -1218,6 +1222,7 @@ function inert(): Compositor & { text: null; scene: null } {
       draws: 0,
       instances: 0,
       fillRows: 0,
+      pendingRows: 0,
       groups: 0,
       groupPasses: 0,
       sceneReused: false,

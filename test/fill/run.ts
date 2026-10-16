@@ -8,7 +8,9 @@
 // are left flat (blank, or empty space between cards), and how many
 // pixels differ from 'full''s screenshot; screenshots go to
 // test/fill/out/. 'bandcanvas' is 'band' culled to the canvas rather than
-// the band (`cullDraws: 'canvas'`); 'bandclear' clears the margins.
+// the band (`cullDraws: 'canvas'`); 'bandclear' clears the margins;
+// 'bandnostrip' draws a re-anchor's new rows at once (`reanchorStrips:
+// false`).
 //
 // Usage: npx tsx test/fill/run.ts [--headed] [--fixed] [--blur] [--up]
 //   [--nodim]
@@ -104,6 +106,7 @@ async function main(): Promise<void> {
     const modes: Record<string, string> = {
       full: '',
       band: '&band',
+      bandnostrip: '&band&nostrips',
       bandcanvas: '&band&bandcanvas',
       bandclear: '&bandclear'
     }
@@ -117,7 +120,7 @@ async function main(): Promise<void> {
         timeout: 120_000
       })
       await page.evaluate('window.__perf.ready')
-      const { rows, instances, adapter } = await page.evaluate(`(async () => {
+      const { rows, instances, pendingRows, adapter } = await page.evaluate(`(async () => {
         const raf2 = () => new Promise((r) =>
           requestAnimationFrame(() => requestAnimationFrame(r)))
         if (${flag('blur')}) {
@@ -140,19 +143,19 @@ async function main(): Promise<void> {
         for (let i = 0; i < 6; i++) {
           await raf2()
         }
-        const { fillRows: rows, instances } = g.stats()
+        const { fillRows: rows, instances, pendingRows } = g.stats()
         const a = await navigator.gpu?.requestAdapter()
         const adapter = a?.info?.description || a?.info?.vendor || 'none'
         window.requestAnimationFrame = () => 0
         window.scrollBy(0, ${stall})
         await new Promise((r) => setTimeout(r, 300))
-        return { rows, instances, adapter }
+        return { rows, instances, pendingRows, adapter }
       })()`)
       const path = resolve(outDir, `${mode}${suffix}.png`)
       const png = PNG.sync.read(await page.screenshot({ path }))
       reference ??= png
       console.log(
-        `${mode.padEnd(10)} rows drawn ${rows}, instances ${instances}, flat viewport rows after a ${stall} px stall ${flatRows(png)} of ${png.height}, ${differing(png, reference)} px differ from full (${adapter})`
+        `${mode.padEnd(11)} rows drawn ${rows}, instances ${instances}, pending ${pendingRows}, flat viewport rows after a ${stall} px stall ${flatRows(png)} of ${png.height}, ${differing(png, reference)} px differ from full (${adapter})`
       )
       await page.close()
     }

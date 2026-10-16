@@ -1,0 +1,13 @@
+npm warn Unknown user config "python". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "minimum-release-age-exclude". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+3:39:48 pm [vite] (client) Re-optimizing dependencies because lockfile has changed
+full       rows drawn 2700, instances 15030, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+band       rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+bandcanvas rows drawn 1156, instances 14601, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (apple)
+bandclear  rows drawn 1156, instances 6347, flat viewport rows after a 600 px stall 492 of 900, 529184 px differ from full (apple)
+npm warn Unknown user config "python". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "minimum-release-age-exclude". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+full       rows drawn 2700, instances 15030, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+band       rows drawn 1156, instances 6347, flat viewport rows after a -600 px stall 39 of 900, 4 px differ from full (apple)
+bandcanvas rows drawn 1156, instances 14601, flat viewport rows after a -600 px stall 39 of 900, 4 px differ from full (apple)
+bandclear  rows drawn 1156, instances 6347, flat viewport rows after a -600 px stall 461 of 900, 498971 px differ from full (apple)

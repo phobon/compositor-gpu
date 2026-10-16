@@ -145,9 +145,10 @@ Measuring notes learned along the way:
    rebuild 1 s after a fade. Scenarios: `test:profile --only
    scroll,groups,fade`, A/B with `--nopatchopacity`.
 3. **16-bit PNG**: confirmed handled (`pngDepth.ts`, `png16` shot).
-4. **Re-anchor tail** at dpr 2 (p99 ~10-11 ms, no drops): untried options
-   are culling a strip's draw to its rows, or re-anchoring in smaller
-   steps.
+4. **Re-anchor tail**: done 2026-10-16 (`reanchorStrips`): `scroll-long`
+   p99 at dpr 2 11.56 -> 8.09 ms. Left: the margin under budget is
+   smaller than run-to-run spread; a SwiftShader-only 5 px at group/strip
+   edges.
 5. **Moved-glyph edits**: done 2026-10-16 (`refitBatches`): a word swap
    costs 1.9 ms (was 11.8-15.6). Left: ~1 ms of whole-buffer box/image
    upload per patched edit.

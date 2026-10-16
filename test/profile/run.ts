@@ -28,6 +28,7 @@
 //   --noatlas      perf.html with CompositorOptions.groupAtlas off
 //   --nopatchopacity  perf.html with CompositorOptions.patchOpacity off
 //   --norefit      perf.html with CompositorOptions.refitBatches off
+//   --nostrips     perf.html with CompositorOptions.reanchorStrips off
 //   --groups N     elements the `groups` / `fade` scenarios put below
 //                  opacity 1 (default 48)
 //
@@ -388,6 +389,7 @@ async function main(): Promise<void> {
         (flag('noatlas') ? '&noatlas' : '') +
         (flag('nopatchopacity') ? '&nopatchopacity' : '') +
         (flag('norefit') ? '&norefit' : '') +
+        (flag('nostrips') ? '&nostrips' : '') +
         (arg('groups') ? `&groups=${arg('groups')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')

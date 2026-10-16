@@ -148,6 +148,13 @@ export interface CompositorOptions {
    * (canvas scrolled into view before the next frame is blank; for
    * comparing). Ignored with `canvasPin: 'viewport'`. */
   canvasFill?: 'full' | 'band' | 'band-clear'
+  /** canvasFill 'band': the rows a re-anchor newly covers (about a
+   * viewport) are cleared and drawn a strip per frame, nearest the
+   * viewport first (at least 96 CSS px, twice the recent scroll step),
+   * instead of all in the re-anchor frame. A stalled main thread soon
+   * after a re-anchor can show the rows not yet drawn as blank. Default
+   * true; false draws them at once (for comparing). */
+  reanchorStrips?: boolean
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
@@ -198,6 +205,9 @@ export interface CompositorStats {
   /** Device-px rows of the canvas the most recent frame drew (all of it
    * unless `canvasFill: 'band'`). */
   fillRows: number
+  /** Device-px rows a re-anchor newly covered not yet drawn
+   * (CompositorOptions.reanchorStrips). */
+  pendingRows: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
   /** Render passes those groups' textures took (CompositorOptions

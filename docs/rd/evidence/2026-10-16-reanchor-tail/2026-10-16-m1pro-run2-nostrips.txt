@@ -1,0 +1,55 @@
+
+> compositor-gpu@0.0.1 test:profile /Users/phobon/code/compositor-gpu
+> tsx test/profile/run.ts -- --headed --only scroll,scroll-long --nodim --dpr 2 --band --nostrips
+
+[profile] headed: 155.0.8059.84
+[profile] perf.html n=400 ready
+[profile] adapter: apple / metal-3 / Apple M1 Pro, 155.0.8059.84
+[profile] scroll
+[profile]   239 frames
+[profile] scroll-long
+[profile]   255 frames
+
+[profile] native GPU, GPU timing on
+
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.00    9.30    9.30
+  cpu total             0.20    0.30    0.40    0.90
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.30    0.90
+      cull              0.00    0.00    0.20    0.70
+    other               0.10    0.10    0.20    0.30
+  gpu total             6.66    7.29    8.64   16.35
+    main                6.18    6.83    8.13   15.87
+      alone             1.48    2.27    3.30    6.55
+    copy                5.20    6.19    7.26   13.14
+      alone             0.48    0.54    0.73    0.93
+
+scroll-long: 255 frames over 2.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.20    0.40    0.60    0.90
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.50    0.80
+      cull              0.00    0.00    0.40    0.50
+    other               0.10    0.20    0.20    0.30
+  gpu total             7.30    7.68   11.56   11.62
+    copy                5.82    7.38   10.34   10.49
+      alone             0.47    1.17    1.22    1.30
+    main                6.84    7.26   11.10   11.18
+      alone             1.45    1.95    2.20    2.45
+
+[profile] reports in /Users/phobon/code/compositor-gpu/test/profile/out/last

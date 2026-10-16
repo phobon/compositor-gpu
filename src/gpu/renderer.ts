@@ -87,6 +87,9 @@ interface Leaf {
 /** Device px between rects in a group atlas (bilinear sampling at an edge
  * must not reach a neighbour). */
 const ATLAS_GUTTER = 2
+/** Smallest strip of a re-anchor's pending rows drawn per frame, CSS px
+ * (Renderer.reanchorStrips). */
+const STRIP_MIN = 96
 
 /** A group's texture placement before a texture is chosen (see
  * Renderer.measureGroup). */
@@ -107,6 +110,16 @@ interface GroupPlace {
   kx: number
   ky: number
   xf: Affine | null
+}
+
+/** The rows spanning two full-width device-px rects (x, y, w, h). */
+function hullRows(
+  a: readonly [number, number, number, number],
+  b: readonly [number, number, number, number]
+): [number, number, number, number] {
+  const y0 = Math.min(a[1], b[1])
+  const y1 = Math.max(a[1] + a[3], b[1] + b[3])
+  return [a[0], y0, Math.max(a[2], b[2]), y1 - y0]
 }
 
 /** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
@@ -338,6 +351,10 @@ export class Renderer {
    * rest kept from earlier frames; 'band-clear': the rest cleared
    * (CompositorOptions.canvasFill). */
   canvasFill: 'full' | 'band' | 'band-clear' = 'band'
+  /** canvasFill 'band': rows a re-anchor newly covers are cleared and
+   * drawn a strip per frame, nearest the band first, culled to them;
+   * false draws them all in the re-anchor frame (not culled to the band). */
+  reanchorStrips = true
   /** canvasFill 'band': the canvas's pixels kept between frames (a
    * canvas texture isn't), and a same-size texture to shift them into
    * when the canvas re-anchors. */
@@ -346,6 +363,19 @@ export class Renderer {
   private keptSpare: GPUTexture | null = null
   /** The main target's ox, oy, sx, sy when `kept` was last drawn. */
   private keptAt: [number, number, number, number] | null = null
+  /** Device rows [y0, y1) of `kept` re-anchors newly covered and not yet
+   * drawn (cleared), filled a strip per frame (see nextStrip): disjoint,
+   * in order (two after re-anchors at both ends). */
+  private pending: [number, number][] = []
+  /** The pending interval the last strip was taken from (stripRuns). */
+  private stripFrom: [number, number] | null = null
+  /** The largest scroll step of the last 200 ms, CSS px (fillBand). */
+  private lastStep = 0
+  /** Runs culled to the pending rows (see stripRuns), their region and
+   * batch list. */
+  private stripCulled: Runs | null = null
+  private stripRegion: Region | null = null
+  private stripBatches: Scene['batches'] | null = null
   private clearRect: ClearRect | null = null
   /** [time, |scroll step|] of the frames of the last 200 ms, CSS px
    * (sizes the band). */
@@ -354,6 +384,14 @@ export class Renderer {
   /** The last frame's band in document CSS px (y0, y1), or null when the
    * whole canvas is drawn. */
   private bandY: [number, number] | null = null
+  /** Device-px rows a re-anchor covered not yet drawn. */
+  get pendingRowCount(): number {
+    let n = 0
+    for (const [a, b] of this.pending) {
+      n += b - a
+    }
+    return n
+  }
   /** Device-px rows the last frame's main pass drew (stats().fillRows). */
   lastFillRows = 0
   /** Frame uniforms for group targets, one per group slot in a frame
@@ -577,6 +615,7 @@ export class Renderer {
     for (const [, d] of this.steps) {
       step = Math.max(step, d)
     }
+    this.lastStep = step
     const pad = Math.max(128, 2 * step)
     const y0 = clamp(Math.floor((ctx.scrollY - pad - t.oy) * t.sy), t.devH)
     const y1 = clamp(
@@ -601,6 +640,10 @@ export class Renderer {
    * pipelines) and any move of the canvas or the scroll.
    */
   private reuseKey(ctx: FrameContext, dpr: number): string | null {
+    if (this.pending.length > 0) {
+      // A re-anchor's rows are still being drawn.
+      return null
+    }
     for (const layer of this.extras.values()) {
       if (layer.active()) {
         return null
@@ -742,29 +785,66 @@ export class Renderer {
     }
     let band = this.fillBand(ctx, main)
     let mainLoad: GPULoadOp = 'clear'
+    /** Rows newly covered by a re-anchor this frame: cleared first. */
+    let cleared: [number, number] | null = null
+    /** Pending rows drawn this frame after the band (a second draw). */
+    let strip: [number, number, number, number] | undefined
     if (this.canvasFill === 'band') {
       const stale = this.keepMargins(encoder, texture, main)
       main.view = this.keptView ?? canvasView
       if (stale === 'all' || !band) {
         band = undefined
         this.bandY = null
+        this.pending = []
       } else {
-        if (stale) {
-          // Rows the canvas newly covers after a re-anchor: drawn with
-          // the band (and not culled to it).
-          const y0 = Math.min(band[1], stale[0])
-          const y1 = Math.max(band[1] + band[3], stale[1])
-          band = [0, y0, main.devW, y1 - y0]
-          this.bandY = null
-        }
         mainLoad = 'load'
+        if (stale && this.reanchorStrips) {
+          cleared = stale
+        }
+        const pending = this.pending
+        if (
+          pending.length > 0 &&
+          (scene.backdrops.length > 0 || !this.reanchorStrips)
+        ) {
+          // Rows drawn with the band, not culled to it (a backdrop
+          // restarts the pass, so no second draw).
+          let y0 = band[1]
+          let y1 = band[1] + band[3]
+          for (const [a, b] of pending) {
+            y0 = Math.min(y0, a)
+            y1 = Math.max(y1, b)
+          }
+          band = [0, y0, main.devW, y1 - y0]
+          this.pending = []
+          this.bandY = null
+        } else if (pending.length > 0) {
+          const k = Math.ceil(Math.max(STRIP_MIN, 2 * this.lastStep) * main.sy)
+          strip = this.nextStrip(band, main, k)
+          if (
+            strip &&
+            strip[1] <= band[1] + band[3] &&
+            strip[1] + strip[3] >= band[1]
+          ) {
+            // Next to the band: one draw over both, culled to both.
+            band = hullRows(band, strip)
+            strip = undefined
+            if (this.bandY) {
+              this.bandY = [
+                Math.min(this.bandY[0], band[1] / main.sy + main.oy),
+                Math.max(this.bandY[1], (band[1] + band[3]) / main.sy + main.oy)
+              ]
+            }
+          }
+        }
       }
     } else if (this.kept) {
       this.releaseKept()
     }
     main.scissor = band
-    this.lastFillRows = main.scissor ? main.scissor[3] : main.devH
-    this.composite.begin(scene.groups.length)
+    this.lastFillRows =
+      (main.scissor ? main.scissor[3] : main.devH) + (strip ? strip[3] : 0)
+    // A strip composites every group a second time.
+    this.composite.begin(scene.groups.length * (strip ? 2 : 1))
     this.groupBlur?.begin()
     if (scene.backdrops.length > 0) {
       this.backdrop ??= new BackdropPass(this.shared)
@@ -780,7 +860,7 @@ export class Renderer {
     let draws = 0
     let instances = 0
     this.lastCullMs = 0
-    const culled = this.cullDraws ? this.cullFor(scene, ctx) : null
+    let culled = this.cullDraws ? this.cullFor(scene, ctx) : null
     let slot = 0
     const list = scene.batches
     // Two phases. Every group's texture is rendered first (children before
@@ -1077,14 +1157,35 @@ export class Renderer {
     if (this.transforms.size > 0) {
       this.growExtents(scene.groups, ctx, xfs, extents)
     }
+    // Groups reaching the band or the strip get textures.
+    main.scissor = strip && band ? hullRows(band, strip) : band
     prepare(main, 0, list.length)
+    main.scissor = band
     const first = this.beginPass(encoder, main, mainLoad, 'main')
     if (mainLoad === 'load') {
-      // Kept pixels outside the band stay; the band is redrawn from clear.
+      // Kept pixels outside the band stay; the band is redrawn from clear,
+      // and rows a re-anchor newly covered are cleared until drawn.
       this.clearRect ??= new ClearRect(this.shared)
+      if (cleared) {
+        first.setScissorRect(0, cleared[0], main.devW, cleared[1] - cleared[0])
+        this.clearRect.draw(first)
+        this.restoreScissor(first, main)
+      }
       this.clearRect.draw(first)
     }
-    const rp = drawRange(first, main, 0, list.length, 'main')
+    let rp = drawRange(first, main, 0, list.length, 'main')
+    if (strip) {
+      // The next strip of pending rows: the same batches again under its
+      // scissor.
+      main.scissor = strip
+      this.restoreScissor(rp, main)
+      this.clearRect?.draw(rp)
+      if (culled) {
+        culled = this.stripRuns(scene, ctx, main, strip)
+      }
+      rp = drawRange(rp, main, 0, list.length, 'main')
+      main.scissor = band
+    }
     this.lastBatches = batches
     this.lastGroups = groups
     this.lastGroupPasses = groupPasses
@@ -1230,10 +1331,92 @@ export class Renderer {
     this.keptSpare = spare
     this.keptView = this.kept.createView()
     this.copy?.release()
-    return r > 0 ? [0, r] : [h + r, h]
+    const fresh: [number, number] = r > 0 ? [0, r] : [h + r, h]
+    // Rows still pending move with the pixels; overlapping intervals
+    // merge, disjoint ones stay apart (the rows between are drawn).
+    const all: [number, number][] = [fresh]
+    for (const [a, b] of this.pending) {
+      const y0 = clamp(a + r, h)
+      const y1 = clamp(b + r, h)
+      if (y1 > y0) {
+        all.push([y0, y1])
+      }
+    }
+    all.sort((a, b) => a[0] - b[0])
+    const out: [number, number][] = []
+    for (const iv of all) {
+      const last = out[out.length - 1]
+      if (last && iv[0] <= last[1]) {
+        last[1] = Math.max(last[1], iv[1])
+      } else {
+        out.push([iv[0], iv[1]])
+      }
+    }
+    this.pending = out
+    return fresh
+  }
+
+  /**
+   * The strip of pending rows to draw this frame after `band` (full
+   * width; at most `k` rows of the interval nearest the band, from its
+   * end next to the band), updating `pending`; undefined when nothing is
+   * left. Rows the band covers count as drawn.
+   */
+  private nextStrip(
+    band: [number, number, number, number],
+    t: Target,
+    k: number
+  ): [number, number, number, number] | undefined {
+    const b0 = band[1]
+    const b1 = band[1] + band[3]
+    const left: [number, number][] = []
+    for (const [p0, p1] of this.pending) {
+      if (p1 <= b0 || p0 >= b1) {
+        left.push([p0, p1])
+        continue
+      }
+      if (p0 < b0) {
+        left.push([p0, b0])
+      }
+      if (p1 > b1) {
+        left.push([b1, p1])
+      }
+    }
+    let best = -1
+    let bestD = Number.POSITIVE_INFINITY
+    for (let i = 0; i < left.length; i++) {
+      const [p0, p1] = left[i] as [number, number]
+      const d = p0 >= b1 ? p0 - b1 : b0 - p1
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    const from = left[best]
+    if (!from) {
+      this.pending = []
+      this.stripFrom = null
+      return undefined
+    }
+    const [p0, p1] = from
+    this.stripFrom = [p0, p1]
+    let strip: [number, number, number, number]
+    if (p0 >= b1) {
+      const e = Math.min(p1, p0 + k)
+      from[0] = e
+      strip = [0, p0, t.devW, e - p0]
+    } else {
+      const s0 = Math.max(p0, p1 - k)
+      from[1] = s0
+      strip = [0, s0, t.devW, p1 - s0]
+    }
+    this.pending = left.filter(([a, b]) => b > a)
+    return strip
   }
 
   private releaseKept(): void {
+    this.pending = []
+    this.stripFrom = null
     this.kept?.destroy()
     this.keptSpare?.destroy()
     this.kept = null
@@ -1576,6 +1759,7 @@ export class Renderer {
     // bounds change, so the runs are recomputed.
     if (updateBounds(scene, scene.batches)) {
       this.culled = null
+      this.stripCulled = null
     }
     if (
       this.culled &&
@@ -1600,6 +1784,49 @@ export class Renderer {
     this.culledBatches = scene.batches
     this.culledRegion = region
     return this.culled
+  }
+
+  /** The main target's runs culled to `strip` (device rows of `t`) and
+   * the pending rows after it, cached until the batches change or a
+   * strip leaves the cached rows. */
+  private stripRuns(
+    scene: Scene,
+    ctx: FrameContext,
+    t: Target,
+    strip: readonly [number, number, number, number]
+  ): Runs {
+    const y0 = strip[1] / t.sy + t.oy
+    const y1 = (strip[1] + strip[3]) / t.sy + t.oy
+    const r = this.stripRegion
+    if (
+      this.stripCulled &&
+      this.stripBatches === scene.batches &&
+      r &&
+      y0 >= r[1] &&
+      y1 <= r[3]
+    ) {
+      return this.stripCulled
+    }
+    // The whole interval the strip came from: later strips reuse it.
+    const p = this.stripFrom
+    const py0 = p ? Math.min(y0, p[0] / t.sy + t.oy) : y0
+    const py1 = p ? Math.max(y1, p[1] / t.sy + t.oy) : y1
+    // A few px past the rows: anti-aliased edges reach past the bounds.
+    const region: Region = [
+      ctx.canvasX,
+      py0 - 8,
+      ctx.canvasX + ctx.canvasWidth,
+      py1 + 8
+    ]
+    const t0 = performance.now()
+    this.stripCulled = cullRuns(scene, scene.batches, region, (id) => {
+      const m = this.materials.get(id)
+      return m !== undefined && !m.builtin
+    })
+    this.lastCullMs += performance.now() - t0
+    this.stripBatches = scene.batches
+    this.stripRegion = region
+    return this.stripCulled
   }
 
   /** End `rp`, filter what `target` holds under `rec` into a pooled

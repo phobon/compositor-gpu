@@ -184,6 +184,9 @@ async function boot(): Promise<void> {
     // `?norefit`: moved edits rebuild the batch list
     // (CompositorOptions.refitBatches).
     refitBatches: !params.has('norefit'),
+    // `?nostrips`: a re-anchor's new rows drawn at once
+    // (CompositorOptions.reanchorStrips).
+    reanchorStrips: !params.has('nostrips'),
     // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
     // to the canvas rather than the band (CompositorOptions.cullDraws).
     cullDraws: params.has('nocull')

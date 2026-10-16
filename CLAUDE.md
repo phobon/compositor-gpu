@@ -80,9 +80,15 @@ it; everything a pass draws on the main target resets to that scissor
 (`cullDraws: 'canvas'` culls to the canvas instead, for A/B). 'band'
 draws into a texture kept between frames (the canvas texture isn't),
 cleared and redrawn only in the band (`ClearRect`), its pixels shifted
-by a texture copy when the canvas re-anchors (the rows newly covered
-drawn that frame), and copied to the canvas in a `copy` pass, or into
-the post chain's scene texture when a chain runs; `'band-clear'` clears
+by a texture copy when the canvas re-anchors, and copied to the canvas
+in a `copy` pass, or into the post chain's scene texture when a chain
+runs. The rows a re-anchor newly covers are cleared and drawn a strip
+per frame (`reanchorStrips`, `?nostrips` / `--nostrips`): at least 96
+CSS px or twice the recent scroll step, from the pending interval
+nearest the band, as a second draw culled to that interval (or merged
+into the band when it touches it); pending rows keep the loop running
+and turn scene reuse off, and with a backdrop in the scene they are
+drawn at once (`stats().pendingRows`); `'band-clear'` clears
 outside the band instead, `'full'` redraws everything. perf.html stays
 on 'full' unless `?band` / `?bandclear` (the profile baselines). `npx
 tsx test/fill/run.ts [--headed] [--fixed] [--blur] [--up]` shows what a

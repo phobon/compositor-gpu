@@ -1,0 +1,42 @@
+Re-anchor strips, SwiftShader (headless Chromium 141, software WebGPU), sandbox,
+2026-10-16. Stall checks: npx tsx test/fill/run.ts [variant]. 'band' is
+band with reanchorStrips (default), 'bandnostrip' the same with
+reanchorStrips: false (the behaviour before), in the same run.
+The --blur run is from after the scene-reuse fix (first run: 580 rows
+still pending, 232227 px differ: post-chain frames reused the scene
+and drew no strips).
+
+## fill 
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+band        rows drawn 1160, instances 8244, pending 0, flat viewport rows after a 600 px stall 34 of 900, 5 px differ from full (google)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full (google)
+bandcanvas  rows drawn 1160, instances 16162, pending 0, flat viewport rows after a 600 px stall 34 of 900, 5 px differ from full (google)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 482 of 900, 516016 px differ from full (google)
+## fill --up
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (google)
+band        rows drawn 1160, instances 8244, pending 0, flat viewport rows after a -600 px stall 39 of 900, 9 px differ from full (google)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 39 of 900, 9 px differ from full (google)
+bandcanvas  rows drawn 1160, instances 16162, pending 0, flat viewport rows after a -600 px stall 39 of 900, 9 px differ from full (google)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 496 of 900, 517994 px differ from full (google)
+## fill --fixed --up
+full        rows drawn 2700, instances 14800, pending 0, flat viewport rows after a -600 px stall 88 of 900, 0 px differ from full (google)
+band        rows drawn 1160, instances 8268, pending 0, flat viewport rows after a -600 px stall 88 of 900, 9 px differ from full (google)
+bandnostrip rows drawn 1156, instances 6453, pending 0, flat viewport rows after a -600 px stall 88 of 900, 9 px differ from full (google)
+bandcanvas  rows drawn 1160, instances 16186, pending 0, flat viewport rows after a -600 px stall 88 of 900, 9 px differ from full (google)
+bandclear   rows drawn 1156, instances 6453, pending 0, flat viewport rows after a -600 px stall 545 of 900, 517994 px differ from full (google)
+## fill --nodim
+full        rows drawn 2700, instances 15709, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+band        rows drawn 1160, instances 8283, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandcanvas  rows drawn 1160, instances 17551, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 481 of 900, 516020 px differ from full (google)
+## fill --blur
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+band        rows drawn 1160, instances 8244, pending 0, flat viewport rows after a 600 px stall 33 of 900, 5 px differ from full (google)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 33 of 900, 0 px differ from full (google)
+bandcanvas  rows drawn 1160, instances 16162, pending 0, flat viewport rows after a 600 px stall 33 of 900, 5 px differ from full (google)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 481 of 900, 516016 px differ from full (google)
+
+## npm run test:visual: regression column identical to the run on HEAD
+## (strips stashed) in the same session, every section.
+## npm run test:fx: [fx] OK, all shots 0.00.
