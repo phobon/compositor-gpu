@@ -51,7 +51,8 @@
     "test:site": "tsx test/site/run.ts",
     "test:profile": "tsx test/profile/run.ts",
     "test:atlas": "tsx test/atlas/run.ts",
-    "test:edit": "tsx test/edit/run.ts"
+    "test:edit": "tsx test/edit/run.ts",
+    "test:round": "bash test/round.sh"
   },
   "dependencies": {
     "opentype.js": "^2.0.0",

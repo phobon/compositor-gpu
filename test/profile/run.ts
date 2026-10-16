@@ -31,6 +31,8 @@
 //   --nostrips     perf.html with CompositorOptions.reanchorStrips off
 //   --groups N     elements the `groups` / `fade` scenarios put below
 //                  opacity 1 (default 48)
+//   --ballast N    perf.html?ballast=N: N rounds of extra fragment work
+//                  per main-pass pixel (headroom sweep)
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -390,7 +392,8 @@ async function main(): Promise<void> {
         (flag('nopatchopacity') ? '&nopatchopacity' : '') +
         (flag('norefit') ? '&norefit' : '') +
         (flag('nostrips') ? '&nostrips' : '') +
-        (arg('groups') ? `&groups=${arg('groups')}` : '')
+        (arg('groups') ? `&groups=${arg('groups')}` : '') +
+        (arg('ballast') ? `&ballast=${arg('ballast')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')
       await page.evaluate(() => window.__perf?.ready)

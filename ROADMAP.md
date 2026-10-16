@@ -505,6 +505,14 @@ perspective transforms · culling · WebGL2 backend.
       (`docs/rd/experiments/2026-10-16-reanchor-tail.md`). Open: the p99
       margin is under the run-to-run spread; a SwiftShader-only 5 px
       difference where a group crosses a strip edge
+- [x] GPU headroom at dpr 2 measured (2026-10-16): a band scroll frame's
+      ~7 ms `gpu total` is real occupancy (frames drop with ~1.7 ms more);
+      per-pass `alone` times are not a cost on Metal. See
+      `docs/rd/experiments/2026-10-16-gpu-headroom.md`
+- [ ] Scroll frames of a static page redraw the viewport and band although
+      the kept texture already holds them: draw only what changed
+      (pending rows, viewport-space records, dynamic layers), or skip the
+      frame
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
       was mostly overlap with the main pass (the profiler now prints
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for

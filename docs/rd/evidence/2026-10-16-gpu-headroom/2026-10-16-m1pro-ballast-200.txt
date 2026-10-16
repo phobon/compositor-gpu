@@ -1,0 +1,36 @@
+npm warn Unknown user config "python". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "minimum-release-age-exclude". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+[profile] headed: 155.0.8059.84
+[profile] perf.html n=400 ready
+[profile] adapter: apple / metal-3 / Apple M1 Pro, 155.0.8059.84
+[profile] scroll
+[profile]   248 frames
+
+[profile] native GPU, GPU timing on
+
+scroll: 248 frames over 5.2 s, refresh 16.67 ms (60 Hz)
+  late 57, dropped 57; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval       24.20   25.70   25.90   25.90
+  cpu total             0.10    0.30    0.30    0.90
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.30    0.90
+      cull              0.00    0.00    0.20    0.80
+    other               0.00    0.10    0.20    0.20
+  gpu total            21.41   22.14   22.55   23.03
+    copy               21.40   22.14   22.55   23.02
+      alone             0.44    0.50    0.72    0.76
+    main               20.96   21.71   22.11   22.45
+      alone             0.00    0.02    0.17    1.54
+  hitch +1.64 s: 25.9 ms (1 missed), gpu: 21.3 ms on the GPU in the frame before; copy 21.3 ms, main 20.9 ms
+  hitch +2.76 s: 25.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +3.21 s: 25.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.48 s: 25.8 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.67 s: 25.8 ms (1 missed), gpu: 21.6 ms on the GPU in the frame before; copy 21.6 ms, main 21.2 ms
+
+[profile] reports in /Users/phobon/code/compositor-gpu/test/profile/out/last

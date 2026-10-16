@@ -13,6 +13,15 @@ npm run lint:fix   # biome check --write src
 npm run format     # biome format --write .
 ```
 
+`npm run test:round -- <evidence-dir> [ab-flag]` (`test/round.sh`) runs
+the visual, fx, edit, fill (down and up) and profile harnesses in
+sequence on a machine with a GPU, saving each step's output and a
+summary (`<date>-m1pro-round.txt`) into the folder; `PROFILE`, `SKIP`
+and `LABEL` adjust it. The cloud workspace has two cores and no GPU
+(SwiftShader: ~10 min per stall check, ~20 per visual run), so full
+checks and all timings run on the M1 Pro through it; the workspace only
+typechecks and lints.
+
 There is no unit-test framework. Rendering is checked with the
 **visual-regression harness**: `npm run test:visual` (Playwright + pixelmatch,
 `test/visual/run.ts`) captures each `section[data-vr]` of the playground in
@@ -68,9 +77,14 @@ upload, encode and other, the read kind (`none` / `partial` / `full` /
 and GPU pass timings when the device has `timestamp-query`
 (`gpu/timer.ts`; labels `main`, `group`, `region`, `layer`, `post`,
 `fx:<pass>`; passes overlap on Chrome/Metal, so a label's summed time
-overstates its cost: the report's `alone` row under each label is the
-time its passes ran with no other pass running, and an A/B without the
-feature gives the real cost). New render passes spread `timed(shared.timer, label)` into
+overstates its cost; the report's `alone` row under each label is the
+time its passes ran with no other pass running, which is not a cost on
+Metal either: a later pass's begin timestamp lands while an earlier one
+still runs, so `main` alone reads ~1.3 ms of a ~7 ms main pass and 0
+under load. `gpu total` (first begin to last end) is the occupancy that
+predicts dropped frames (`docs/rd/experiments/2026-10-16-gpu-headroom.md`:
+frames drop at 120 Hz with ~1.7 ms added to a 7 ms dpr 2 scroll frame);
+an A/B without the feature gives a feature's cost). New render passes spread `timed(shared.timer, label)` into
 their descriptor; never `timestampWrites: undefined`, which stalls
 SwiftShader. `canvasFill: 'band'` (the default; page-pinned canvas only,
 `canvasPin: 'viewport'` uses 'full') scissors the main pass to the viewport plus a band sized to the scroll

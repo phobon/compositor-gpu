@@ -1,6 +1,7 @@
 /// <reference path="./perf.d.ts" />
 import { blur, createEffects } from '@/fx'
 import { createCompositor } from '@/index'
+import { addBallast } from './ballast'
 
 // Perf harness fixture: builds an N-card grid, boots the compositor with
 // the same options as the main playground, and exposes window.__perf for
@@ -223,6 +224,12 @@ async function boot(): Promise<void> {
   const blurPass = blur(fx, { enabled: false })
 
   window.__gpu = compositor
+  // `?ballast=N`: N rounds of extra fragment work per pixel of the main
+  // pass, for the headroom sweep (playground/ballast.ts).
+  const ballast = Number(params.get('ballast') ?? 0)
+  if (ballast > 0 && compositor.graph) {
+    addBallast(compositor.graph, ballast)
+  }
   const inView = (max: number): HTMLElement[] => {
     const vh = window.innerHeight
     return (Array.from(document.querySelectorAll('.pcard')) as HTMLElement[])

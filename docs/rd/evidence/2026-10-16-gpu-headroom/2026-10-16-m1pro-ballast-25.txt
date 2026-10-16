@@ -1,0 +1,36 @@
+npm warn Unknown user config "python". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "minimum-release-age-exclude". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+[profile] headed: 155.0.8059.84
+[profile] perf.html n=400 ready
+[profile] adapter: apple / metal-3 / Apple M1 Pro, 155.0.8059.84
+[profile] scroll
+[profile]   258 frames
+
+[profile] native GPU, GPU timing on
+
+scroll: 258 frames over 2.3 s, refresh 8.33 ms (120 Hz)
+  late 23, dropped 23; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30   16.20   16.90   17.50
+  cpu total             0.10    0.20    0.40    0.90
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.10    0.20    0.20    0.90
+      cull              0.00    0.00    0.20    0.80
+    other               0.00    0.10    0.20    0.20
+  gpu total             9.31    9.91   10.28   10.64
+    copy                9.31    9.90   10.28   10.63
+      alone             0.45    0.53    0.61    0.64
+    main                8.86    9.46    9.84   10.21
+      alone             0.00    0.01    0.10    2.81
+  hitch +0.78 s: 17.5 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.47 s: 17.1 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +1.15 s: 16.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +1.07 s: 16.7 ms (1 missed), gpu: 9.5 ms on the GPU in the frame before; copy 9.5 ms, main 9.1 ms
+  hitch +1.57 s: 16.7 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+
+[profile] reports in /Users/phobon/code/compositor-gpu/test/profile/out/last
