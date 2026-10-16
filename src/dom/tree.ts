@@ -34,7 +34,13 @@ import {
 } from './decorations'
 import { GeneratedState } from './generated'
 import { IGNORE_ATTR, isIgnored } from './observer'
-import { matchRecords, type RecordPair, subtreeRecords } from './patch'
+import {
+  isGroup,
+  matchRecords,
+  type RecordPair,
+  sameContexts,
+  subtreeRecords
+} from './patch'
 import {
   type GlyphRef,
   type OrdinalCache,
@@ -111,6 +117,9 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD'])
  * (367 ms in the sandbox) instead of 12 subtree reads (69 ms). */
 export const MAX_BOUNDARIES = 64
 const RECT_EPSILON = 0.01
+/** How long an element stays a group at opacity 1 after a read last saw
+ * it below 1 (SceneReader.holds). */
+const OPACITY_HOLD_MS = 1000
 
 type OwnRecord = BoxRecord | ImageRecord | CutoutRecord | BackdropRecord
 
@@ -138,6 +147,9 @@ export interface ElNode {
   /** The element blends its subtree as one group (scene/blend.ts): its
    * records draw normally into the group, which composites with the mode. */
   blendGroup?: BlendMode
+  /** A context kept a group at opacity 1: the element was below 1 within
+   * OPACITY_HOLD_MS (SceneReader.holds). */
+  holdGroup?: boolean
   el: Element
   parent: ElNode | null
   /** Child elements, direct text-node runs and pseudo-element records
@@ -398,6 +410,10 @@ export function flatten(
       if (node.blendGroup) {
         c.blend = node.blendGroup
       }
+      if (node.holdGroup) {
+        c.hold = true
+      }
+      c.key = node
       if (node.region !== undefined) {
         c.region = node.region
         c.box = node.rect
@@ -541,6 +557,22 @@ export class SceneReader {
   patchedReads = 0
   /** Try patchScene() after a partial read (CompositorOptions.patchEdits). */
   patchEdits = true
+  /** Patch opacity-only edits and hold faded elements as groups
+   * (CompositorOptions.patchOpacity). */
+  patchOpacity = true
+  /** Opacity holds: element -> the last read that saw it below 1. It
+   * stays a group at opacity 1 until OPACITY_HOLD_MS after the latest
+   * such read of any element (holdUntil: all holds end together), and
+   * always through the read after its own (however slow the frames). A
+   * fade then never changes the scene's structure while it runs, so its
+   * frames can be patched (patchScene); `expiredHolds` re-reads the held
+   * elements once afterwards. */
+  private readonly holds = new Map<Element, number>()
+  /** Reads so far (each full or partial read bumps it). */
+  private reads = 0
+  /** The latest hold's end: every hold lasts until then, so the holds of
+   * a staggered fade end together, in one re-read, not one each. */
+  private holdUntil = 0
   /** What the most recent read did (the profiler's hitch attribution):
    * 'escalated' is a partial read that fell back to a full one, with why
    * and on which boundary. */
@@ -582,6 +614,7 @@ export class SceneReader {
     this.lastSceneMs = 0
     this.ordinals.clear()
     this.generated.clear()
+    this.reads++
     this.lastRead = { kind: 'full', reason: '', scopes: 0, el: null }
     this.readAll()
   }
@@ -629,6 +662,7 @@ export class SceneReader {
     this.lastSceneMs = 0
     this.ordinals.clear()
     this.generated.clear()
+    this.reads++
     this.lastRead = {
       kind: 'partial',
       reason: '',
@@ -740,15 +774,25 @@ export class SceneReader {
     const scene = this.scene
     const pairs: RecordPair[] = []
     let moved = false
+    const contexts: [ElNode, ElNode][] = []
     for (const [old, fresh] of swaps) {
-      const before = subtreeRecords(old)
-      const after = subtreeRecords(fresh)
-      const m = before && after ? matchRecords(before, after) : null
-      if (!m) {
+      const before = subtreeRecords(old, this.patchOpacity)
+      const after = subtreeRecords(fresh, this.patchOpacity)
+      const m =
+        before && after && sameContexts(before.contexts, after.contexts)
+          ? matchRecords(before.records, after.records)
+          : null
+      if (!m || !before || !after) {
         return false
       }
       pairs.push(...m.pairs)
       moved ||= m.moved
+      before.contexts.forEach((c, i) => {
+        const f = after.contexts[i]
+        if (f && isGroup(c)) {
+          contexts.push([c, f])
+        }
+      })
     }
     if (
       moved &&
@@ -763,6 +807,14 @@ export class SceneReader {
     const materials = pairs.map(([r]) => material(r))
     if (!scene.replace(pairs)) {
       return false
+    }
+    // The groups of re-read contexts take the new alpha (and key).
+    for (const [old, fresh] of contexts) {
+      const g = scene.groups.find((x) => x.key === old)
+      if (g) {
+        g.alpha = fresh.alpha
+        g.key = fresh
+      }
     }
     if (moved) {
       scene.rebatch()
@@ -781,6 +833,34 @@ export class SceneReader {
    * rect read each; call in the frame's read phase). Unstuck stickies scroll
    * with the document and need no re-read.
    */
+  /**
+   * Elements held as groups at opacity 1, once every hold has ended
+   * (holdUntil): re-read each (its context and group go away). Holds of
+   * elements no longer read as held are dropped. `deadline` is when the
+   * holds end (Infinity for none), for scheduling a frame then.
+   */
+  expiredHolds(now: number): { els: Element[]; deadline: number } {
+    const els: Element[] = []
+    if (this.holds.size === 0) {
+      return { els, deadline: Number.POSITIVE_INFINITY }
+    }
+    if (this.holdUntil > now) {
+      return { els, deadline: this.holdUntil }
+    }
+    for (const [el] of this.holds) {
+      const n = this.nodes.get(el)
+      if (!el.isConnected || !n) {
+        this.holds.delete(el)
+      } else if (n.holdGroup) {
+        this.holds.delete(el)
+        els.push(el)
+      } else if (n.alpha >= 1) {
+        this.holds.delete(el)
+      }
+    }
+    return { els, deadline: Number.POSITIVE_INFINITY }
+  }
+
   movedStickies(): Element[] {
     const out: Element[] = []
     if (this.stickies.size === 0) {
@@ -892,9 +972,24 @@ export class SceneReader {
     // An element isolated for a region effect is a context (as with
     // `isolation: isolate`) so its subtree can render as one group.
     const region = ignored || isRoot ? undefined : this.isolated.get(el)
+    let hold = false
+    if (this.patchOpacity && !isRoot && !ignored) {
+      const now = performance.now()
+      if (ownAlpha < 1) {
+        this.holds.set(el, this.reads)
+        this.holdUntil = Math.max(this.holdUntil, now + OPACITY_HOLD_MS)
+      } else {
+        const h = this.holds.get(el)
+        hold = h !== undefined && (this.holdUntil > now || h >= this.reads - 1)
+        if (h !== undefined && !hold) {
+          this.holds.delete(el)
+        }
+      }
+    }
     const isContext =
       !isRoot &&
       (region !== undefined ||
+        hold ||
         createsStackingContext(s, transformable, ownAlpha))
     // Without the positioned/z-auto simplification (paintsAboveCanvas).
     const realContext =
@@ -1114,6 +1209,9 @@ export class SceneReader {
     if (region !== undefined) {
       node.region = region
       node.regionClip = clip
+    }
+    if (hold) {
+      node.holdGroup = true
     }
     if (isContext) {
       const filter = parseFilter(s.filter)

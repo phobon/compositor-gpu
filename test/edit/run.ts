@@ -1,6 +1,7 @@
 // Edit equivalence check for CompositorOptions.patchEdits: loads perf.html
 // (n=400), makes a series of edits (class toggles, same-length word swaps,
-// heading text, inline colour, a longer word that changes glyph counts),
+// heading text, inline colour, a longer word that changes glyph counts,
+// opacity changes on three elements),
 // a frame each, then captures the canvas with the page's own paint hidden;
 // forces a full read (compositor.invalidate) and captures again. The two
 // must match: a patched scene has to draw what a rebuilt one draws. Prints
@@ -106,10 +107,27 @@ async function main(): Promise<void> {
       window.__perf.mutate('text')
       await raf2()
       await raf2()
+      // Opacity (CompositorOptions.patchOpacity): three elements below 1
+      // (new groups: a rebuild), new values (patched: the groups' alpha),
+      // then one back to 1 (held as a group: patched too). The third is
+      // in a dimmed card (a nested group).
+      const ops = [
+        cards[1].querySelector('h3'),
+        cards[3].querySelector('p'),
+        cards[6].querySelector('li')
+      ].filter(Boolean)
+      ops.forEach((el, i) => { el.style.opacity = String(0.3 + 0.2 * i) })
+      await raf2()
+      const mid = g.stats()
+      ops.forEach((el, i) => { el.style.opacity = String(0.6 + 0.1 * i) })
+      await raf2()
+      ops[0].style.opacity = '1'
+      await raf2()
       const after = g.stats()
       return {
         partial: after.partialReads - before.partialReads,
-        patched: after.patchedReads - before.patchedReads
+        patched: after.patchedReads - before.patchedReads,
+        opacity: after.patchedReads - mid.patchedReads
       }
     })()`)
     const a = PNG.sync.read(
@@ -125,9 +143,9 @@ async function main(): Promise<void> {
     )
     const diff = differing(a, b)
     console.log(
-      `partial reads ${counts.partial}, patched ${counts.patched}; ${diff} px differ between the patched and rebuilt canvas`
+      `partial reads ${counts.partial}, patched ${counts.patched} (opacity ${counts.opacity} of 2); ${diff} px differ between the patched and rebuilt canvas`
     )
-    failed = diff > 0 || counts.patched === 0
+    failed = diff > 0 || counts.patched === 0 || counts.opacity < 2
   } finally {
     await browser.close()
     await server.close()

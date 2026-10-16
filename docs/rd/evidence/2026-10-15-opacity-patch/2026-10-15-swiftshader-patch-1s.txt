@@ -1,0 +1,62 @@
+# SwiftShader: patchOpacity on, OPACITY_HOLD_MS 1000 (the first version: per-element hold end). Frames take ~4.5 s here, so holds end between reads and most fade frames still rebuild; not representative of hardware.
+# npm run test:profile -- --only groups,fade --nodim --frames 0.1 --n 120 --viewport 1000x700
+
+
+[profile] falling back to swiftshader (software WebGPU)
+[profile] perf.html n=120 ready
+[profile] ⚠ SOFTWARE ADAPTER: GPU times and frame pacing describe SwiftShader, not this machine (try --headed)
+[profile] groups
+[profile]   26 frames
+[profile] fade
+[profile]   26 frames
+
+[profile] swiftshader (CPU numbers only), GPU timing on
+
+groups: 26 frames over 111.7 s, refresh 4549.70 ms (0 Hz)
+  late 2, dropped 2; reads: 3 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     4633.10 9033.00 9266.20 9266.20
+  cpu total             1.10   59.40  105.00  105.00
+    read                0.00   41.10   55.40   55.40
+      scene             0.00   18.30   40.50   40.50
+        batches         0.00    6.70   21.00   21.00
+    hooks               0.00    0.10    0.20    0.20
+    upload              0.00   18.10   21.00   21.00
+      text              0.00   10.90   19.60   19.60
+    encode              0.70    7.00   19.80   19.80
+      cull              0.00    3.00   17.10   17.10
+    other               0.20    1.90    8.60    8.60
+  gpu total          4616.62 4903.67 4943.21 4943.21
+    main             4304.92 4592.10 4607.50 4607.50
+      alone          4304.92 4592.10 4607.50 4607.50
+    group             296.12  371.11  383.29  383.29
+      alone           296.12  371.11  383.29  383.29
+  hitch +111.76 s: 9266.2 ms (1 missed), gpu: 4669.1 ms on the GPU in the frame before; main 4304.9 ms, group 364.2 ms
+  hitch +70.53 s: 9033.0 ms (1 missed), gpu: 4494.3 ms on the GPU in the frame before; main 4177.7 ms, group 316.6 ms
+
+fade: 26 frames over 108.1 s, refresh 16.67 ms (60 Hz)
+  late 8, dropped 1066; reads: 26 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        0.00    0.00    0.00    0.00
+  cpu total            30.60   49.40   60.90   60.90
+    read               17.30   29.20   43.70   43.70
+      scene            14.60   22.50   24.90   24.90
+        batches         7.30   16.10   16.50   16.50
+    hooks               0.00    0.10    0.10    0.10
+    upload             10.30   17.10   19.40   19.40
+      text              9.30   14.40   15.30   15.30
+    encode              2.30    7.00   13.80   13.80
+      cull              1.90    6.50   13.50   13.50
+    other               0.60    0.80    3.70    3.70
+  gpu total          4421.49 4711.52 4826.78 4826.78
+    main             4358.62 4706.82 4767.17 4767.17
+      alone          4358.62 4706.82 4767.17 4767.17
+    group              62.67  112.59  148.02  148.02
+      alone            62.67  112.59  148.02  148.02
+  hitch +71.79 s: 4560.8 ms (273 missed), outside: long frame 4541.0 ms: style/layout 1.5 ms, render 1.8 ms
+  hitch +99.06 s: 4522.6 ms (270 missed), gpu: 4489.5 ms on the GPU in the frame before; main 4417.5 ms, group 72.0 ms
+  hitch +76.28 s: 4439.3 ms (265 missed), gpu: 4412.9 ms on the GPU in the frame before; main 4313.5 ms, group 99.4 ms
+  hitch +8.63 s: 4249.4 ms (254 missed), gpu: 4228.7 ms on the GPU in the frame before; main 4203.1 ms, group 25.6 ms
+  hitch +81.07 s: 28.2 ms (1 missed), outside: long frame 4635.0 ms: style/layout 1.5 ms, render 1.7 ms
+
+[profile] reports in /home/claude/cg/test/profile/out/last

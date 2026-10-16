@@ -138,13 +138,12 @@ Measuring notes learned along the way:
    16px-aligned image atlas entries; still open: multi-line pseudo text.
    Goldens of sections with decorations or images changed on purpose:
    run `test:visual -- --update` once on the Mac.
-2. **Opacity-only edits** (from `experiments/2026-10-15-many-groups.md`):
-   a style-driven fade of 16-48 elements runs at ~26 fps on perf.html
-   because each opacity change rebuilds the scene and re-packs all text
-   (~33 ms CPU); 48 held groups themselves cost only 0.70 ms with the
-   group atlas. Next: update a group's alpha in place, keep recently
-   faded elements as groups at opacity 1, skip the text re-pack when runs
-   are unchanged. Scenarios: `test:profile --only scroll,groups,fade`.
+2. **Opacity edits** (`experiments/2026-10-15-opacity-patch.md`, done
+   2026-10-16): a 48-element fade costs 4.3 ms CPU per frame (was 36.4)
+   and keeps the display's pace. Left: the subtree re-read (2.2 ms) and
+   record upload (1.5 ms) per frame, and the unmeasured hold-release
+   rebuild 1 s after a fade. Scenarios: `test:profile --only
+   scroll,groups,fade`, A/B with `--nopatchopacity`.
 3. **16-bit PNG**: confirmed handled (`pngDepth.ts`, `png16` shot).
 4. **Re-anchor tail** at dpr 2 (p99 ~10-11 ms, no drops): untried options
    are culling a strip's draw to its rows, or re-anchoring in smaller

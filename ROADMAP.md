@@ -515,9 +515,14 @@ perspective transforms · culling · WebGL2 backend.
       fade runs at ~26 fps whatever the count: every opacity change
       rebuilds the scene and re-packs all text (~33 ms CPU). See
       `docs/rd/experiments/2026-10-15-many-groups.md`
-- [ ] Opacity-only edits without a rebuild: update a group's alpha when
-      an element stays below 1, keep a recently faded element a group at
-      opacity 1, and skip the text re-pack when runs are unchanged
+- [x] Opacity-only edits without a rebuild (2026-10-16,
+      `patchOpacity`): contexts matched between reads, groups' alpha set
+      in place, faded elements held as groups at opacity 1 for 1 s. Fade
+      of 48 elements on an M1 Pro: 36.4 -> 4.3 ms CPU, GPU 11.1 -> 6.8 ms.
+      See `docs/rd/experiments/2026-10-15-opacity-patch.md`
+- [ ] Opacity edit floor (4.3 ms): skip re-reading a subtree whose only
+      change is its root's opacity; upload only replaced box/image
+      ranges; measure the hold-release frame
 - [x] Colour/emoji fonts: Canvas-2D-rasterised fallback atlas for emoji,
       uncovered code points, multi-code-point clusters and runs with no
       registered face (text now shows before fonts load)

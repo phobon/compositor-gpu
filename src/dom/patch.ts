@@ -13,15 +13,32 @@ export type RecordPair = readonly [SceneRecord, SceneRecord]
 
 /**
  * The records `node`'s subtree adds to the scene, in the order flatten()
- * emits them, or null when the subtree holds a stacking context or a
- * region (its records' paint order and groups then depend on more than
- * their place in the tree).
+ * emits them for a subtree without stacking contexts, and the subtree's
+ * stacking contexts in tree order. Null when the subtree holds a region,
+ * or a stacking context that isn't plain (opacity, z-index, transform)
+ * or when `contexts` is false: a filter, blend group or isolation changes
+ * what the group does, not just its alpha.
+ *
+ * With contexts, the records' paint order is no longer their tree order,
+ * but two subtrees with the same contexts (sameContexts) assign paint
+ * order the same way, so pairing in tree order still pairs each record
+ * with the one taking its place.
  */
-export function subtreeRecords(node: ElNode): SceneRecord[] | null {
+export function subtreeRecords(
+  node: ElNode,
+  contexts = false
+): { records: SceneRecord[]; contexts: ElNode[] } | null {
   const out: SceneRecord[] = []
+  const ctx: ElNode[] = []
   const visit = (n: ElNode): boolean => {
-    if (n.isContext || n.region !== undefined) {
+    if (n.region !== undefined) {
       return false
+    }
+    if (n.isContext) {
+      if (!contexts || n.filter || n.blendGroup || n.isolate) {
+        return false
+      }
+      ctx.push(n)
     }
     for (const r of n.own) {
       out.push(r)
@@ -45,7 +62,37 @@ export function subtreeRecords(node: ElNode): SceneRecord[] | null {
     }
     return true
   }
-  return visit(node) ? out : null
+  return visit(node) ? { records: out, contexts: ctx } : null
+}
+
+/** Whether a context renders as an opacity group (stacking.ts). */
+export function isGroup(n: ElNode): boolean {
+  return n.alpha < 1 || n.holdGroup === true
+}
+
+/** Same stacking contexts in the same places: the same z-index, own
+ * record count and group-ness, pair by pair. Only alphas may differ. */
+export function sameContexts(
+  a: readonly ElNode[],
+  b: readonly ElNode[]
+): boolean {
+  if (a.length !== b.length) {
+    return false
+  }
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (
+      !x ||
+      !y ||
+      x.ctxZ !== y.ctxZ ||
+      x.own.length !== y.own.length ||
+      isGroup(x) !== isGroup(y)
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 function sameRect(a: Rect | undefined, b: Rect | undefined): boolean {

@@ -26,6 +26,7 @@
 //   --bandclear    perf.html with canvasFill 'band-clear' (margins cleared)
 //   --nopatch      perf.html with CompositorOptions.patchEdits off
 //   --noatlas      perf.html with CompositorOptions.groupAtlas off
+//   --nopatchopacity  perf.html with CompositorOptions.patchOpacity off
 //   --groups N     elements the `groups` / `fade` scenarios put below
 //                  opacity 1 (default 48)
 //
@@ -384,6 +385,7 @@ async function main(): Promise<void> {
         (flag('bandclear') ? '&bandclear' : '') +
         (flag('nopatch') ? '&nopatch' : '') +
         (flag('noatlas') ? '&noatlas' : '') +
+        (flag('nopatchopacity') ? '&nopatchopacity' : '') +
         (arg('groups') ? `&groups=${arg('groups')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
       await untilReady(page, 'Boolean(window.__perf)')

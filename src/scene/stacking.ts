@@ -33,6 +33,13 @@ export interface StackingContext {
   /** `mix-blend-mode` blending the whole subtree (scene/blend.ts): the
    * context becomes a group composited with the mode. */
   blend?: BlendMode
+  /** Kept a group at alpha 1 (an element recently below opacity 1; see
+   * SceneReader's opacity holds), so a fade's end doesn't change the
+   * scene's structure. */
+  hold?: boolean
+  /** The reader's node for this context, carried to its group (`key`):
+   * a patched partial read finds the group to update its alpha. */
+  key?: object
   /** Isolated for a region effect (gpu/graph.ts `isolate`) or a layer
    * transform (`transform`): the context becomes a group even at alpha 1,
    * composited by the region's handler or through the transform. */
@@ -61,6 +68,8 @@ export interface OpacityGroup {
   /** Composited with this `mix-blend-mode` (the element's subtree blends
    * as one). */
   blend?: BlendMode
+  /** The context's reader node (StackingContext.key). */
+  key?: object
   /** Doc-space union of the doc-space members' AABBs (nested groups
    * included); zero-size when there are none. */
   bounds: Rect
@@ -356,6 +365,7 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       ctx.region !== undefined ||
       ctx.filter !== undefined ||
       ctx.blend !== undefined ||
+      ctx.hold === true ||
       (ctx.isolate === true && blends(ctx))
     ) {
       const g: OpacityGroup = {
@@ -371,6 +381,9 @@ export function assignPaintOrder(root: StackingContext): OpacityGroup[] {
       }
       if (ctx.blend) {
         g.blend = ctx.blend
+      }
+      if (ctx.key) {
+        g.key = ctx.key
       }
       if (ctx.region !== undefined) {
         g.region = ctx.region

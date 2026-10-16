@@ -313,7 +313,15 @@ bumps) instead of `rebuildScene`; batches are rebuilt (`Scene.rebatch`)
 only if geometry or materials changed, and records that moved inside an
 opacity group fall back to the rebuild. The text pass then re-packs only
 the replaced runs (`patchRuns`), falling back to a full pack on a slot
-eviction, atlas reset or newly live pipeline. `patchEdits: false`
+eviction, atlas reset or newly live pipeline. With `patchOpacity` (default
+on) a re-read subtree may also hold stacking contexts if both reads have
+the same ones (z, own count, group-ness; no filter, blend group,
+isolation or region): records are replaced in place and each group takes
+its context's new alpha (`OpacityGroup.key` is the context's ElNode). An
+element read below opacity 1 stays a group at alpha 1 (`holdGroup`)
+until 1 s after the latest such read of any element, so a fade never
+changes the structure; `expiredHolds` re-reads the held elements once
+when the holds end. `patchEdits: false`
 (`perf.html?nopatch`, `test:profile --nopatch`) always rebuilds;
 `stats().patchedReads` counts patches; `npm run test:edit` checks a
 patched canvas against a rebuilt one. **Never call

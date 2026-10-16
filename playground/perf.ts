@@ -178,6 +178,9 @@ async function boot(): Promise<void> {
     // `?nopatch`: rebuild the scene on every partial read
     // (CompositorOptions.patchEdits).
     patchEdits: !params.has('nopatch'),
+    // `?nopatchopacity`: opacity edits rebuild the scene
+    // (CompositorOptions.patchOpacity).
+    patchOpacity: !params.has('nopatchopacity'),
     // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
     // to the canvas rather than the band (CompositorOptions.cullDraws).
     cullDraws: params.has('nocull')

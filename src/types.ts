@@ -119,6 +119,12 @@ export interface CompositorOptions {
    * context), instead of rebuilding the scene, and re-pack only changed
    * text. Default true; false always rebuilds (for comparing). */
   patchEdits?: boolean
+  /** Patch partial reads that only change opacities (stacking contexts
+   * matched one to one, their groups' alpha updated), and keep an element
+   * that was below opacity 1 in the last second as a group at opacity 1,
+   * so a fade never rebuilds the scene; the group goes with one re-read
+   * when the hold ends. Default true; false for comparing. */
+  patchOpacity?: boolean
   /** Skip the instances of each draw that can't reach the canvas (records
    * more than half a canvas outside it): fewer vertices per frame on long
    * pages, at the cost of a few more draw calls (`stats().instances`).

@@ -151,6 +151,9 @@ export async function createCompositor(
   )
   reader.canvasZ = options.zIndex ?? 2147483646
   reader.patchEdits = options.patchEdits ?? true
+  reader.patchOpacity = options.patchOpacity ?? true
+  /** The pending timer that wakes the loop when an opacity hold ends. */
+  let holdTimer: ReturnType<typeof setTimeout> | null = null
   let pendingReadFlags = Dirty.ALL
   /** Elements whose isolation changed (a region pass or layer transform
    * started or ended): re-read as partial-read scopes on the next frame. */
@@ -320,6 +323,23 @@ export async function createCompositor(
         paintOnly.add(el)
         flags |= Dirty.MUTATION
       }
+    }
+    // Elements held as groups at opacity 1 whose hold ended: re-read each
+    // once, paint-only (its layout didn't change), to drop the group.
+    const holds = reader.expiredHolds(performance.now())
+    for (const el of holds.els) {
+      scopes.add(el)
+      paintOnly.add(el)
+      flags |= Dirty.MUTATION
+    }
+    if (holdTimer === null && Number.isFinite(holds.deadline)) {
+      holdTimer = setTimeout(
+        () => {
+          holdTimer = null
+          scheduler.request()
+        },
+        Math.max(0, holds.deadline - performance.now()) + 16
+      )
     }
     if (mutationScopes) {
       for (const el of paintOnly) {
@@ -1136,6 +1156,9 @@ export async function createCompositor(
         return
       }
       destroyed = true
+      if (holdTimer !== null) {
+        clearTimeout(holdTimer)
+      }
       stop()
       profiler.destroy()
       reader.destroy()
