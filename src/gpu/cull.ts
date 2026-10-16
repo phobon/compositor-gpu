@@ -1,5 +1,5 @@
 import type { DrawBatch } from '../scene/batches'
-import type { Rect } from '../scene/records'
+import type { GlyphRun, Rect } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { padGlyphRect, textShadowPad } from '../scene/stacking'
 
@@ -59,6 +59,8 @@ interface Layer {
 /** Rects by layer, for one set of batches. */
 interface Bounds {
   layers: Record<string, Layer>
+  /** How many of Scene.moved are written into the rects. */
+  applied: number
 }
 
 /** Bounds by the batches they were computed for: batches are rebuilt on
@@ -103,14 +105,10 @@ function bounds(scene: Scene, batches: readonly DrawBatch[]): Bounds {
   const text = new Float32Array(glyphs * 4)
   let k = 0
   for (const run of scene.runs) {
-    const pad = textShadowPad(run)
-    const fixed = run.space === 'viewport'
-    for (const glyph of run.glyphs) {
-      put(text, k, padGlyphRect(glyph, pad, glyph.fontSize * 0.25), fixed)
-      k++
-    }
+    k = putRun(text, k, run)
   }
   const out: Bounds = {
+    applied: scene.moved.length,
     layers: {
       boxes: of(scene.boxes, (b) => b.batchRect ?? b.rect),
       images: of(scene.images),
@@ -120,6 +118,146 @@ function bounds(scene: Scene, batches: readonly DrawBatch[]): Bounds {
   }
   boundsCache.set(batches, out)
   return out
+}
+
+/** Write `run`'s glyph rects from instance `k`; the next instance. */
+function putRun(b: Float32Array, k: number, run: GlyphRun): number {
+  const pad = textShadowPad(run)
+  const fixed = run.space === 'viewport'
+  let i = k
+  for (const glyph of run.glyphs) {
+    put(b, i, padGlyphRect(glyph, pad, glyph.fontSize * 0.25), fixed)
+    i++
+  }
+  return i
+}
+
+/** Index of the record with paint index `z` in z-sorted `list`, or -1. */
+function byZ(list: readonly { z: number }[], z: number): number {
+  let lo = 0
+  let hi = list.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    const v = list[mid]?.z ?? Number.NaN
+    if (v === z) {
+      return mid
+    }
+    if (v < z) {
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return -1
+}
+
+/** The y buckets instance `i` of `b` sits in under `ix` ([-1, -1]: not
+ * indexed). */
+function bucketsOf(
+  b: Float32Array,
+  i: number,
+  ix: LayerIndex
+): [number, number] {
+  const y0 = b[i * 4 + 1] as number
+  const y1 = b[i * 4 + 3] as number
+  if (!Number.isFinite(y0) || !Number.isFinite(y1)) {
+    return [-1, -1]
+  }
+  return [
+    Math.floor((Math.min(y0, y1) - ix.top) / ix.size),
+    Math.floor((Math.max(y0, y1) - ix.top) / ix.size)
+  ]
+}
+
+/**
+ * Write the bounds of the records Scene.refit kept the batch list for
+ * (Scene.moved) into the cached rects of `batches`. A layer's y index is
+ * kept when every moved instance stays in its buckets, else dropped (the
+ * next query walks; the index is rebuilt in idle time). False when there
+ * was nothing new to apply.
+ */
+export function updateBounds(
+  scene: Scene,
+  batches: readonly DrawBatch[]
+): boolean {
+  const all = boundsCache.get(batches)
+  if (!all || all.applied >= scene.moved.length) {
+    return false
+  }
+  for (let m = all.applied; m < scene.moved.length; m++) {
+    const r = scene.moved[m]
+    if (!r) {
+      continue
+    }
+    const name =
+      r.kind === 'box'
+        ? 'boxes'
+        : r.kind === 'image'
+          ? 'images'
+          : r.kind === 'cutout'
+            ? 'cutouts'
+            : 'text'
+    const layer = all.layers[name]
+    if (!layer) {
+      continue
+    }
+    const ix = layer.index
+    let first: number
+    let count: number
+    if (r.kind === 'text') {
+      const i = byZ(scene.runs, r.z)
+      if (i < 0) {
+        continue
+      }
+      first = 0
+      for (let k = 0; k < i; k++) {
+        first += scene.runs[k]?.glyphs.length ?? 0
+      }
+      count = r.glyphs.length
+    } else {
+      const list: readonly { z: number }[] =
+        r.kind === 'box'
+          ? scene.boxes
+          : r.kind === 'image'
+            ? scene.images
+            : scene.cutouts
+      first = byZ(list, r.z)
+      count = 1
+      if (first < 0) {
+        continue
+      }
+    }
+    const before = ix
+      ? Array.from({ length: count }, (_, j) =>
+          bucketsOf(layer.b, first + j, ix)
+        )
+      : null
+    if (r.kind === 'text') {
+      putRun(layer.b, first, r)
+    } else {
+      put(
+        layer.b,
+        first,
+        r.kind === 'box' ? (r.batchRect ?? r.rect) : r.rect,
+        r.space === 'viewport'
+      )
+    }
+    if (ix && before) {
+      for (let j = 0; j < count; j++) {
+        const [a0, a1] = before[j] as [number, number]
+        const [b0, b1] = bucketsOf(layer.b, first + j, ix)
+        if (a0 !== b0 || a1 !== b1) {
+          layer.index = null
+          break
+        }
+      }
+    }
+  }
+  all.applied = scene.moved.length
+  if (Object.values(all.layers).some((l) => !l.index)) {
+    indexWhenIdle(all)
+  }
+  return true
 }
 
 /** Whether instance `i`'s rect in `b` meets `g`. */

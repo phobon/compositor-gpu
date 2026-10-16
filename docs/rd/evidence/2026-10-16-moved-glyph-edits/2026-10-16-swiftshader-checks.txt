@@ -1,0 +1,37 @@
+# test:edit, SwiftShader
+partial reads 21, patched 19 (opacity 2 of 2, batches kept 10); 0 px differ between the patched and rebuilt canvas
+
+# refitBatches checks on synthetic records (box A z0, run T z1, box B z2; B merged into A's batch before T):
+# npx tsx refit-check.ts (script below)
+T no-overlap move true
+T onto B: must be false false
+T onto A: ok true
+B to Ts old place while T leaves: ok true
+B and T to same new place: must be false false
+seq1 true seq2 true
+space onto B: ok true
+
+```ts
+import { buildBatches, emptyBatchState, footprints, refitBatches } from '/home/claude/cg/src/scene/batches'
+const R = (x: number, y: number, w = 10, h = 10) => ({ x, y, width: w, height: h })
+const box = (z: number, r: ReturnType<typeof R>) => ({ kind: 'box', z, rect: r } as any)
+const run = (z: number, r: ReturnType<typeof R>, t = 'a') => ({ kind: 'text', z, glyphs: [{ rect: r, text: t }] } as any)
+const mv = (layer: any, z: number, instance: number, rec: any) => ({ layer, z, instance, rects: footprints(rec), viewport: false })
+function setup() {
+  const A = box(0, R(0, 0)), B = box(2, R(100, 0)), T = run(1, R(50, 0))
+  const st = emptyBatchState()
+  const batches = buildBatches([A, B], [], [T], [R(50, 0)], [], [], [], [], st)
+  return { st, batches }
+}
+let { st } = setup(); console.log('T no-overlap move', refitBatches(st, [mv('text', 1, 0, run(1, R(60, 0)))]))
+;({ st } = setup()); console.log('T onto B: must be false', refitBatches(st, [mv('text', 1, 0, run(1, R(100, 0)))]))
+;({ st } = setup()); console.log('T onto A: ok', refitBatches(st, [mv('text', 1, 0, run(1, R(0, 0)))]))
+// swap places: T moves away from 50, B moves to 50 in one refit: B's new place overlaps T's OLD place only -> ok
+;({ st } = setup()); console.log('B to Ts old place while T leaves: ok', refitBatches(st, [mv('text', 1, 0, run(1, R(200, 0))), mv('boxes', 2, 1, box(2, R(50, 0)))]))
+// both move to the same new place -> false
+;({ st } = setup()); console.log('B and T to same new place: must be false', refitBatches(st, [mv('text', 1, 0, run(1, R(300, 0))), mv('boxes', 2, 1, box(2, R(300, 0)))]))
+// sequential refits: T moves away (gen1), then B moves to T's old place (gen2): ok
+;({ st } = setup()); console.log('seq1', refitBatches(st, [mv('text', 1, 0, run(1, R(200, 0)))]), 'seq2', refitBatches(st, [mv('boxes', 2, 1, box(2, R(50, 0)))]))
+// whitespace glyph has no footprint
+;({ st } = setup()); console.log('space onto B: ok', refitBatches(st, [mv('text', 1, 0, run(1, R(100, 0), ' '))]))
+```

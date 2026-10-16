@@ -1,5 +1,15 @@
 import type { Layer } from '../types'
-import { type Anchor, buildBatches, type DrawBatch, unionRect } from './batches'
+import {
+  type Anchor,
+  type BatchState,
+  buildBatches,
+  type DrawBatch,
+  emptyBatchState,
+  footprints,
+  type MovedRecord,
+  refitBatches,
+  unionRect
+} from './batches'
 import type {
   BackdropRecord,
   BoxRecord,
@@ -60,6 +70,15 @@ export class Scene {
   get batches(): readonly DrawBatch[] {
     return this._batches
   }
+  /** What buildBatches built for `_batches` (refit()). */
+  private built: BatchState = emptyBatchState()
+  /** Records moved in place since `_batches` was built (refit()), oldest
+   * first: the culler updates their bounds (`gpu/cull.ts`). */
+  readonly moved: (BoxRecord | ImageRecord | CutoutRecord | GlyphRun)[] = []
+  /** Lists kept by refit() instead of rebuilt (stats). */
+  refits = 0
+  /** Try refit() before rebuilding batches for moved records. */
+  refitEnabled = true
 
   /** Layers whose instance buffers need re-upload since they were last drawn. */
   private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text', 'cutouts'])
@@ -257,11 +276,85 @@ export class Scene {
     this.buildBatchList()
   }
 
+  /**
+   * After replace() with records that moved (same materials): keep the
+   * batch list when it is still valid for their new footprints
+   * (batches.ts refitBatches), else rebuild it. Kept: the records are
+   * queued in `moved` for the culler. True when kept.
+   */
+  refit(records: readonly SceneRecord[]): boolean {
+    const moved: MovedRecord[] = []
+    const kept: (BoxRecord | ImageRecord | CutoutRecord | GlyphRun)[] = []
+    let ok = this.refitEnabled && this.built.accums.length > 0
+    for (const r of records) {
+      if (!ok) {
+        break
+      }
+      if (r.kind === 'backdrop') {
+        ok = false
+        break
+      }
+      const instance = this.instanceOf(r)
+      if (instance < 0) {
+        ok = false
+        break
+      }
+      moved.push({
+        layer:
+          r.kind === 'box'
+            ? 'boxes'
+            : r.kind === 'image'
+              ? 'images'
+              : r.kind === 'cutout'
+                ? 'cutouts'
+                : 'text',
+        z: r.z,
+        instance,
+        rects: footprints(r),
+        viewport: r.space === 'viewport'
+      })
+      kept.push(r)
+    }
+    if (ok && refitBatches(this.built, moved)) {
+      this.moved.push(...kept)
+      this.refits++
+      return true
+    }
+    this.rebatch()
+    return false
+  }
+
+  /** First instance of record `r` in its layer's buffer (glyph index for a
+   * run), or -1. */
+  private instanceOf(r: SceneRecord): number {
+    if (r.kind === 'text') {
+      const i = indexByZ(this.runs, r.z)
+      if (i < 0) {
+        return -1
+      }
+      let n = 0
+      for (let k = 0; k < i; k++) {
+        n += this.runs[k]?.glyphs.length ?? 0
+      }
+      return n
+    }
+    const list =
+      r.kind === 'box'
+        ? this.boxes
+        : r.kind === 'image'
+          ? this.images
+          : r.kind === 'cutout'
+            ? this.cutouts
+            : null
+    return list ? indexByZ(list, r.z) : -1
+  }
+
   private buildBatchList(): void {
     const runRects = this.runs.map((r) =>
       unionRect(r.glyphs.map((g) => g.rect))
     )
     const t0 = performance.now()
+    this.moved.length = 0
     this._batches = buildBatches(
       this.boxes,
       this.images,
@@ -270,7 +363,8 @@ export class Scene {
       this.cutouts,
       this.groups,
       this.anchors?.() ?? [],
-      this.backdrops
+      this.backdrops,
+      this.built
     )
     this.lastBatchesMs = performance.now() - t0
   }

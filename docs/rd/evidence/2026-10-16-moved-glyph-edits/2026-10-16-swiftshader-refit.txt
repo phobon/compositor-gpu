@@ -1,0 +1,61 @@
+# SwiftShader (cloud sandbox): CPU columns only.
+# npm run test:profile -- --only mutate-text,mutate-class --frames 0.25 --n 120 --viewport 1000x700
+
+
+[profile] falling back to swiftshader (software WebGPU)
+[profile] perf.html n=120 ready
+[profile] ⚠ SOFTWARE ADAPTER: GPU times and frame pacing describe SwiftShader, not this machine (try --headed)
+[profile] mutate-class
+[profile]   30 frames
+[profile] mutate-text
+[profile]   30 frames
+
+[profile] swiftshader (CPU numbers only), GPU timing on
+
+mutate-class: 30 frames over 117.1 s, refresh 16.67 ms (60 Hz)
+  late 7, dropped 740; reads: 30 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        0.00    0.00    0.00    0.00
+  cpu total             6.90   28.30   32.00   32.00
+    read                2.40   10.10   16.80   16.80
+      scene             0.10    3.40    6.60    6.60
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.30    0.30
+    upload              2.20   10.50   12.10   12.10
+      text              0.20    1.50    4.30    4.30
+    encode              0.40    4.70    6.90    6.90
+      cull              0.00    0.00    0.00    0.00
+    other               0.20    1.70    1.70    1.70
+  gpu total          4111.22 4337.97 4361.29 4361.29
+    main             3524.18 3774.51 3802.62 3802.62
+      alone          3524.18 3774.51 3802.62 3802.62
+    group             556.16  637.82  644.40  644.40
+      alone           556.16  637.82  644.40  644.40
+  hitch +96.45 s: 4145.1 ms (248 missed), outside: long frame 4321.6 ms: style/layout 0.1 ms, render 0.4 ms
+  hitch +79.45 s: 4129.4 ms (247 missed), outside: long frame 4127.6 ms: style/layout 0.1 ms, render 0.3 ms
+  hitch +58.28 s: 3923.5 ms (234 missed), outside: long frame 4260.7 ms: style/layout 0.3 ms, render 0.5 ms
+  hitch +83.93 s: 154.6 ms (8 missed), outside: long frame 4264.7 ms: style/layout 0.2 ms, render 0.4 ms
+  hitch +21.43 s: 39.5 ms (1 missed), outside: long frame 4397.8 ms: style/layout 0.2 ms, render 0.9 ms
+
+mutate-text: 30 frames over 115.9 s, refresh 4083.20 ms (0 Hz)
+  late 1, dropped 1; reads: 30 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval     3866.50 7966.30 7966.30 7966.30
+  cpu total             4.00    9.20   11.20   11.20
+    read                1.30    4.10    4.20    4.20
+      scene             0.20    2.70    3.10    3.10
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              1.00    2.40    5.10    5.10
+      text              0.20    0.30    0.70    0.70
+    encode              1.00    4.80    5.70    5.70
+      cull              0.50    3.30    4.40    4.40
+    other               0.20    0.30    0.30    0.30
+  gpu total          4087.46 4419.81 4577.94 4577.94
+    main             3519.07 3814.74 3895.93 3895.93
+      alone          3519.07 3814.74 3895.93 3895.93
+    group             548.40  655.81  682.01  682.01
+      alone           548.40  655.81  682.01  682.01
+  hitch +69.01 s: 7966.3 ms (1 missed), gpu: 3922.1 ms on the GPU in the frame before; main 3380.3 ms, group 541.8 ms
+
+[profile] reports in /home/claude/cg/test/profile/out/last

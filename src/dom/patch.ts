@@ -134,7 +134,7 @@ function sameShadows(a: GlyphRun, b: GlyphRun): boolean {
 
 /** Whether `b` occupies the same place as `a` (what batches, culling and
  * group bounds are computed from). */
-function sameGeometry(a: SceneRecord, b: SceneRecord): boolean {
+export function sameGeometry(a: SceneRecord, b: SceneRecord): boolean {
   if (a.kind === 'text' && b.kind === 'text') {
     if (!sameShadows(a, b)) {
       return false

@@ -127,7 +127,8 @@ async function main(): Promise<void> {
       return {
         partial: after.partialReads - before.partialReads,
         patched: after.patchedReads - before.patchedReads,
-        opacity: after.patchedReads - mid.patchedReads
+        opacity: after.patchedReads - mid.patchedReads,
+        refits: after.refits - before.refits
       }
     })()`)
     const a = PNG.sync.read(
@@ -143,7 +144,7 @@ async function main(): Promise<void> {
     )
     const diff = differing(a, b)
     console.log(
-      `partial reads ${counts.partial}, patched ${counts.patched} (opacity ${counts.opacity} of 2); ${diff} px differ between the patched and rebuilt canvas`
+      `partial reads ${counts.partial}, patched ${counts.patched} (opacity ${counts.opacity} of 2, batches kept ${counts.refits}); ${diff} px differ between the patched and rebuilt canvas`
     )
     failed = diff > 0 || counts.patched === 0 || counts.opacity < 2
   } finally {

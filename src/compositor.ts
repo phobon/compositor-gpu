@@ -152,6 +152,7 @@ export async function createCompositor(
   reader.canvasZ = options.zIndex ?? 2147483646
   reader.patchEdits = options.patchEdits ?? true
   reader.patchOpacity = options.patchOpacity ?? true
+  scene.refitEnabled = options.refitBatches ?? true
   /** The pending timer that wakes the loop when an opacity hold ends. */
   let holdTimer: ReturnType<typeof setTimeout> | null = null
   let pendingReadFlags = Dirty.ALL
@@ -1098,6 +1099,7 @@ export async function createCompositor(
       readElements: reader.readElements,
       partialReads: reader.partialReads,
       patchedReads: reader.patchedReads,
+      refits: scene.refits,
       sync: { ...sync.diag },
       textRead: { ...textReadStats },
       readMs,
@@ -1222,6 +1224,7 @@ function inert(): Compositor & { text: null; scene: null } {
       readElements: 0,
       partialReads: 0,
       patchedReads: 0,
+      refits: 0,
       sync: {
         layout: 0,
         style: 0,

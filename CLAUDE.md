@@ -310,8 +310,14 @@ space, clip (no exact shape), per-run glyph and shadow counts, with no
 stacking context or region in it (`dom/patch.ts`), is applied by
 `Scene.replace` (new records take the old ones' z and index; `version`
 bumps) instead of `rebuildScene`; batches are rebuilt (`Scene.rebatch`)
-only if geometry or materials changed, and records that moved inside an
-opacity group fall back to the rebuild. The text pass then re-packs only
+only if materials changed, and records that moved inside an opacity
+group fall back to the rebuild. Moved records go through `Scene.refit`
+(`refitBatches`, `refitBatches: false` / `?norefit` to compare): the
+list is kept when no moved record's new footprint overlaps a member of
+another batch drawn on the wrong side of it (members kept from the
+build in `BatchState`, each with its paint index and the refit that
+added it; whitespace glyphs have no footprint), and the culler writes
+the moved instances' bounds in place (`updateBounds`, `Scene.moved`). The text pass then re-packs only
 the replaced runs (`patchRuns`), falling back to a full pack on a slot
 eviction, atlas reset or newly live pipeline. With `patchOpacity` (default
 on) a re-read subtree may also hold stacking contexts if both reads have

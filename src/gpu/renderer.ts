@@ -6,7 +6,7 @@ import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext, Layer } from '../types'
 import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
-import { cullRuns, type Region, type Runs } from './cull'
+import { cullRuns, type Region, type Runs, updateBounds } from './cull'
 import type { GpuContext } from './device'
 import {
   CLIP_FLOATS,
@@ -1572,6 +1572,11 @@ export class Renderer {
     const x1 = x0 + ctx.canvasWidth
     const y1 = band ? band[1] : y0 + ctx.canvasHeight
     const r = this.culledRegion
+    // Records moved in place under the same batches (Scene.refit): their
+    // bounds change, so the runs are recomputed.
+    if (updateBounds(scene, scene.batches)) {
+      this.culled = null
+    }
     if (
       this.culled &&
       this.culledBatches === scene.batches &&

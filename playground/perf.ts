@@ -181,6 +181,9 @@ async function boot(): Promise<void> {
     // `?nopatchopacity`: opacity edits rebuild the scene
     // (CompositorOptions.patchOpacity).
     patchOpacity: !params.has('nopatchopacity'),
+    // `?norefit`: moved edits rebuild the batch list
+    // (CompositorOptions.refitBatches).
+    refitBatches: !params.has('norefit'),
     // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
     // to the canvas rather than the band (CompositorOptions.cullDraws).
     cullDraws: params.has('nocull')

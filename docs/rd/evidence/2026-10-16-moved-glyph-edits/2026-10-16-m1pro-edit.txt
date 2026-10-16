@@ -1,0 +1,9 @@
+npm warn Unknown user config "python". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "minimum-release-age-exclude". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> compositor-gpu@0.0.1 test:edit
+> tsx test/edit/run.ts
+
+10:40:06 am [vite] (client) Re-optimizing dependencies because lockfile has changed
+[edit] falling back to swiftshader (software WebGPU)
+partial reads 21, patched 19 (opacity 2 of 2, batches kept 10); 0 px differ between the patched and rebuilt canvas

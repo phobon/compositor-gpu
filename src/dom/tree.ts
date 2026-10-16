@@ -39,6 +39,7 @@ import {
   matchRecords,
   type RecordPair,
   sameContexts,
+  sameGeometry,
   subtreeRecords
 } from './patch'
 import {
@@ -816,13 +817,14 @@ export class SceneReader {
         g.key = fresh
       }
     }
-    if (moved) {
+    scene.assign?.()
+    if (pairs.some(([, r], i) => material(r) !== materials[i])) {
       scene.rebatch()
-    } else {
-      scene.assign?.()
-      if (pairs.some(([, r], i) => material(r) !== materials[i])) {
-        scene.rebatch()
-      }
+    } else if (moved) {
+      // Keep the batch list if it is still valid for the moved records.
+      scene.refit(
+        pairs.filter(([a, b]) => !sameGeometry(a, b)).map(([, b]) => b)
+      )
     }
     this.lastSceneMs += performance.now() - t0
     return true

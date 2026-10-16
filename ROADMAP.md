@@ -480,9 +480,12 @@ perspective transforms · culling · WebGL2 backend.
       patch it in place; on an M1 Pro a class toggle 32 -> 2.3 ms, a word
       swap 31 -> 11.8 ms. See `docs/rd/experiments/2026-10-14-edit-cost.md`
       and `2026-10-14-edit-patch.md`
-- [ ] Moved-glyph edits: keep or locally rebuild batches and update cull
-      bounds for replaced records (word swap 11.8 ms, ~9 ms of it
-      page-wide batching and culling)
+- [x] Moved-glyph edits (2026-10-16, `refitBatches`): the batch list is
+      kept when the moved records' new footprints break no paint order,
+      cull bounds updated in place; word swap 15.6 -> 1.9 ms on an M1 Pro.
+      See `docs/rd/experiments/2026-10-16-moved-glyph-edits.md`
+- [ ] Patched edits upload only the replaced box/image ranges (~1 ms of
+      whole-buffer writes left per edit)
 - [x] Kept margins for the band (2026-10-14): `canvasFill: 'band'` keeps
       them (`'band-clear'` for the A/B); at dpr 2 on an M1 Pro, 45-50% of a
       full redraw with no dropped frames. See

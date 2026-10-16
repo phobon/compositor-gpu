@@ -119,7 +119,30 @@ function spaceBit(r: { space?: 'doc' | 'viewport' }): number {
   return r.space === 'viewport' ? SPACE_VIEWPORT : SPACE_DOC
 }
 
-interface Accum {
+/** A member footprint, its record's paint index (unique per record) and
+ * the refit that added it (0: the build). */
+interface Member {
+  r: Rect
+  z: number
+  gen: number
+}
+
+/** What buildBatches built, for refitBatches: each returned batch's
+ * BatchAccum (null for markers), and per record moved by a refit, the
+ * refit whose footprints are current (older ones are stale). */
+export interface BatchState {
+  accums: (BatchAccum | null)[]
+  current: Map<number, number>
+  gen: number
+}
+
+export function emptyBatchState(): BatchState {
+  return { accums: [], current: new Map(), gen: 0 }
+}
+
+/** One draw batch as built: its instance range, bounds and member
+ * footprints (kept for refitBatches). */
+export interface BatchAccum {
   layer: Layer
   material: number
   /** Bitmask of the members' spaces. */
@@ -131,8 +154,13 @@ interface Accum {
   maxX: number
   maxY: number
   /** Members bucketed by grid cell (key = cx * 65536 + cy). */
-  grid: Map<number, Rect[]>
+  grid: Map<number, Member[]>
+  /** Paint index range of the viewport-space members (whose rects can't
+   * be compared with doc-space ones); Infinity / -Infinity for none. */
+  vpMin: number
+  vpMax: number
 }
+type Accum = BatchAccum
 
 function forEachCell(r: Rect, fn: (key: number) => boolean | undefined): void {
   const x0 = Math.floor(r.x / CELL)
@@ -189,7 +217,7 @@ function rectOverlapsAccum(a: Accum, r: Rect): boolean {
       return false
     }
     for (const m of cell) {
-      if (rectsOverlap(m, r)) {
+      if (rectsOverlap(m.r, r)) {
         hit = true
         return true
       }
@@ -199,16 +227,27 @@ function rectOverlapsAccum(a: Accum, r: Rect): boolean {
   return hit
 }
 
-function insertMember(a: Accum, r: Rect): void {
+function insertMember(a: Accum, r: Rect, z: number, gen = 0): void {
+  const m: Member = { r, z, gen }
   forEachCell(r, (key) => {
     const cell = a.grid.get(key)
     if (cell) {
-      cell.push(r)
+      cell.push(m)
     } else {
-      a.grid.set(key, [r])
+      a.grid.set(key, [m])
     }
     return false
   })
+}
+
+function insertEntry(a: Accum, e: Entry): void {
+  if (e.space === SPACE_VIEWPORT) {
+    a.vpMin = Math.min(a.vpMin, e.z)
+    a.vpMax = Math.max(a.vpMax, e.z)
+  }
+  for (const r of e.rects) {
+    insertMember(a, r, e.z)
+  }
 }
 
 function newAccum(e: Entry): Accum {
@@ -222,11 +261,11 @@ function newAccum(e: Entry): Accum {
     minY: e.rect.y,
     maxX: e.rect.x + e.rect.width,
     maxY: e.rect.y + e.rect.height,
-    grid: new Map()
+    grid: new Map(),
+    vpMin: Number.POSITIVE_INFINITY,
+    vpMax: Number.NEGATIVE_INFINITY
   }
-  for (const r of e.rects) {
-    insertMember(a, r)
-  }
+  insertEntry(a, e)
   return a
 }
 
@@ -237,9 +276,7 @@ function extend(a: Accum, e: Entry): void {
   a.minY = Math.min(a.minY, e.rect.y)
   a.maxX = Math.max(a.maxX, e.rect.x + e.rect.width)
   a.maxY = Math.max(a.maxY, e.rect.y + e.rect.height)
-  for (const r of e.rects) {
-    insertMember(a, r)
-  }
+  insertEntry(a, e)
 }
 
 /** Union of doc-space rects; a degenerate zero rect for an empty list. */
@@ -292,7 +329,9 @@ export function buildBatches(
   cutouts: CutoutRecord[] = [],
   groups: readonly OpacityGroup[] = [],
   anchors: readonly Anchor[] = [],
-  backdrops: readonly BackdropRecord[] = []
+  backdrops: readonly BackdropRecord[] = [],
+  /** Receives what was built, for refitBatches. */
+  keep?: BatchState
 ): DrawBatch[] {
   const entries: Entry[] = []
   for (let i = 0; i < boxes.length; i++) {
@@ -350,12 +389,8 @@ export function buildBatches(
       continue
     }
     const count = run.glyphs.length
-    // Text shadows paint outside the glyph line boxes: pad each footprint
-    // so a shadowed run can't merge past a record its shadow overlaps.
     const pad = textShadowPad(run)
-    const rects = pad
-      ? run.glyphs.map((g) => padGlyphRect(g, pad))
-      : run.glyphs.map((g) => g.rect)
+    const rects = runFootprints(run)
     entries.push({
       layer: 'text',
       material: run.material ?? 0,
@@ -452,6 +487,11 @@ export function buildBatches(
 
   emitEventsUpTo(Number.POSITIVE_INFINITY)
 
+  if (keep) {
+    keep.accums = batches.map((b) => ('layer' in b ? b : null))
+    keep.current.clear()
+    keep.gen = 0
+  }
   return batches.map((b): DrawBatch => {
     if ('layer' in b) {
       return b.material
@@ -471,4 +511,139 @@ export function buildBatches(
     }
     return { kind: b.kind, group: b.group }
   })
+}
+
+/** A text run's batching footprints: its glyph rects, padded for text
+ * shadows (they paint outside the line boxes, so a shadowed run can't
+ * merge past a record its shadow overlaps). Whitespace paints nothing and
+ * has no footprint: a space's line box at a line start or end overlaps
+ * the neighbouring decorations and would block merges for nothing. */
+function runFootprints(run: GlyphRun): Rect[] {
+  const pad = textShadowPad(run)
+  const out: Rect[] = []
+  for (const g of run.glyphs) {
+    if (!BLANK.test(g.text)) {
+      out.push(pad ? padGlyphRect(g, pad) : g.rect)
+    }
+  }
+  return out
+}
+
+const BLANK = /^\s*$/u
+
+/** A record whose geometry changed in place (Scene.replace): its layer,
+ * paint index, first instance and new footprints. */
+export interface MovedRecord {
+  layer: Layer
+  z: number
+  instance: number
+  rects: Rect[]
+  viewport: boolean
+}
+
+/** The batching footprints of a box, image, cutout or text record. */
+export function footprints(
+  r: BoxRecord | ImageRecord | CutoutRecord | GlyphRun
+): Rect[] {
+  if (r.kind === 'text') {
+    return runFootprints(r)
+  }
+  return [r.kind === 'box' ? (r.batchRect ?? r.rect) : r.rect]
+}
+
+/**
+ * Keep a batch list for records that moved in place: true when no moved
+ * record's new footprint overlaps a member of another batch that the list
+ * draws on the wrong side of it (a later-painted member in an earlier
+ * batch, or an earlier-painted one in a later batch). The list then still
+ * paints every overlapping pair in order, so it stays valid; it may merge
+ * less than a fresh build would. All the moved records' new footprints
+ * are added first, so moved records are checked against each other's new
+ * places; a moved record's older footprints are skipped from then on.
+ * False when a moved record is in viewport space or its batch can't be
+ * found: rebuild (and `state` must be rebuilt with it).
+ */
+export function refitBatches(
+  state: BatchState,
+  moved: readonly MovedRecord[]
+): boolean {
+  const { accums, current } = state
+  const gen = ++state.gen
+  const homes: number[] = []
+  for (const m of moved) {
+    if (m.viewport) {
+      return false
+    }
+    let own = -1
+    for (let i = 0; i < accums.length; i++) {
+      const a = accums[i]
+      if (
+        a &&
+        a.layer === m.layer &&
+        a.first <= m.instance &&
+        m.instance < a.first + a.count
+      ) {
+        own = i
+        break
+      }
+    }
+    const home = accums[own]
+    if (!home) {
+      return false
+    }
+    homes.push(own)
+    current.set(m.z, gen)
+    const u = unionRect(m.rects)
+    home.minX = Math.min(home.minX, u.x)
+    home.minY = Math.min(home.minY, u.y)
+    home.maxX = Math.max(home.maxX, u.x + u.width)
+    home.maxY = Math.max(home.maxY, u.y + u.height)
+    for (const r of m.rects) {
+      insertMember(home, r, m.z, gen)
+    }
+  }
+  const stale = (x: Member): boolean => {
+    const g = current.get(x.z)
+    return g !== undefined && g !== x.gen
+  }
+  for (let k = 0; k < moved.length; k++) {
+    const m = moved[k] as MovedRecord
+    const own = homes[k] as number
+    const u = unionRect(m.rects)
+    for (let i = 0; i < accums.length; i++) {
+      const a = accums[i]
+      if (!a || i === own) {
+        continue
+      }
+      const later = i > own
+      // Viewport-space members overlap anything (their place changes with
+      // scroll).
+      if (later ? a.vpMin < m.z : a.vpMax > m.z) {
+        return false
+      }
+      if (!boundsOverlap(a, u)) {
+        continue
+      }
+      for (const r of m.rects) {
+        let bad = false
+        forEachCell(r, (key) => {
+          for (const x of a.grid.get(key) ?? []) {
+            if (
+              (later ? x.z < m.z : x.z > m.z) &&
+              rectsOverlap(x.r, r) &&
+              !stale(x)
+            ) {
+              bad = true
+              return true
+            }
+          }
+          return false
+        })
+        if (bad) {
+          return false
+        }
+      }
+    }
+  }
+  return true
 }

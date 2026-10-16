@@ -125,6 +125,12 @@ export interface CompositorOptions {
    * so a fade never rebuilds the scene; the group goes with one re-read
    * when the hold ends. Default true; false for comparing. */
   patchOpacity?: boolean
+  /** When a patched edit moves records (a word swap), keep the batch list
+   * if no moved record now overlaps a record it draws on the wrong side
+   * of (checked for the moved records only), and update their culling
+   * bounds in place, instead of rebuilding both for the page. Default
+   * true; false always rebuilds (for comparing). */
+  refitBatches?: boolean
   /** Skip the instances of each draw that can't reach the canvas (records
    * more than half a canvas outside it): fewer vertices per frame on long
    * pages, at the cost of a few more draw calls (`stats().instances`).
@@ -207,6 +213,9 @@ export interface CompositorStats {
   /** Of those, the ones applied by replacing records in place rather
    * than rebuilding the scene (CompositorOptions.patchEdits). */
   patchedReads: number
+  /** Of those, patches with moved records that kept the batch list
+   * (CompositorOptions.refitBatches). */
+  refits: number
   /** Why the mirror was invalidated (cumulative counts per dirty flag),
    * how many elements are tracked as animating, and the last mutation's
    * target. `readMs` rising while `mutation`/`animating` tick at idle

@@ -148,8 +148,9 @@ Measuring notes learned along the way:
 4. **Re-anchor tail** at dpr 2 (p99 ~10-11 ms, no drops): untried options
    are culling a strip's draw to its rows, or re-anchoring in smaller
    steps.
-5. **Moved-glyph edits** (word swaps 11.8 ms): keep batches when overlaps
-   don't change, update cull bounds for replaced records.
+5. **Moved-glyph edits**: done 2026-10-16 (`refitBatches`): a word swap
+   costs 1.9 ms (was 11.8-15.6). Left: ~1 ms of whole-buffer box/image
+   upload per patched edit.
 6. **Main pass + copy floor** at dpr 2 with the band (~7 ms on perf.html).
 7. Older items still open in ROADMAP: `calt`/`dlig`, atlas gutters,
    `url()` filters, external `<use href>`, perspective / 3D transforms,
