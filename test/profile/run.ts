@@ -30,6 +30,7 @@
 //   --norefit      perf.html with CompositorOptions.refitBatches off
 //   --nostrips     perf.html with CompositorOptions.reanchorStrips off
 //   --noskip       perf.html with CompositorOptions.skipUnchanged off
+//   --fixed        perf.html?fixed: a fixed header bar (viewport-space)
 //   --groups N     elements the `groups` / `fade` scenarios put below
 //                  opacity 1 (default 48)
 //   --ballast N    perf.html?ballast=N: N rounds of extra fragment work
@@ -394,6 +395,7 @@ async function main(): Promise<void> {
         (flag('norefit') ? '&norefit' : '') +
         (flag('nostrips') ? '&nostrips' : '') +
         (flag('noskip') ? '&noskip' : '') +
+        (flag('fixed') ? '&fixed' : '') +
         (arg('groups') ? `&groups=${arg('groups')}` : '') +
         (arg('ballast') ? `&ballast=${arg('ballast')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })

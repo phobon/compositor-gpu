@@ -1,0 +1,56 @@
+round 2026-10-17 on MacBookPro.localdomain, 53457c6 6 files changed
+== visual (exit 0): npx tsx test/visual/run.ts
+[visual] vite dev server at http://localhost:63922/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+[visual] OK
+== fx (exit 0): npx tsx test/fx/run.ts
+[fx] vite dev server at http://localhost:64145/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+[fx] OK
+== edit (exit 0): npx tsx test/edit/run.ts --headed
+partial reads 21, patched 19 (opacity 2 of 2, batches kept 10); 0 px differ between the patched and rebuilt canvas
+== fill (exit 0): npx tsx test/fill/run.ts --headed --fixed
+full        rows drawn 2700, instances 14800, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1815, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6453, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1815, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6453, pending 0, flat viewport rows after a 600 px stall 474 of 900, 516016 px differ from full (apple)
+== fill-up (exit 0): npx tsx test/fill/run.ts --headed --up --fixed
+full        rows drawn 2700, instances 14800, pending 0, flat viewport rows after a -600 px stall 87 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1815, pending 0, flat viewport rows after a -600 px stall 87 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6453, pending 0, flat viewport rows after a -600 px stall 87 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1815, pending 0, flat viewport rows after a -600 px stall 87 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6453, pending 0, flat viewport rows after a -600 px stall 520 of 900, 517978 px differ from full (apple)
+== profile (exit 0): npx tsx test/profile/run.ts --headed --only scroll,scroll-long --nodim --dpr 2 --band --fixed
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.30    9.10    9.20    9.30
+  cpu total             0.20    0.30    0.60    1.90
+  gpu total             2.95    3.68    4.10    4.47
+    main                2.27    3.05    3.38    3.63
+    copy                1.85    2.59    3.18    3.52
+scroll-long: 242 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 2; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.30    9.00    9.20    9.30
+  cpu total             0.20    0.50    0.60    0.90
+  gpu total             3.20    4.55    8.33    9.28
+    copy                2.02    4.03    7.70    8.11
+    main                2.57    3.88    7.21    8.18
+== profile--noskip (exit 0): npx tsx test/profile/run.ts --headed --only scroll,scroll-long --nodim --dpr 2 --band --fixed --noskip
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.30    9.20    9.30    9.40
+  cpu total             0.20    0.30    0.40    0.90
+  gpu total             6.76    6.83    7.04    9.34
+    main                6.31    6.36    6.61    8.82
+    copy                5.57    5.75    6.74    8.51
+scroll-long: 258 frames over 2.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.30    9.20    9.30    9.50
+  cpu total             0.20    0.40    0.60    0.80
+  gpu total             6.97    7.56    7.67    7.71
+    main                6.32    7.00    7.18    7.28
+    copy                5.67    6.45    7.26    7.45

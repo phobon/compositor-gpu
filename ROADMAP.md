@@ -513,9 +513,14 @@ perspective transforms · culling · WebGL2 backend.
       50-62% of scroll frames on perf.html skipped, drawn frames ~2 ms GPU
       at dpr 2 instead of 7.5 ms. See
       `docs/rd/experiments/2026-10-16-skip-unchanged.md`
-- [ ] Fixed content, `/fx` layers and materials still redraw the band
-      every frame (skipping off); fixed records could be handled as
-      damage (old and new rects)
+- [x] Fixed content as damage (2026-10-17): its old and new rows redrawn
+      on scroll instead of the band; ~3 ms GPU at dpr 2 with a fixed bar
+      (was ~6.9). See `docs/rd/experiments/2026-10-17-fixed-damage.md`
+- [ ] Re-anchor frames with fixed content issue up to four scissored
+      draws (p99 8.3 ms on `scroll-long --fixed`); merge them when they
+      cover most of the band
+- [ ] `/fx` layers and materials, and sticky elements (re-read every
+      frame while they move), still redraw the band every frame
 - [ ] Drawn scroll frames: cull the thin newly needed rows' draws to
       those rows; the full kept-to-canvas copy remains
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms

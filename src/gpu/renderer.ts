@@ -441,13 +441,16 @@ export class Renderer {
   private validBatches: Scene['batches'] | null = null
   private validVersion = -1
   private validSettled = -1
-  /** Scene has viewport-space records or groups (cached per batch list
-   * and version). */
-  private viewportOf: {
+  /** The rows viewport-space (fixed) content covers, as viewport-y CSS
+   * px intervals, merged (cached per batch list and version). */
+  private fixedOf: {
     batches: Scene['batches']
     version: number
-    has: boolean
+    rows: [number, number][]
   } | null = null
+  /** Scroll position fixed content was last drawn at in `kept` (it sits
+   * there until those rows are redrawn). */
+  private fixedScrollY: number | null = null
   /** The largest scroll step of the last 200 ms, CSS px (fillBand). */
   private lastStep = 0
   /** Runs culled to the pending rows (see stripRuns), their region and
@@ -720,23 +723,66 @@ export class Renderer {
         return true
       }
     }
-    return this.hasViewportContent(scene)
+    return false
   }
 
-  private hasViewportContent(scene: Scene): boolean {
-    const c = this.viewportOf
+  /** Viewport-y intervals (CSS px) that fixed content paints, padded for
+   * anti-aliasing and text shadows. */
+  private fixedRows(scene: Scene): [number, number][] {
+    const c = this.fixedOf
     if (c && c.batches === scene.batches && c.version === scene.version) {
-      return c.has
+      return c.rows
     }
-    const vp = (r: { space?: string }): boolean => r.space === 'viewport'
-    const has =
-      scene.boxes.some(vp) ||
-      scene.images.some(vp) ||
-      scene.runs.some(vp) ||
-      scene.cutouts.some(vp) ||
-      scene.groups.some((g) => vp(g) || g.vbounds !== null)
-    this.viewportOf = { batches: scene.batches, version: scene.version, has }
-    return has
+    let rows: [number, number][] = []
+    const add = (r: Rect, pad: number): void => {
+      rows = addRows(rows, r.y - pad, r.y + r.height + pad)
+    }
+    for (const list of [scene.boxes, scene.images, scene.cutouts]) {
+      for (const r of list) {
+        if (r.space === 'viewport') {
+          add(r.rect, 2)
+        }
+      }
+    }
+    for (const run of scene.runs) {
+      if (run.space !== 'viewport') {
+        continue
+      }
+      let pad = 2
+      for (const sh of run.textShadows ?? []) {
+        pad = Math.max(pad, Math.abs(sh.oy) + 1.5 * sh.blur + 2)
+      }
+      for (const g of run.glyphs) {
+        add(g.rect, pad)
+      }
+    }
+    for (const g of scene.groups) {
+      if (g.vbounds) {
+        add(g.vbounds, 2)
+      }
+    }
+    this.fixedOf = { batches: scene.batches, version: scene.version, rows }
+    return rows
+  }
+
+  /** Device rows of `t` that fixed content covers with the page scrolled
+   * to `scrollY`. */
+  private fixedDeviceRows(
+    rows: readonly (readonly [number, number])[],
+    scrollY: number,
+    oy: number,
+    sy: number,
+    h: number
+  ): [number, number][] {
+    let out: [number, number][] = []
+    for (const [a, b] of rows) {
+      const y0 = clamp(Math.floor((a + scrollY - oy) * sy), h)
+      const y1 = clamp(Math.ceil((b + scrollY - oy) * sy), h)
+      if (y1 > y0) {
+        out = addRows(out, y0, y1)
+      }
+    }
+    return out
   }
 
   /** skipUnchanged: nothing would be drawn this frame (the canvas didn't
@@ -778,6 +824,10 @@ export class Renderer {
       Math.ceil((ctx.scrollY + ctx.height + pad - ctx.canvasY) * sy),
       h
     )
+    if (this.fixedScrollY !== ctx.scrollY && this.fixedRows(scene).length > 0) {
+      // Fixed content moved against the canvas.
+      return false
+    }
     return rowsMissing(y0, y1, this.valid).length === 0
   }
 
@@ -1041,6 +1091,10 @@ export class Renderer {
     }
     /** The band's draw is the strip's (culled to the pending rows). */
     let bandIsStrip = false
+    /** More rows drawn after the band, each under its own scissor and
+     * culled like the band: fixed content's old and new rows when it
+     * moved against the canvas (skipUnchanged). */
+    const extra: [number, number, number, number][] = []
     if (
       this.canvasFill === 'band' &&
       this.skipUnchanged &&
@@ -1049,12 +1103,36 @@ export class Renderer {
       mainLoad === 'load'
     ) {
       // Band rows drawn since the content last changed hold the same
-      // pixels: draw only the rest.
-      const need = rowsMissing(band[1], band[1] + band[3], this.valid)
-      const n0 = need[0]
-      const n1 = need[need.length - 1]
-      if (n0 && n1) {
-        band = [0, n0[0], main.devW, n1[1] - n0[0]]
+      // pixels: draw only the rest, plus where fixed content was and is.
+      let need = rowsMissing(band[1], band[1] + band[3], this.valid)
+      const fixed = this.fixedRows(scene)
+      if (fixed.length > 0 && this.fixedScrollY !== ctx.scrollY) {
+        const at = (y: number): [number, number][] =>
+          this.fixedDeviceRows(fixed, y, main.oy, main.sy, main.devH)
+        for (const [a, b] of [
+          ...at(ctx.scrollY),
+          ...at(this.fixedScrollY ?? ctx.scrollY)
+        ]) {
+          need = addRows(need, a, b)
+        }
+      }
+      // Rows close together are drawn as one (a draw costs vertex work
+      // whatever its scissor).
+      const parts: [number, number][] = []
+      for (const [a, b] of need) {
+        const last = parts[parts.length - 1]
+        if (last && a - last[1] < 64) {
+          last[1] = b
+        } else {
+          parts.push([a, b])
+        }
+      }
+      const p0 = parts[0]
+      if (p0) {
+        band = [0, p0[0], main.devW, p0[1] - p0[0]]
+        for (const [a, b] of parts.slice(1)) {
+          extra.push([0, a, main.devW, b - a])
+        }
       } else if (strip) {
         band = strip
         strip = undefined
@@ -1068,20 +1146,25 @@ export class Renderer {
       if (!band) {
         this.valid = [[0, main.devH]]
       } else {
-        this.valid = addRows(this.valid, band[1], band[1] + band[3])
-        if (strip) {
-          this.valid = addRows(this.valid, strip[1], strip[1] + strip[3])
+        for (const r of [band, ...extra, ...(strip ? [strip] : [])]) {
+          this.valid = addRows(this.valid, r[1], r[1] + r[3])
         }
       }
       this.validBatches = scene.batches
       this.validVersion = scene.version
       this.validSettled = materialPipelinesSettled()
+      // Fixed content is drawn at this scroll wherever it lands.
+      this.fixedScrollY = ctx.scrollY
     }
     main.scissor = band
     this.lastFillRows =
-      (main.scissor ? main.scissor[3] : main.devH) + (strip ? strip[3] : 0)
-    // A strip composites every group a second time.
-    this.composite.begin(scene.groups.length * (strip ? 2 : 1))
+      (main.scissor ? main.scissor[3] : main.devH) +
+      (strip ? strip[3] : 0) +
+      extra.reduce((n, r) => n + r[3], 0)
+    // A strip or an extra draw composites every group again.
+    this.composite.begin(
+      scene.groups.length * (1 + extra.length + (strip ? 1 : 0))
+    )
     this.groupBlur?.begin()
     if (scene.backdrops.length > 0) {
       this.backdrop ??= new BackdropPass(this.shared)
@@ -1098,6 +1181,7 @@ export class Renderer {
     let instances = 0
     this.lastCullMs = 0
     let culled = this.cullDraws ? this.cullFor(scene, ctx) : null
+    const bandCulled = culled
     if (bandIsStrip && culled && band) {
       culled = this.stripRuns(scene, ctx, main, band)
     }
@@ -1397,8 +1481,12 @@ export class Renderer {
     if (this.transforms.size > 0) {
       this.growExtents(scene.groups, ctx, xfs, extents)
     }
-    // Groups reaching the band or the strip get textures.
-    main.scissor = strip && band ? hullRows(band, strip) : band
+    // Groups reaching the band, the extra rows or the strip get textures.
+    let reach = band
+    for (const r of [...extra, ...(strip ? [strip] : [])]) {
+      reach = reach ? hullRows(reach, r) : reach
+    }
+    main.scissor = reach
     prepare(main, 0, list.length)
     main.scissor = band
     const first = this.beginPass(encoder, main, mainLoad, 'main')
@@ -1414,6 +1502,17 @@ export class Renderer {
       this.clearRect.draw(first)
     }
     let rp = drawRange(first, main, 0, list.length, 'main')
+    for (const r of extra) {
+      main.scissor = r
+      this.restoreScissor(rp, main)
+      this.clearRect?.draw(rp)
+      culled = bandCulled
+      rp = drawRange(rp, main, 0, list.length, 'main')
+    }
+    if (extra.length > 0) {
+      main.scissor = band
+      this.restoreScissor(rp, main)
+    }
     if (strip) {
       // The next strip of pending rows: the same batches again under its
       // scissor.

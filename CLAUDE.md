@@ -112,9 +112,14 @@ to draw returns before `getCurrentTexture` (the canvas keeps what it
 last presented; `stats().skippedFrames`, the profile's `skipped`).
 `contentChanged` is conservative: dirty layers, a new scene version,
 batch list or settled material pipeline, and anything drawn
-differently every frame (viewport-space records or groups, active extra
-layers, regions, layer transforms, `/fx` materials, backdrops) empty
-`valid`; a frame after a post-chain frame is never skipped
+differently every frame (active extra layers, regions, layer
+transforms, `/fx` materials, backdrops) empty `valid`. Fixed
+(viewport-space) content is damage instead: when the scroll differs
+from the one it was last drawn at (`fixedScrollY`), its rows at both
+scrolls (`fixedRows`: record rects, glyphs with text-shadow extent,
+groups' `vbounds`) are drawn as extra scissored draws with the band's
+remaining rows (`docs/rd/experiments/2026-10-17-fixed-damage.md`); a
+frame after a post-chain frame is never skipped
 (`docs/rd/experiments/2026-10-16-skip-unchanged.md`); `'band-clear'` clears
 outside the band instead, `'full'` redraws everything. perf.html stays
 on 'full' unless `?band` / `?bandclear` (the profile baselines). `npx

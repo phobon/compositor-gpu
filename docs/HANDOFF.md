@@ -155,8 +155,10 @@ Measuring notes learned along the way:
 6. **Main pass + copy floor**: done 2026-10-16 (`skipUnchanged`,
    `experiments/2026-10-16-skip-unchanged.md`): scroll frames over
    unchanged content draw only rows not yet drawn or nothing; drawn
-   frames ~2 ms at dpr 2 (was 7.5). Pages with fixed content or `/fx`
-   layers/materials still redraw every frame.
+   frames ~2 ms at dpr 2 (was 7.5). Fixed content handled as damage
+   2026-10-17 (~3 ms with a fixed bar, was ~6.9;
+   `experiments/2026-10-17-fixed-damage.md`). Still redrawing every
+   frame: `/fx` layers/materials and moving sticky elements.
 7. Older items still open in ROADMAP: `calt`/`dlig`, atlas gutters,
    `url()` filters, external `<use href>`, perspective / 3D transforms,
    optional WebGL2 backend, spec deviation notes in `docs/EFFECTS.md`,

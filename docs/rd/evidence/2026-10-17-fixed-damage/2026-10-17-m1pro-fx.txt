@@ -1,0 +1,79 @@
+[fx] vite dev server at http://localhost:64145/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+
+section                   regression%  status
+---------------------------------------------
+fx-off                           0.00  ok
+fx-tgpu                          0.00  ok
+fx-blur                          0.00  ok
+fx-blur-scissor                  0.00  ok
+fx-displace                      0.00  ok
+fx-blur-then-off-pre             0.00  ok
+fx-blur-then-off-on              0.00  ok
+fx-blur-then-off                 0.00  ok
+fx-blur-then-off (= pre)         0.00  ok  (0 px differ)
+fx-displace-push                 0.00  ok
+fx-geometry                      0.00  ok
+fx-glow                          0.00  ok
+fx-ripple                        0.00  ok
+fx-after                         0.00  ok
+fx-region                        0.00  ok
+fx-region-then-off               0.00  ok
+fx-region-then-off (= geo)        0.00  ok  (0 px differ)
+fx-progressive                   0.00  ok
+fx-materials                     0.00  ok
+fx-mat-ripple                    0.00  ok
+fx-mat-wave                      0.00  ok
+fx-mat-bend                      0.00  ok
+fx-mat-bend hides DOM               -  ok  (opacity on="0" off="")
+fx-mat-stripes                   0.00  ok
+fx-mat-all                       0.00  ok
+fx-mat-then-off                  0.00  ok
+fx-mat-then-off (= mats)         0.00  ok  (0 px differ)
+fx-waapi                         0.00  ok
+fx-waapi (= style)               0.00  ok  (0 px differ)
+fx-svg-transition                   -  ok  (svg records at rest 1, during 11111111111111111111)
+fx-reduced (held clock)          0.00  ok  (0 px differ)
+fx-reduced (play jumps)             -  ok  (progress 1 at once)
+fx-mat-shared                       -  ok  (compiles: warm 1, after enable 1 (want 1, 1))
+fx-m3b                           0.00  ok
+fx-layer-glyphs                  0.00  ok
+fx-layer-image                   0.00  ok
+fx-sim                           0.00  ok
+fx-mat-raw                       0.00  ok
+fx-mat-tgpu                      0.00  ok
+fx-tgpu-js                       0.00  ok
+fx-m3b-all                       0.00  ok
+fx-m3b-then-off                  0.00  ok
+fx-m3b-then-off (= m3b)          0.00  ok  (0 px differ)
+fx-follow                        0.00  ok
+fx-mat-stagger                   0.00  ok
+fx-follow-then-off               0.00  ok
+fx-follow-then-off (= fol)        0.00  ok  (0 px differ)
+fx-pass-image                    0.00  ok
+fx-transform-off                 0.00  ok
+fx-transform-identity            0.00  ok
+fx-transform-identity (= off)        0.00  ok  (0 px differ)
+fx-transform                     0.00  ok
+fx-transform-then-off            0.00  ok
+fx-transform-then-off (= off)        0.00  ok  (0 px differ)
+fx-motion                        0.00  ok
+fx-motion-ref                    0.00  ok
+fx-motion (= ref)                0.00  ok  (0 px differ)
+fx-motion-then-off               0.00  ok
+fx-motion-then-off (= off)        0.00  ok  (0 px differ)
+fx-dissolve                      0.00  ok
+fx-dissolve-full                 0.00  ok
+fx-dissolve-full (= off)         0.00  ok  (0 px differ)
+fx-trail-off                     0.00  ok
+fx-trail                         0.00  ok
+fx-trail-pixel                   0.00  ok
+fx-trail-reuse                   0.00  ok
+fx-trail-reuse-off               0.00  ok
+fx-trail-reuse (reused)             -  ok  (sceneReused on=true off=false)
+fx-trail-reuse (= off)           0.00  ok  (0 px differ)
+fx-trail-clear                   0.00  ok
+fx-trail-clear (= off)           0.00  ok  (0 px differ)
+
+[fx] OK

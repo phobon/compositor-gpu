@@ -12,6 +12,7 @@
 #   PROFILE   test:profile arguments (default: the dpr 2 band scroll runs)
 #   SKIP      steps to leave out, space-separated: visual fx edit fill profile
 #   LABEL     file-name label for the machine (default m1pro)
+#   FILL      extra test/fill/run.ts arguments (e.g. --fixed)
 set -u
 
 [[ ${1:-} == -- ]] && shift
@@ -20,6 +21,7 @@ ab=${2:-}
 profile=${PROFILE:---only scroll,scroll-long --nodim --dpr 2 --band}
 skip=" ${SKIP:-} "
 label=${LABEL:-m1pro}
+fill=${FILL:-}
 day=$(date +%F)
 mkdir -p "$dir"
 summary="$dir/$day-$label-round.txt"
@@ -60,8 +62,10 @@ wants visual && run visual npx tsx test/visual/run.ts
 wants fx && run fx npx tsx test/fx/run.ts
 wants edit && run edit npx tsx test/edit/run.ts --headed
 if wants fill; then
-  run fill npx tsx test/fill/run.ts --headed
-  run fill-up npx tsx test/fill/run.ts --headed --up
+  # shellcheck disable=SC2086
+  run fill npx tsx test/fill/run.ts --headed $fill
+  # shellcheck disable=SC2086
+  run fill-up npx tsx test/fill/run.ts --headed --up $fill
 fi
 if wants profile; then
   # shellcheck disable=SC2086
