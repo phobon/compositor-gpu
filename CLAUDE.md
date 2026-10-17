@@ -20,7 +20,9 @@ summary (`<date>-m1pro-round.txt`) into the folder; `PROFILE`, `SKIP`
 and `LABEL` adjust it. The cloud workspace has two cores and no GPU
 (SwiftShader: ~10 min per stall check, ~20 per visual run), so full
 checks and all timings run on the M1 Pro through it; the workspace only
-typechecks and lints.
+typechecks and lints. The visual and fx harnesses run headless, which
+falls back to SwiftShader on the Mac too (regression against goldens
+made the same way); the edit, fill and profile steps run headed.
 
 There is no unit-test framework. Rendering is checked with the
 **visual-regression harness**: `npm run test:visual` (Playwright + pixelmatch,
@@ -102,7 +104,18 @@ CSS px or twice the recent scroll step, from the pending interval
 nearest the band, as a second draw culled to that interval (or merged
 into the band when it touches it); pending rows keep the loop running
 and turn scene reuse off, and with a backdrop in the scene they are
-drawn at once (`stats().pendingRows`); `'band-clear'` clears
+drawn at once (`stats().pendingRows`). With `skipUnchanged` (default;
+`?noskip` / `--noskip`) the renderer keeps the device rows of the kept
+texture drawn since the content last changed (`valid`, shifted on
+re-anchors): band rows in it aren't redrawn, and a frame with nothing
+to draw returns before `getCurrentTexture` (the canvas keeps what it
+last presented; `stats().skippedFrames`, the profile's `skipped`).
+`contentChanged` is conservative: dirty layers, a new scene version,
+batch list or settled material pipeline, and anything drawn
+differently every frame (viewport-space records or groups, active extra
+layers, regions, layer transforms, `/fx` materials, backdrops) empty
+`valid`; a frame after a post-chain frame is never skipped
+(`docs/rd/experiments/2026-10-16-skip-unchanged.md`); `'band-clear'` clears
 outside the band instead, `'full'` redraws everything. perf.html stays
 on 'full' unless `?band` / `?bandclear` (the profile baselines). `npx
 tsx test/fill/run.ts [--headed] [--fixed] [--blur] [--up]` shows what a

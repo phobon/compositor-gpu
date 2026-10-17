@@ -188,6 +188,9 @@ async function boot(): Promise<void> {
     // `?nostrips`: a re-anchor's new rows drawn at once
     // (CompositorOptions.reanchorStrips).
     reanchorStrips: !params.has('nostrips'),
+    // `?noskip`: redraw the band every frame
+    // (CompositorOptions.skipUnchanged).
+    skipUnchanged: !params.has('noskip'),
     // `?nocull`: submit every instance; `?bandcanvas`: with `?band`, cull
     // to the canvas rather than the band (CompositorOptions.cullDraws).
     cullDraws: params.has('nocull')

@@ -65,6 +65,9 @@ export interface FrameSample {
   groups: number
   /** The post chain ran on the previous frame's scene (no main pass). */
   reused: boolean
+  /** Nothing was drawn (CompositorOptions.skipUnchanged); absent in
+   * reports from before 2026-10-16. */
+  skipped?: boolean
   /** Filled in a frame or two later; null without timestamp-query. */
   gpu: GpuFrameTiming | null
 }
@@ -123,6 +126,8 @@ export interface ProfileSummary {
   /** Frames later than 1.5 refresh intervals, and the intervals missed. */
   late: number
   dropped: number
+  /** Frames that drew nothing (skipUnchanged). */
+  skipped?: number
   cpu: Record<keyof CpuBreakdown, Pct>
   /** GPU frame time and per pass label (summed per frame); null without
    * timestamp-query. */
@@ -609,6 +614,7 @@ export function summarize(
     dt: pct(cont.map((s) => s.dt)),
     late,
     dropped,
+    skipped: samples.filter((s) => s.skipped).length,
     cpu,
     gpu,
     reads,
@@ -691,7 +697,7 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
   const none: Pct = { n: 0, mean: 0, p50: 0, p95: 0, p99: 0, max: 0 }
   const lines = [
     `${title}: ${r.frames} frames over ${(r.durationMs / 1000).toFixed(1)} s, refresh ${r.refreshMs.toFixed(2)} ms (${(1000 / r.refreshMs).toFixed(0)} Hz)`,
-    `  late ${r.late}, dropped ${r.dropped}; reads: ${r.reads.partial} partial, ${r.reads.full} full, ${r.reads.escalated} escalated`,
+    `  late ${r.late}, dropped ${r.dropped}; skipped ${r.skipped ?? 0}; reads: ${r.reads.partial} partial, ${r.reads.full} full, ${r.reads.escalated} escalated`,
     `  ${''.padEnd(18)}     p50     p95     p99     max`,
     row('frame interval', r.dt),
     row('cpu total', r.cpu.total),

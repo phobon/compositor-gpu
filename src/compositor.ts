@@ -107,6 +107,7 @@ export async function createCompositor(
   // A viewport-pinned canvas has no margins to keep.
   renderer.canvasFill = pinned ? 'full' : (options.canvasFill ?? 'band')
   renderer.reanchorStrips = options.reanchorStrips ?? true
+  renderer.skipUnchanged = options.skipUnchanged ?? true
   // mix-blend-mode (scene/blend.ts): built-in materials the reader tags.
   for (const m of blendMaterials(gpu.device, () => scheduler.request())) {
     renderer.materials.set(m.id, m)
@@ -503,6 +504,7 @@ export async function createCompositor(
         draws: renderer.lastDraws,
         groups: renderer.lastGroups,
         reused: renderer.lastReused,
+        skipped: renderer.lastSkipped,
         gpu: null
       })
     }
@@ -1097,6 +1099,7 @@ export async function createCompositor(
       instances: renderer.lastInstances,
       fillRows: renderer.lastFillRows,
       pendingRows: renderer.pendingRowCount,
+      skippedFrames: renderer.skippedFrames,
       groups: renderer.lastGroups,
       groupPasses: renderer.lastGroupPasses,
       sceneReused: renderer.lastReused,
@@ -1223,6 +1226,7 @@ function inert(): Compositor & { text: null; scene: null } {
       instances: 0,
       fillRows: 0,
       pendingRows: 0,
+      skippedFrames: 0,
       groups: 0,
       groupPasses: 0,
       sceneReused: false,

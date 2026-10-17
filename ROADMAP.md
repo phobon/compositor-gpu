@@ -509,10 +509,15 @@ perspective transforms · culling · WebGL2 backend.
       ~7 ms `gpu total` is real occupancy (frames drop with ~1.7 ms more);
       per-pass `alone` times are not a cost on Metal. See
       `docs/rd/experiments/2026-10-16-gpu-headroom.md`
-- [ ] Scroll frames of a static page redraw the viewport and band although
-      the kept texture already holds them: draw only what changed
-      (pending rows, viewport-space records, dynamic layers), or skip the
-      frame
+- [x] Scroll frames draw only changed rows (2026-10-16, `skipUnchanged`):
+      50-62% of scroll frames on perf.html skipped, drawn frames ~2 ms GPU
+      at dpr 2 instead of 7.5 ms. See
+      `docs/rd/experiments/2026-10-16-skip-unchanged.md`
+- [ ] Fixed content, `/fx` layers and materials still redraw the band
+      every frame (skipping off); fixed records could be handled as
+      damage (old and new rects)
+- [ ] Drawn scroll frames: cull the thin newly needed rows' draws to
+      those rows; the full kept-to-canvas copy remains
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms
       was mostly overlap with the main pass (the profiler now prints
       `alone` per pass label); real cost 0.90 ms per frame on an M1 Pro for

@@ -155,6 +155,15 @@ export interface CompositorOptions {
    * after a re-anchor can show the rows not yet drawn as blank. Default
    * true; false draws them at once (for comparing). */
   reanchorStrips?: boolean
+  /** canvasFill 'band': draw only the band rows not drawn since the
+   * content last changed, and skip a frame with nothing to draw (no
+   * command buffer; the canvas keeps what it last presented), so a scroll
+   * over a static page costs nothing but its re-anchors. Any change, and
+   * content that draws differently every frame (viewport-space records,
+   * active `/fx` layers, regions, layer transforms or materials,
+   * backdrops), redraws the band as before. Default true; false redraws
+   * the band every frame (for comparing). */
+  skipUnchanged?: boolean
   /** ms to wait after start() for the mirror to be complete (see
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
@@ -208,6 +217,9 @@ export interface CompositorStats {
   /** Device-px rows a re-anchor newly covered not yet drawn
    * (CompositorOptions.reanchorStrips). */
   pendingRows: number
+  /** Frames skipped with nothing to draw since start
+   * (CompositorOptions.skipUnchanged). */
+  skippedFrames: number
   /** Opacity groups composited (offscreen + blended once) last frame. */
   groups: number
   /** Render passes those groups' textures took (CompositorOptions

@@ -122,6 +122,58 @@ function hullRows(
   return [a[0], y0, Math.max(a[2], b[2]), y1 - y0]
 }
 
+/** Rows [y0, y1) not covered by `cover` (disjoint, in order). */
+function rowsMissing(
+  y0: number,
+  y1: number,
+  cover: readonly (readonly [number, number])[]
+): [number, number][] {
+  const out: [number, number][] = []
+  let y = y0
+  for (const [a, b] of cover) {
+    if (b <= y) {
+      continue
+    }
+    if (a >= y1) {
+      break
+    }
+    if (a > y) {
+      out.push([y, a])
+    }
+    y = Math.max(y, b)
+    if (y >= y1) {
+      break
+    }
+  }
+  if (y < y1) {
+    out.push([y, y1])
+  }
+  return out
+}
+
+/** `list` with [y0, y1) added, merged (disjoint, in order). */
+function addRows(
+  list: readonly (readonly [number, number])[],
+  y0: number,
+  y1: number
+): [number, number][] {
+  const all: [number, number][] = [
+    ...list.map((r) => [r[0], r[1]] as [number, number]),
+    [y0, y1]
+  ]
+  all.sort((a, b) => a[0] - b[0])
+  const out: [number, number][] = []
+  for (const iv of all) {
+    const last = out[out.length - 1]
+    if (last && iv[0] <= last[1]) {
+      last[1] = Math.max(last[1], iv[1])
+    } else if (iv[1] > iv[0]) {
+      out.push(iv)
+    }
+  }
+  return out
+}
+
 /** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
  * don't meet. */
 function meet(
@@ -310,6 +362,17 @@ export class Renderer {
   lastReused = false
   /** CompositorOptions.sceneReuse. */
   reuseScene = true
+  /** CompositorOptions.skipUnchanged: with canvasFill 'band', draw only
+   * band rows not drawn since the content last changed, and skip frames
+   * with nothing to draw. */
+  skipUnchanged = true
+  /** The most recent frame drew nothing (skipUnchanged). */
+  lastSkipped = false
+  /** Frames skipped since creation (stats().skippedFrames). */
+  skippedFrames = 0
+  /** The last presented frame came out of the post chain (the canvas then
+   * differs from the kept texture, so a frame can't be skipped). */
+  private presentedChain = false
   /** Wall time spent in pass uploads in the most recent render, ms. */
   lastUploadMs = 0
   /** Wall time from createCommandEncoder to submit in the most recent
@@ -369,6 +432,22 @@ export class Renderer {
   private pending: [number, number][] = []
   /** The pending interval the last strip was taken from (stripRuns). */
   private stripFrom: [number, number] | null = null
+  /** canvasFill 'band' with skipUnchanged: device rows of `kept` drawn
+   * since the content last changed (disjoint, in order); band rows in it
+   * aren't redrawn. */
+  private valid: [number, number][] = []
+  /** What `valid` was drawn from: the batch list, scene version and
+   * material-pipeline settle counter. */
+  private validBatches: Scene['batches'] | null = null
+  private validVersion = -1
+  private validSettled = -1
+  /** Scene has viewport-space records or groups (cached per batch list
+   * and version). */
+  private viewportOf: {
+    batches: Scene['batches']
+    version: number
+    has: boolean
+  } | null = null
   /** The largest scroll step of the last 200 ms, CSS px (fillBand). */
   private lastStep = 0
   /** Runs culled to the pending rows (see stripRuns), their region and
@@ -592,6 +671,116 @@ export class Renderer {
     rp.setScissorRect(x, y, w, h)
   }
 
+  /** Record this frame's scroll step (sizes the band; also on skipped
+   * frames). */
+  private noteScroll(ctx: FrameContext): void {
+    const dy =
+      this.lastScrollY === null ? 0 : Math.abs(ctx.scrollY - this.lastScrollY)
+    this.lastScrollY = ctx.scrollY
+    const now = performance.now()
+    this.steps.push([now, dy])
+    while ((this.steps[0]?.[0] ?? now) < now - 200) {
+      this.steps.shift()
+    }
+    let step = 0
+    for (const [, d] of this.steps) {
+      step = Math.max(step, d)
+    }
+    this.lastStep = step
+  }
+
+  /** Something drawn into the kept texture may differ from what it holds:
+   * a dirty layer, a new scene version or batch list, a material pipeline
+   * settling, or content drawn differently every frame (viewport-space
+   * records, active extra layers, regions, layer transforms, `/fx`
+   * materials, backdrops). Doesn't change state. */
+  private contentChanged(scene: Scene): boolean {
+    if (
+      scene.batches !== this.validBatches ||
+      scene.version !== this.validVersion ||
+      materialPipelinesSettled() !== this.validSettled ||
+      scene.backdrops.length > 0 ||
+      this.transforms.size > 0 ||
+      this.passes.some((p) => scene.isDirty(p.layer))
+    ) {
+      return true
+    }
+    for (const layer of this.extras.values()) {
+      if (layer.active()) {
+        return true
+      }
+    }
+    for (const region of this.regions.values()) {
+      if (region.active()) {
+        return true
+      }
+    }
+    for (const m of this.materials.values()) {
+      if (m.active() && !m.builtin) {
+        return true
+      }
+    }
+    return this.hasViewportContent(scene)
+  }
+
+  private hasViewportContent(scene: Scene): boolean {
+    const c = this.viewportOf
+    if (c && c.batches === scene.batches && c.version === scene.version) {
+      return c.has
+    }
+    const vp = (r: { space?: string }): boolean => r.space === 'viewport'
+    const has =
+      scene.boxes.some(vp) ||
+      scene.images.some(vp) ||
+      scene.runs.some(vp) ||
+      scene.cutouts.some(vp) ||
+      scene.groups.some((g) => vp(g) || g.vbounds !== null)
+    this.viewportOf = { batches: scene.batches, version: scene.version, has }
+    return has
+  }
+
+  /** skipUnchanged: nothing would be drawn this frame (the canvas didn't
+   * move, no rows are pending, the content is unchanged and the band's
+   * rows are all valid), so no command buffer is needed and the canvas
+   * keeps what it last presented. */
+  private skipFrame(scene: Scene, ctx: FrameContext, dpr: number): boolean {
+    const kept = this.kept
+    if (
+      !this.skipUnchanged ||
+      this.presentedChain ||
+      this.canvasFill !== 'band' ||
+      !kept ||
+      this.pending.length > 0
+    ) {
+      return false
+    }
+    const canvas = this.gpu.context.canvas
+    const w = canvas.width
+    const h = canvas.height
+    const sx = ctx.canvasWidth > 0 ? w / ctx.canvasWidth : dpr
+    const sy = ctx.canvasHeight > 0 ? h / ctx.canvasHeight : dpr
+    const at = this.keptAt
+    if (
+      kept.width !== w ||
+      kept.height !== h ||
+      !at ||
+      at[0] !== ctx.canvasX ||
+      at[1] !== ctx.canvasY ||
+      at[2] !== sx ||
+      at[3] !== sy ||
+      this.contentChanged(scene)
+    ) {
+      return false
+    }
+    const pad = Math.max(128, 2 * this.lastStep)
+    const y0 = clamp(Math.floor((ctx.scrollY - pad - ctx.canvasY) * sy), h)
+    const y1 = clamp(
+      Math.ceil((ctx.scrollY + ctx.height + pad - ctx.canvasY) * sy),
+      h
+    )
+    return rowsMissing(y0, y1, this.valid).length === 0
+  }
+
   /** The main target's visible band (device px), or undefined for all of
    * it: the viewport plus twice the largest scroll step of the frames of
    * the last 200 ms (at least 128 CSS px) above and below. */
@@ -599,24 +788,11 @@ export class Renderer {
     ctx: FrameContext,
     t: Target
   ): [number, number, number, number] | undefined {
-    const dy =
-      this.lastScrollY === null ? 0 : Math.abs(ctx.scrollY - this.lastScrollY)
-    this.lastScrollY = ctx.scrollY
     this.bandY = null
-    const now = performance.now()
-    this.steps.push([now, dy])
-    while ((this.steps[0]?.[0] ?? now) < now - 200) {
-      this.steps.shift()
-    }
     if (this.canvasFill === 'full') {
       return undefined
     }
-    let step = 0
-    for (const [, d] of this.steps) {
-      step = Math.max(step, d)
-    }
-    this.lastStep = step
-    const pad = Math.max(128, 2 * step)
+    const pad = Math.max(128, 2 * this.lastStep)
     const y0 = clamp(Math.floor((ctx.scrollY - pad - t.oy) * t.sy), t.devH)
     const y1 = clamp(
       Math.ceil((ctx.scrollY + ctx.height + pad - t.oy) * t.sy),
@@ -706,6 +882,29 @@ export class Renderer {
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
     this.scene = scene
     const chain = this.postChain?.active() ? this.postChain : null
+    this.noteScroll(ctx)
+    if (!chain && this.skipFrame(scene, ctx, dpr)) {
+      this.lastSkipped = true
+      this.skippedFrames++
+      this.lastFillRows = 0
+      this.lastBatches = 0
+      this.lastDraws = 0
+      this.lastInstances = 0
+      this.lastGroups = 0
+      this.lastGroupPasses = 0
+      this.lastUploads = 0
+      this.lastUploadMs = 0
+      this.lastEncodeMs = 0
+      this.lastCullMs = 0
+      return
+    }
+    this.lastSkipped = false
+    this.presentedChain = chain !== null
+    // Before the uploads clear the dirty flags.
+    const changed = this.contentChanged(scene)
+    if (changed) {
+      this.valid = []
+    }
     const key = chain && this.reuseScene ? this.reuseKey(ctx, dpr) : null
     if (scene.backdrops.length > 0 && !this.canvasSampled) {
       // Backdrops read the canvas texture they were drawn over.
@@ -840,6 +1039,44 @@ export class Renderer {
     } else if (this.kept) {
       this.releaseKept()
     }
+    /** The band's draw is the strip's (culled to the pending rows). */
+    let bandIsStrip = false
+    if (
+      this.canvasFill === 'band' &&
+      this.skipUnchanged &&
+      band &&
+      !changed &&
+      mainLoad === 'load'
+    ) {
+      // Band rows drawn since the content last changed hold the same
+      // pixels: draw only the rest.
+      const need = rowsMissing(band[1], band[1] + band[3], this.valid)
+      const n0 = need[0]
+      const n1 = need[need.length - 1]
+      if (n0 && n1) {
+        band = [0, n0[0], main.devW, n1[1] - n0[0]]
+      } else if (strip) {
+        band = strip
+        strip = undefined
+        bandIsStrip = true
+      } else {
+        band = [0, 0, main.devW, 0]
+      }
+    }
+    if (this.canvasFill === 'band') {
+      // What this frame draws becomes valid.
+      if (!band) {
+        this.valid = [[0, main.devH]]
+      } else {
+        this.valid = addRows(this.valid, band[1], band[1] + band[3])
+        if (strip) {
+          this.valid = addRows(this.valid, strip[1], strip[1] + strip[3])
+        }
+      }
+      this.validBatches = scene.batches
+      this.validVersion = scene.version
+      this.validSettled = materialPipelinesSettled()
+    }
     main.scissor = band
     this.lastFillRows =
       (main.scissor ? main.scissor[3] : main.devH) + (strip ? strip[3] : 0)
@@ -861,6 +1098,9 @@ export class Renderer {
     let instances = 0
     this.lastCullMs = 0
     let culled = this.cullDraws ? this.cullFor(scene, ctx) : null
+    if (bandIsStrip && culled && band) {
+      culled = this.stripRuns(scene, ctx, main, band)
+    }
     let slot = 0
     const list = scene.batches
     // Two phases. Every group's texture is rendered first (children before
@@ -1306,6 +1546,7 @@ export class Renderer {
     const at = this.keptAt
     this.keptAt = [main.ox, main.oy, main.sx, main.sy]
     if (!at || at[0] !== main.ox || at[2] !== main.sx || at[3] !== main.sy) {
+      this.valid = []
       return 'all'
     }
     if (at[1] === main.oy) {
@@ -1315,6 +1556,7 @@ export class Renderer {
     const s = (at[1] - main.oy) * main.sy
     const r = Math.round(s)
     if (Math.abs(s - r) > 1e-3 || Math.abs(r) >= h || !this.kept) {
+      this.valid = []
       return 'all'
     }
     if (this.keptSpare?.width !== w || this.keptSpare.height !== h) {
@@ -1353,6 +1595,16 @@ export class Renderer {
       }
     }
     this.pending = out
+    // Valid rows move with the pixels too.
+    const valid: [number, number][] = []
+    for (const [a, b] of this.valid) {
+      const y0 = clamp(a + r, h)
+      const y1 = clamp(b + r, h)
+      if (y1 > y0) {
+        valid.push([y0, y1])
+      }
+    }
+    this.valid = valid
     return fresh
   }
 
@@ -1416,6 +1668,7 @@ export class Renderer {
 
   private releaseKept(): void {
     this.pending = []
+    this.valid = []
     this.stripFrom = null
     this.kept?.destroy()
     this.keptSpare?.destroy()

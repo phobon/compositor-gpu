@@ -29,6 +29,7 @@
 //   --nopatchopacity  perf.html with CompositorOptions.patchOpacity off
 //   --norefit      perf.html with CompositorOptions.refitBatches off
 //   --nostrips     perf.html with CompositorOptions.reanchorStrips off
+//   --noskip       perf.html with CompositorOptions.skipUnchanged off
 //   --groups N     elements the `groups` / `fade` scenarios put below
 //                  opacity 1 (default 48)
 //   --ballast N    perf.html?ballast=N: N rounds of extra fragment work
@@ -392,6 +393,7 @@ async function main(): Promise<void> {
         (flag('nopatchopacity') ? '&nopatchopacity' : '') +
         (flag('norefit') ? '&norefit' : '') +
         (flag('nostrips') ? '&nostrips' : '') +
+        (flag('noskip') ? '&noskip' : '') +
         (arg('groups') ? `&groups=${arg('groups')}` : '') +
         (arg('ballast') ? `&ballast=${arg('ballast')}` : '')
       await page.goto(`${base}perf.html?n=${n}${cull}`, { waitUntil: 'load' })
