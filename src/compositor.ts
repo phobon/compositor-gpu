@@ -8,7 +8,6 @@ import {
   IGNORE_ATTR,
   isIgnored
 } from './dom/observer'
-import { textReadStats } from './dom/text_runs'
 import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
 import { blendMaterials } from './gpu/blend'
@@ -1110,7 +1109,7 @@ export async function createCompositor(
       patchedReads: reader.patchedReads,
       refits: scene.refits,
       sync: { ...sync.diag },
-      textRead: { ...textReadStats },
+      textRead: { ...reader.textRead },
       readMs,
       uploadMs: renderer.lastUploadMs,
       encodeMs: renderer.lastEncodeMs,

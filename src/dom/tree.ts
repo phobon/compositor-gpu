@@ -39,10 +39,10 @@ import {
   readBeforeAfter,
   readMarker
 } from './pseudo'
+import { ReadPass, type TextReadStats } from './read_pass'
 import { patch, rebuild } from './scene_sync'
-import { beginSelectionRead, colorSelected, selectionBoxes } from './selection'
+import { colorSelected, selectionBoxes } from './selection'
 import {
-  beginRead,
   clipRectFor,
   clipShapeFor,
   readBox,
@@ -50,13 +50,10 @@ import {
   readOpacity,
   readOutline,
   readShadows,
-  recordRadii,
-  setReadSpace,
-  toDocRect
+  recordRadii
 } from './styles'
 import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
 import {
-  beginTextRead,
   contentHeight,
   FAST_TEXT_READ,
   isPlaced,
@@ -95,7 +92,8 @@ import {
 // Fixed positioning: an element with `position: fixed` whose containing
 // block is the viewport (no ancestor traps it — see trapsFixed) starts a
 // viewport-space subtree. Every record under it, its node rects and its
-// clips are measured without the scroll offset (setReadSpace), and records
+// clips are measured without the scroll offset (the read pass's
+// viewport view, `pass.at('viewport')`), and records
 // carry `space: 'viewport'`, so scrolling still re-reads nothing. Ancestor
 // clips don't apply across that boundary. A trapped fixed element behaves
 // like an absolute one and stays in document space.
@@ -447,6 +445,9 @@ export function selectBoundaries<E extends Linked<E>>(
 export class SceneReader {
   private tree: ElNode | null = null
   private nodes = new WeakMap<Element, ElNode>()
+  /** The current read pass (read_pass.ts): scroll snapshot, selection,
+   * per-pass caches and text-read counts. */
+  private pass = new ReadPass(0, 0)
   /** List-item ordinals, per list, for the current read (see pseudo.ts). */
   private ordinals: OrdinalCache = new Map()
   /** Counters and quote depth for generated content, for the current
@@ -519,16 +520,25 @@ export class SceneReader {
     return this.nodes.get(el)
   }
 
-  /** Re-read the whole root subtree and rebuild the scene. */
-  fullRead(): void {
-    beginRead()
-    beginTextRead()
-    beginSelectionRead()
+  /** Text-read counts of the most recent read (`stats().textRead`). */
+  get textRead(): TextReadStats {
+    return this.pass.stats
+  }
+
+  /** Start a read: a new pass over the live document, and the reader's
+   * per-read counters reset. */
+  private startPass(): void {
+    this.pass = ReadPass.fromDocument()
     this.readElements = 0
     this.lastSceneMs = 0
     this.ordinals.clear()
     this.generated.clear()
     this.reads++
+  }
+
+  /** Re-read the whole root subtree and rebuild the scene. */
+  fullRead(): void {
+    this.startPass()
     this.lastRead = { kind: 'full', reason: '', scopes: 0, el: null }
     this.readAll()
   }
@@ -569,14 +579,7 @@ export class SceneReader {
     scopes: ReadonlySet<Element>,
     paintOnly?: ReadonlySet<Element>
   ): void {
-    beginRead()
-    beginTextRead()
-    beginSelectionRead()
-    this.readElements = 0
-    this.lastSceneMs = 0
-    this.ordinals.clear()
-    this.generated.clear()
-    this.reads++
+    this.startPass()
     this.lastRead = {
       kind: 'partial',
       reason: '',
@@ -724,14 +727,15 @@ export class SceneReader {
     if (this.stickies.size === 0) {
       return out
     }
-    beginRead()
+    // Only the scroll is needed: no selection snapshot.
+    const pass = new ReadPass(window.scrollX, window.scrollY)
     for (const el of this.stickies) {
       const n = this.nodes.get(el)
       if (!el.isConnected || !n) {
         continue
       }
-      setReadSpace(n.space)
-      if (!sameRect(n.rect, toDocRect(el.getBoundingClientRect()))) {
+      const rect = pass.at(n.space).docRect(el.getBoundingClientRect())
+      if (!sameRect(n.rect, rect)) {
         out.push(el)
       }
     }
@@ -805,11 +809,11 @@ export class SceneReader {
       position === 'fixed' && parentSpace === 'doc' && !parentTraps
     const space: Space = fixedRoot ? 'viewport' : parentSpace
     const clip = fixedRoot ? null : ancestorClip
-    setReadSpace(space)
+    const at = this.pass.at(space)
     if (position === 'sticky') {
       this.stickies.add(el)
     }
-    const rect = toDocRect(el.getBoundingClientRect())
+    const rect = at.docRect(el.getBoundingClientRect())
     const lin = composeLinear(
       parentLin,
       transformable ? composeIndividual(s) : null
@@ -892,7 +896,6 @@ export class SceneReader {
           if (kid) {
             node.kids.push(kid)
           }
-          setReadSpace(space)
         }
         this.inIgnored = wasIgnored
       }
@@ -1096,9 +1099,9 @@ export class SceneReader {
           if (kid) {
             node.kids.push(kid)
           }
-          setReadSpace(space) // a fixed child switched it
         } else if (layers.has('text') && child.nodeType === Node.TEXT_NODE) {
           const run = readTextNode(
+            at,
             child as Text,
             s,
             scene.allocId(),
@@ -1128,12 +1131,14 @@ export class SceneReader {
             // The selection highlight paints first, under the
             // decorations and glyphs; it rides in `decorations`.
             const hi = layers.has('boxes')
-              ? selectionBoxes(child as Text, childClip, () => scene.allocId())
+              ? selectionBoxes(at, child as Text, childClip, () =>
+                  scene.allocId()
+                )
               : null
             if (hi) {
               run.decorations = [...hi, ...(run.decorations ?? [])]
             }
-            colorSelected(child as Text, run)
+            colorSelected(this.pass, child as Text, run)
             node.kids.push(run)
           }
         }

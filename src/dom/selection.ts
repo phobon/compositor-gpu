@@ -1,36 +1,18 @@
 import type { BoxRecord, GlyphRun, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
-import { toDocRect } from './styles'
+import type { ReadPass, ReadView } from './read_pass'
 import { graphemes } from './text_runs'
 
 // The document selection's highlight (`::selection`): boxes of the
 // selected part of each text node, painted under its glyphs, and the
 // selected glyphs' colour (`colorSelected`).
 
+// The selection's ranges and the per-element caches belong to the read
+// pass (read_pass.ts); these hold for the page's lifetime.
 let fallback: RGBA | null = null
-/** The selection's ranges, snapshot by beginSelectionRead. */
-let ranges: Range[] = []
-/** Per read: highlight colour and line height per element. */
-const styleCache = new Map<Element, { fill: RGBA; lh: number }>()
-/** Per read: selected text colour per element (null: keeps its own). */
-const textCache = new Map<Element, RGBA | null>()
 /** Chrome on macOS keeps the text colour under the default highlight. */
 let keepsColour: boolean | null = null
 let fallbackText: RGBA | null = null
-
-/** Snapshot the selection for this read pass (empty when collapsed). */
-export function beginSelectionRead(): void {
-  const sel = document.getSelection()
-  ranges = []
-  styleCache.clear()
-  textCache.clear()
-  if (!sel || sel.isCollapsed) {
-    return
-  }
-  for (let i = 0; i < sel.rangeCount; i++) {
-    ranges.push(sel.getRangeAt(i))
-  }
-}
 
 /** The `::selection` background of text in `el`; the system `Highlight`
  * colour when the page sets none. */
@@ -44,9 +26,9 @@ function selectionColor(el: Element): RGBA {
 }
 
 /** The selected `[start, end)` offsets of `node`, one per range. */
-function selectedSpans(node: Text): [number, number][] {
+function selectedSpans(pass: ReadPass, node: Text): [number, number][] {
   const out: [number, number][] = []
-  for (const r of ranges) {
+  for (const r of pass.ranges) {
     if (!r.intersectsNode(node)) {
       continue
     }
@@ -69,7 +51,12 @@ function sameColor(a: RGBA, b: RGBA): boolean {
  * with no `::selection` rule at all (transparent background) Chrome uses
  * `HighlightText`, except on macOS, where the text keeps its colour.
  */
-function selectedTextColor(el: Element, own: RGBA): RGBA | null {
+function selectedTextColor(
+  pass: ReadPass,
+  el: Element,
+  own: RGBA
+): RGBA | null {
+  const textCache = pass.selectionText
   const hit = textCache.get(el)
   if (hit !== undefined) {
     return hit
@@ -102,16 +89,16 @@ function selectedTextColor(el: Element, own: RGBA): RGBA | null {
  * the node, so its source offset comes from re-segmenting the text; only
  * selected nodes pay for it.
  */
-export function colorSelected(node: Text, run: GlyphRun): void {
+export function colorSelected(pass: ReadPass, node: Text, run: GlyphRun): void {
   const el = node.parentElement
-  if (ranges.length === 0 || !el) {
+  if (pass.ranges.length === 0 || !el) {
     return
   }
-  const spans = selectedSpans(node)
+  const spans = selectedSpans(pass, node)
   if (spans.length === 0) {
     return
   }
-  const color = selectedTextColor(el, run.color)
+  const color = selectedTextColor(pass, el, run.color)
   if (!color) {
     return
   }
@@ -136,16 +123,18 @@ export function colorSelected(node: Text, run: GlyphRun): void {
  * (an approximation under a transform).
  */
 export function selectionBoxes(
+  at: ReadView,
   node: Text,
   clip: Rect | null,
   alloc: () => number
 ): BoxRecord[] | null {
   const el = node.parentElement
-  if (ranges.length === 0 || !el) {
+  if (at.pass.ranges.length === 0 || !el) {
     return null
   }
+  const styleCache = at.pass.selectionStyles
   let out: BoxRecord[] | null = null
-  for (const [start, end] of selectedSpans(node)) {
+  for (const [start, end] of selectedSpans(at.pass, node)) {
     const sub = document.createRange()
     sub.setStart(node, start)
     sub.setEnd(node, end)
@@ -164,7 +153,7 @@ export function selectionBoxes(
       if (cr.width <= 0 || cr.height <= 0) {
         continue
       }
-      const rect = toDocRect(cr)
+      const rect = at.docRect(cr)
       if (Number.isFinite(lh) && lh > rect.height) {
         rect.y -= (lh - rect.height) / 2
         rect.height = lh

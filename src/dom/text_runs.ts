@@ -2,7 +2,7 @@ import type { Glyph, GlyphRun, Rect, RGBA, TextShadow } from '../scene/records'
 import { isColorGrapheme } from '../text/glyp'
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
-import { toDocRect } from './styles'
+import type { ReadView } from './read_pass'
 import {
   type Affine,
   affine,
@@ -16,31 +16,6 @@ import {
  * into graphemes with Canvas 2D advances (see `readTextNode`). False reads
  * every grapheme with its own Range. */
 export const FAST_TEXT_READ = true
-
-/** Text-read counts since the last `beginTextRead` (`stats().textRead`). */
-export interface TextReadStats {
-  /** Graphemes given a glyph. */
-  graphemes: number
-  /** Of those, read with their own Range (not split from a chunk). */
-  perGrapheme: number
-  /** Range layout queries issued. */
-  ranges: number
-}
-
-export const textReadStats: TextReadStats = {
-  graphemes: 0,
-  perGrapheme: 0,
-  ranges: 0
-}
-
-/** Start a read pass: zero the counts and forget the per-style fields
- * (`runStyle`), which only hold within one synchronous pass. */
-export function beginTextRead(): void {
-  textReadStats.graphemes = 0
-  textReadStats.perGrapheme = 0
-  textReadStats.ranges = 0
-  runStyles = new WeakMap()
-}
 
 // Grapheme segmenter (browser-native). Falls back to Array.from for old envs.
 const segmenter =
@@ -136,6 +111,7 @@ export function graphemeClass(cell: string): GraphemeClass {
  * the rect width.
  */
 export function readTextNode(
+  at: ReadView,
   node: Text,
   s: CSSStyleDeclaration,
   runId: number,
@@ -148,7 +124,7 @@ export function readTextNode(
   if (!text?.trim()) {
     return null
   }
-  const rs = runStyle(s)
+  const rs = runStyle(at, s)
   // Hidden text paints nothing (and so no decorations); a descendant
   // element can still set `visibility: visible` for its own text.
   if (!rs.visible) {
@@ -203,13 +179,14 @@ export function readTextNode(
     glyphs.push(g)
   }
   const range = document.createRange()
-  const split = fast ? splitSetup(s) : null
+  const split = fast ? splitSetup(at, s) : null
   if (split) {
+    split.at = at
     split.lin = lin
     split.contentH = -1
     split.style = s
   }
-  const stats = textReadStats
+  const stats = at.pass.stats
   const lined =
     split?.lines === true &&
     readLines(node, range, split, cells, offs, shown, push)
@@ -234,7 +211,7 @@ export function readTextNode(
         const r = range.getBoundingClientRect()
         stats.ranges++
         if (r.width > 0 && r.height > 0) {
-          push(k, toDocRect(r))
+          push(k, at.docRect(r))
           stats.perGrapheme++
         }
       }
@@ -265,7 +242,7 @@ export function readTextNode(
 }
 
 /** The run-level fields `readTextNode` derives from a computed style. */
-interface RunStyle {
+export interface RunStyle {
   visible: boolean
   color: RGBA
   fontSize: number
@@ -284,11 +261,10 @@ interface RunStyle {
   split?: SplitSetup | null
 }
 
-// Per read pass (see beginTextRead): an element's text nodes share its
-// computed style object, and the style can't change within a pass.
-let runStyles = new WeakMap<CSSStyleDeclaration, RunStyle>()
-
-function runStyle(s: CSSStyleDeclaration): RunStyle {
+/** `s`'s run fields, cached for the pass (an element's text nodes share
+ * its computed style object, which can't change within a pass). */
+function runStyle(at: ReadView, s: CSSStyleDeclaration): RunStyle {
+  const runStyles = at.pass.runStyles
   const hit = runStyles.get(s)
   if (hit) {
     return hit
@@ -324,6 +300,9 @@ function isBlank(cell: string): boolean {
 
 /** Canvas 2D state that reproduces an element's text advances. */
 interface SplitSetup {
+  /** The pass and space the node being read measures into; set per
+   * node. */
+  at: ReadView
   ctx: CanvasRenderingContext2D
   font: string
   kerning: CanvasFontKerning
@@ -349,10 +328,10 @@ interface SplitSetup {
 }
 
 /** `readSplitSetup`, once per style object per read pass. */
-function splitSetup(s: CSSStyleDeclaration): SplitSetup | null {
-  const rs = runStyle(s)
+function splitSetup(at: ReadView, s: CSSStyleDeclaration): SplitSetup | null {
+  const rs = runStyle(at, s)
   if (rs.split === undefined) {
-    rs.split = readSplitSetup(s, rs)
+    rs.split = readSplitSetup(at, s, rs)
   }
   return rs.split
 }
@@ -366,6 +345,7 @@ function splitSetup(s: CSSStyleDeclaration): SplitSetup | null {
  * The width checks back this up.
  */
 function readSplitSetup(
+  at: ReadView,
   s: CSSStyleDeclaration,
   rs: RunStyle
 ): SplitSetup | null {
@@ -426,6 +406,7 @@ function readSplitSetup(
   const lastAlign =
     (s as unknown as { textAlignLast?: string }).textAlignLast ?? ''
   return {
+    at,
     ctx,
     font,
     kerning,
@@ -528,7 +509,7 @@ function frameOf(
   if (!lin) {
     return null
   }
-  const d = toDocRect(r)
+  const d = split.at.docRect(r)
   let size = solveLocalSize(lin, d.width, d.height)
   if (!size) {
     if (split.contentH < 0 && split.style) {
@@ -617,7 +598,7 @@ function readLines(
   }
   range.selectNodeContents(node)
   const rects = range.getClientRects()
-  textReadStats.ranges++
+  split.at.pass.stats.ranges++
   const sp = split.space
   const width = (c: number): number =>
     (widths[c]?.[0] ?? 0) + ls * ((ends[c] ?? 0) - (starts[c] ?? 0))
@@ -669,7 +650,7 @@ function readLines(
         range.setStart(node, 0)
         range.setEnd(node, offs[starts[0] ?? 0] ?? 0)
         const lead = widthOf(range.getBoundingClientRect(), split) ?? 0
-        textReadStats.ranges++
+        split.at.pass.stats.ranges++
         matched = fit(0, lead > sp / 2 ? sp : 0, lw)
       } else if (spaced >= 0) {
         matched = spaced
@@ -710,17 +691,17 @@ function readLines(
         range.setStart(node, start)
         range.setEnd(node, start + (cells[k] ?? '').length)
         const g = range.getBoundingClientRect()
-        textReadStats.ranges++
+        split.at.pass.stats.ranges++
         if (g.width > 0 && g.height > 0) {
-          push(k, toDocRect(g))
-          textReadStats.perGrapheme++
+          push(k, split.at.docRect(g))
+          split.at.pass.stats.perGrapheme++
         }
       }
       continue
     }
     if (r !== baseOf) {
       baseOf = r
-      base = toDocRect(r)
+      base = split.at.docRect(r)
       frame = frameOf(r, split)
     }
     if (frame) {
@@ -844,7 +825,7 @@ function readChunk(
   range.setStart(node, offs[i] ?? 0)
   range.setEnd(node, end)
   const r = range.getBoundingClientRect()
-  textReadStats.ranges++
+  split.at.pass.stats.ranges++
   const frame = frameOf(r, split)
   if (split.lin && !frame) {
     return false
@@ -870,7 +851,7 @@ function readChunk(
     pushPlaced(suf, m, ls, i, 0, frame, push)
     return true
   }
-  const base = toDocRect(r)
+  const base = split.at.docRect(r)
   pushSplit(suf, m, ls, i, base.x, base, push)
   return true
 }

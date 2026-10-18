@@ -69,7 +69,11 @@ in 123. `cullDraws: false` turns it off; `test:perf` and `test:profile`
 take `--nocull` for A/B, and `stats().instances` counts what was
 submitted. Group targets are not culled.
 `readMs` / `uploadMs` / `encodeMs` are in `stats()`. Don't call `window.scrollX`
-in the reader — `beginRead()` snapshots it once per pass (`toDocRect`).
+in the reader — the read pass (`dom/read_pass.ts`, `ReadPass`, one per
+full or partial read) snapshots it, with the selection and the per-pass
+caches and text-read counts; rects are converted through a view for the
+space they measure into (`pass.at(space).docRect(r)`), passed down as an
+argument (`readTextNode(at, …)`, `selectionBoxes(at, …)`).
 
 **Frame profiler**: `compositor.profile` (`src/profile/`). While a
 recording runs (`start()` / `mark()` / `stop()`) or the HUD is shown
@@ -312,7 +316,7 @@ only set dirty flags; they never touch GPU state. One rAF drains them.
 ### Two coordinate spaces
 Everything in `scene/records.ts` is in **document space** (CSS px from the
 document's top-left: `getBoundingClientRect()` + `scrollX/Y`, via
-`toDocRect`). `doc_to_clip()` in `gpu/frame.ts` maps that to clip space in the
+`pass.at('doc').docRect`). `doc_to_clip()` in `gpu/frame.ts` maps that to clip space in the
 vertex shader. This is the load-bearing decision: **scrolling writes one uniform
 and re-reads nothing.** Never store viewport-relative coordinates in a
 doc-space record, and never make scroll a reason to re-walk the DOM.
@@ -335,8 +339,8 @@ would otherwise ride a frame with the page during fast scrolls); the
 whole page then trails the scroll by up to a frame instead.
 
 The one exception is `position: fixed` on the viewport: the reader walks
-that subtree with `setReadSpace('viewport')` (no scroll offset in
-`toDocRect`) and tags its records `space: 'viewport'`; every vertex shader
+that subtree through the pass's viewport view (`pass.at('viewport')`: no
+scroll offset) and tags its records `space: 'viewport'`; every vertex shader
 calls `to_clip(p, space)`, which subtracts `frame.scroll` (doc) or
 `frame.vscroll` (viewport: the target origin minus the real scroll, i.e.
 `anchor - scroll` on the canvas and `groupOrigin - scroll` on a group
