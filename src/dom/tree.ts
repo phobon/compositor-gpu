@@ -8,17 +8,13 @@ import type {
   GlyphRun,
   ImageRecord,
   Rect,
-  SceneRecord,
   Space
 } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import {
-  assignPaintOrder,
   contextZIndex,
   createsRealStackingContext,
-  createsStackingContext,
-  type OpacityGroup,
-  type StackingContext
+  createsStackingContext
 } from '../scene/stacking'
 import type { Layer } from '../types'
 import {
@@ -35,14 +31,6 @@ import {
 import { GeneratedState } from './generated'
 import { IGNORE_ATTR, isIgnored } from './observer'
 import {
-  isGroup,
-  matchRecords,
-  type RecordPair,
-  sameContexts,
-  sameGeometry,
-  subtreeRecords
-} from './patch'
-import {
   type GlyphRef,
   type OrdinalCache,
   type PseudoHost,
@@ -51,6 +39,7 @@ import {
   readBeforeAfter,
   readMarker
 } from './pseudo'
+import { patch, rebuild } from './scene_sync'
 import { beginSelectionRead, colorSelected, selectionBoxes } from './selection'
 import {
   beginRead,
@@ -92,7 +81,7 @@ import {
 // every record the last read produced, in document order. A full read
 // rebuilds it; a partial read re-reads only the subtrees a mutation could
 // have changed and splices them in. Either way the scene is then rebuilt
-// from the tree on the CPU (flatten → assignPaintOrder → sort), with no DOM
+// from the tree on the CPU (scene_sync.ts: flatten → assignPaintOrder → sort), with no DOM
 // access.
 //
 // Transforms: every element carries the accumulated linear part of its
@@ -380,82 +369,6 @@ function sameFloats(a: ElNode, b: ElNode): boolean {
     }
   }
   return true
-}
-
-/**
- * Build the stacking-context tree from an element tree, exactly as a DOM
- * walk would: a context-creating element's own records land first in a new
- * context (see stacking.ts), otherwise in the current one; kids follow in
- * document order. `sink` sees every record once. Returns the opacity
- * groups (see stacking.ts). CPU only.
- */
-export function flatten(
-  root: ElNode,
-  sink?: (record: SceneRecord) => void
-): OpacityGroup[] {
-  const visit = (node: ElNode, ctx: StackingContext): void => {
-    let c = ctx
-    if (node.isContext) {
-      c = {
-        z: node.ctxZ,
-        items: [],
-        ownCount: node.own.length,
-        alpha: node.alpha
-      }
-      if (node.filter) {
-        c.filter = node.filter
-      }
-      if (node.isolate) {
-        c.isolate = true
-      }
-      if (node.blendGroup) {
-        c.blend = node.blendGroup
-      }
-      if (node.holdGroup) {
-        c.hold = true
-      }
-      c.key = node
-      if (node.region !== undefined) {
-        c.region = node.region
-        c.box = node.rect
-        c.clip = node.regionClip ?? null
-        c.space = node.space
-      }
-      ctx.items.push(c)
-    }
-    for (const r of node.own) {
-      c.items.push(r)
-      sink?.(r)
-    }
-    for (const kid of node.kids) {
-      if (kid.kind === 'element') {
-        visit(kid, c)
-      } else if (kid.kind === 'box') {
-        c.items.push(kid)
-        sink?.(kid)
-      } else {
-        // Underlines/overlines paint under the glyphs they decorate,
-        // line-through over them.
-        if (kid.decorations) {
-          for (const d of kid.decorations) {
-            c.items.push(d)
-            sink?.(d)
-          }
-        }
-        c.items.push(kid)
-        sink?.(kid)
-        if (kid.decorationsOver) {
-          for (const d of kid.decorationsOver) {
-            c.items.push(d)
-            sink?.(d)
-          }
-        }
-      }
-    }
-  }
-  const rootCtx: StackingContext = { z: 0, items: [], ownCount: 0 }
-  visit(root, rootCtx)
-  return assignPaintOrder(rootCtx)
 }
 
 interface Linked<E> {
@@ -762,69 +675,12 @@ export class SceneReader {
     this.rebuildScene()
   }
 
-  /**
-   * Apply re-read subtrees (old node, new node) to the scene in place:
-   * when each yields the same records as before (dom/patch.ts), the new
-   * records take the old ones' places, and batches are rebuilt only if
-   * geometry or materials changed. Records that moved inside an opacity
-   * group would change its bounds: those rebuild. False (scene untouched)
-   * when the scene has to be rebuilt instead.
-   */
+  /** Apply re-read subtrees to the scene in place (scene_sync.ts); false
+   * (scene untouched) when it has to be rebuilt instead. */
   private patchScene(swaps: readonly [ElNode, ElNode][]): boolean {
     const t0 = performance.now()
-    const scene = this.scene
-    const pairs: RecordPair[] = []
-    let moved = false
-    const contexts: [ElNode, ElNode][] = []
-    for (const [old, fresh] of swaps) {
-      const before = subtreeRecords(old, this.patchOpacity)
-      const after = subtreeRecords(fresh, this.patchOpacity)
-      const m =
-        before && after && sameContexts(before.contexts, after.contexts)
-          ? matchRecords(before.records, after.records)
-          : null
-      if (!m || !before || !after) {
-        return false
-      }
-      pairs.push(...m.pairs)
-      moved ||= m.moved
-      before.contexts.forEach((c, i) => {
-        const f = after.contexts[i]
-        if (f && isGroup(c)) {
-          contexts.push([c, f])
-        }
-      })
-    }
-    if (
-      moved &&
-      pairs.some(([r]) =>
-        scene.groups.some((g) => g.first <= r.z && r.z < g.last)
-      )
-    ) {
+    if (!patch(this.scene, swaps, { contexts: this.patchOpacity })) {
       return false
-    }
-    const material = (r: SceneRecord): number | undefined =>
-      'material' in r ? r.material : undefined
-    const materials = pairs.map(([r]) => material(r))
-    if (!scene.replace(pairs)) {
-      return false
-    }
-    // The groups of re-read contexts take the new alpha (and key).
-    for (const [old, fresh] of contexts) {
-      const g = scene.groups.find((x) => x.key === old)
-      if (g) {
-        g.alpha = fresh.alpha
-        g.key = fresh
-      }
-    }
-    scene.assign?.()
-    if (pairs.some(([, r], i) => material(r) !== materials[i])) {
-      scene.rebatch()
-    } else if (moved) {
-      // Keep the batch list if it is still valid for the moved records.
-      scene.refit(
-        pairs.filter(([a, b]) => !sameGeometry(a, b)).map(([, b]) => b)
-      )
     }
     this.lastSceneMs += performance.now() - t0
     return true
@@ -912,16 +768,7 @@ export class SceneReader {
 
   private rebuildScene(): void {
     const t0 = performance.now()
-    const scene = this.scene
-    scene.clear()
-    if (this.tree) {
-      scene.groups = flatten(this.tree, (r) => scene.add(r))
-      // Transformed groups composite inside their ancestors' clip shape.
-      for (const g of scene.groups) {
-        scene.clipIndex(g.clip)
-      }
-    }
-    scene.sort()
+    rebuild(this.scene, this.tree)
     this.lastSceneMs += performance.now() - t0
   }
 

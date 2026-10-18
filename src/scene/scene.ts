@@ -166,7 +166,7 @@ export class Scene {
 
   /**
    * Replace records in place (each new record takes its old one's z and
-   * index; see dom/patch.ts for when that's valid). Batches are kept:
+   * index; see dom/scene_sync.ts for when that's valid). Batches are kept:
    * call rebatch() when geometry or materials changed. Records' identity
    * changes, so `version` is bumped. False (nothing changed) when an old
    * record isn't in the scene.
@@ -269,10 +269,13 @@ export class Scene {
     this.buildBatchList()
   }
 
-  /** Re-tag materials and rebuild batches over the current order (records
-   * replaced in place). */
-  rebatch(): void {
-    this.assign?.()
+  /** Rebuild batches over the current order (records replaced in place),
+   * re-tagging materials first unless `retag` is false (the caller just
+   * did). */
+  rebatch(opts: { retag?: boolean } = {}): void {
+    if (opts.retag ?? true) {
+      this.assign?.()
+    }
     this.buildBatchList()
   }
 
@@ -280,7 +283,8 @@ export class Scene {
    * After replace() with records that moved (same materials): keep the
    * batch list when it is still valid for their new footprints
    * (batches.ts refitBatches), else rebuild it. Kept: the records are
-   * queued in `moved` for the culler. True when kept.
+   * queued in `moved` for the culler. True when kept. Materials must be
+   * tagged already (scene_sync.ts patch).
    */
   refit(records: readonly SceneRecord[]): boolean {
     const moved: MovedRecord[] = []
@@ -320,7 +324,7 @@ export class Scene {
       this.refits++
       return true
     }
-    this.rebatch()
+    this.rebatch({ retag: false })
     return false
   }
 

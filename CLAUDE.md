@@ -380,10 +380,15 @@ the mutated element's border-box rect changed (siblings could move); inline and
 `display:contents` elements are never boundaries. A partial read that
 leaves each re-read subtree's records the same in number, kind, order,
 space, clip (no exact shape), per-run glyph and shadow counts, with no
-stacking context or region in it (`dom/patch.ts`), is applied by
-`Scene.replace` (new records take the old ones' z and index; `version`
-bumps) instead of `rebuildScene`; batches are rebuilt (`Scene.rebatch`)
-only if materials changed, and records that moved inside an opacity
+stacking context or region in it, is patched in place instead of
+rebuilt. `dom/scene_sync.ts` owns both (`rebuild(scene, tree)`,
+`patch(scene, swaps, { contexts })`) and `walkRecords`, the one place a
+subtree's record order is defined (`flatten` and the patch's record
+pairing both use it); `npm run test:unit` checks a patched scene equals
+one rebuilt from the edited tree. A patch goes through `Scene.replace`
+(new records take the old ones' z and index; `version` bumps), re-tags
+materials once, and rebuilds batches (`Scene.rebatch({ retag: false })`)
+only if materials changed; records that moved inside an opacity
 group fall back to the rebuild. Moved records go through `Scene.refit`
 (`refitBatches`, `refitBatches: false` / `?norefit` to compare): the
 list is kept when no moved record's new footprint overlaps a member of
