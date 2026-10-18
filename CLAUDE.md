@@ -175,7 +175,9 @@ displace section,
 and on `playground/transition.html` `fx-transition-a` / `-b` (each
 state), `fx-transition-0` (captured a, swapped to b, settled, progress
 0: must equal `-a` exactly), `fx-transition-half`, `fx-transition-1`
-(must equal `-b` exactly),
+(must equal `-b` exactly), on `playground/gallery.html?vr`
+`fx-gallery-pre`, `fx-gallery` (the ring held still) and
+`fx-gallery-off` (must equal `-pre` exactly),
 `fx-progressive` (progressiveBlur toward the bottom corners, as a region
 pass on an arc of images), and on the transform section
 `fx-transform-off`, `fx-transform` (three cards under pinned layer
@@ -259,7 +261,8 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
 'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
 `clickRipple`/`ripple`/`dissolve`/`rgbSplit`/`glitchSlices`/
-`vignette`/`lens`/`reveal`/`develop`/`radialReveal` (a transition); `fx.transition` (`fx/transition.ts`: a fullscreen pass with
+`vignette`/`lens`/`reveal`/`develop`/`gallery` (a Layer over the
+`images` binding, `fx/imageArray.ts`)/`radialReveal` (a transition); `fx.transition` (`fx/transition.ts`: a fullscreen pass with
 a held viewport snapshot, `prev(uv)` in group 3, shown alone until
 `settled()` finds `graph.mirrorComplete()` on two frames; `npx tsx
 test/transition/run.ts` times swaps on `playground/transition.html`). M4 (authoring, `docs/EFFECTS.md`

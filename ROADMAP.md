@@ -612,14 +612,18 @@ perspective transforms · culling · WebGL2 backend.
         with a bent, fringed edge; `playground/transition.html` uses it,
         `?lens` adds a lens). 2026-10-18: transition frames `gpu total`
         p95 1.16 ms at dpr 2 (0.43 with a plain circle), 0 dropped
-  - [ ] P4 element intro: `reveal` (one region pass: blur, red/blue
+  - [x] P4 element intro: `reveal` (one region pass: blur, red/blue
         split, slices, wash and fade by one `progress`) and `develop`
         (an image material: fade in from washed and grey); shots
-        `fx-reveal`, `fx-reveal-0`, `fx-reveal-then-off` (built
+        `fx-reveal`, `fx-reveal-0`, `fx-reveal-then-off` (2026-10-18)
+  - [ ] P5 3D image gallery: `gallery` (a Layer of image planes on a
+        ring, projected on the CPU, sorted back to front, perspective-
+        correct texturing, anti-aliased rounded edges) over a new layer
+        binding, `images` (`fx/imageArray.ts`: several image records in
+        one mipmapped texture array); `playground/gallery.html` opens
+        and closes it through radialReveal and a white flash; shots
+        `fx-gallery-pre` / `fx-gallery` / `fx-gallery-off` (built
         2026-10-18, not yet run)
-  - [ ] P5 3D image gallery: an `fx.layer` of image quads under its own
-        perspective, sorted back to front, edges anti-aliased in the
-        shader
 
 ## Non-goals (for now)
 CSS filters, the other blend modes, print, nested independent scrollers,

@@ -2,6 +2,7 @@
 /// <reference path="../../playground/perf.d.ts" />
 /// <reference path="../../playground/trail.d.ts" />
 /// <reference path="../../playground/transition.d.ts" />
+/// <reference path="../../playground/gallery.d.ts" />
 // Effects harness: loads playground/fx.html?vr (time and pointer pinned via
 // fx.__override), captures each `section[data-vr]` GPU-only with its
 // effect state, and diffs against local goldens (regression gate 0.5%;
@@ -93,6 +94,9 @@
 //                    equal to fx-transition-a exactly
 //   fx-transition-half  the reveal at progress 0.5
 //   fx-transition-1  progress 1: equal to fx-transition-b exactly
+//   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
+//                    the page, the ring held still over it, then the ring
+//                    off again (equal to -pre exactly)
 //                 exactly
 //   fx-trail-reuse  the stroke through the page pass alone: the scene is
 //                 still, so frames reuse it (stats().sceneReused); equal
@@ -1198,6 +1202,66 @@ async function main(): Promise<void> {
         const one = await shot('fx-transition-1')
         await p.evaluate(() => window.__tr?.reveal.end())
         exact('fx-transition-1', await shot('fx-transition-b'), one)
+      } finally {
+        await p.close()
+      }
+    }
+    if (['fx-gallery-pre', 'fx-gallery', 'fx-gallery-off'].some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`gallery: ${m.text()}`)
+        }
+      })
+      try {
+        await p.goto(`${url}gallery.html?vr`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__gallery), null, {
+          timeout: 30_000
+        })
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        const nav = await p.evaluate(
+          () => document.getElementById('nav')?.getBoundingClientRect().top
+        )
+        const clip = {
+          x: 0,
+          y: 0,
+          width: VW,
+          height: Math.floor(nav ?? VH) - 8
+        }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(10)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const pre = await shot('fx-gallery-pre')
+        await p.evaluate(() => window.__gallery?.show(true))
+        // The image slices are copied a frame after the layer's first.
+        await frames(20)
+        await shot('fx-gallery')
+        await p.evaluate(() => window.__gallery?.show(false))
+        const post = await shot('fx-gallery-off')
+        const n = exactDiff(pre, post)
+        results.push({
+          name: 'fx-gallery-off (exact)',
+          regressionPct: diffPng(
+            pre,
+            post,
+            resolve(outDir, 'fx-gallery-off-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
       } finally {
         await p.close()
       }

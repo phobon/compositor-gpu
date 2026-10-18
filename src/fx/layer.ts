@@ -6,6 +6,7 @@ import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { type Hook, hookSource, LAYER_HOOKS } from './gpu'
+import { ImageArray } from './imageArray'
 import {
   createParams,
   type ParamBlock,
@@ -94,6 +95,35 @@ fn image_level(uv : vec2f, lod : f32) -> vec4f {
 }
 fn image(uv : vec2f) -> vec4f {
   return image_level(uv, 0.0);
+}
+`
+
+// With `images`: several elements' images, a texture array slice each.
+const IMAGES_WGSL = /* wgsl */ `
+@group(1) @binding(12) var fx_images : texture_2d_array<f32>;
+@group(1) @binding(13) var fx_images_smp : sampler;
+@group(1) @binding(14) var<storage, read> fx_images_info : array<vec4f>;
+
+fn images_count() -> u32 {
+  return FX_IMAGES;
+}
+// Image k's texel size (0 until it decodes).
+fn image_size_at(k : u32) -> vec2f {
+  return fx_images_info[min(k, FX_IMAGES - 1u)].xy;
+}
+// Image k at uv (0..1 over the whole image, y down), premultiplied, at
+// mip level lod.
+fn image_at_level(k : u32, uv : vec2f, lod : f32) -> vec4f {
+  let c = textureSampleLevel(fx_images, fx_images_smp,
+    clamp(uv, vec2f(0.0), vec2f(1.0)), i32(min(k, FX_IMAGES - 1u)), lod);
+  return vec4f(c.rgb * c.a, c.a);
+}
+// As image_at_level, the level from uv's screen derivatives (fragment
+// hook only, in uniform control flow).
+fn image_at(k : u32, uv : vec2f) -> vec4f {
+  let c = textureSample(fx_images, fx_images_smp,
+    clamp(uv, vec2f(0.0), vec2f(1.0)), i32(min(k, FX_IMAGES - 1u)));
+  return vec4f(c.rgb * c.a, c.a);
 }
 `
 
@@ -269,6 +299,14 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
   /** Sample this element's image record in the hooks: `image(uv)`,
    * `image_level(uv, lod)` (premultiplied). */
   image?: Target | Element
+  /** Sample these elements' image records in the fragment hook:
+   * `image_at(k, uv)`, `image_at_level(k, uv, lod)` (premultiplied),
+   * `image_size_at(k)`, `images_count()`. Each is copied, stretched,
+   * into a `imageSize` × `imageSize` slice of a mipmapped texture
+   * array. */
+  images?: readonly (Target | Element)[]
+  /** Slice size for `images`, texels. Default 512. */
+  imageSize?: number
   /** Draw this element's mirrored glyphs: `glyph_count()`,
    * `glyph_point(k, uv)`, `glyph_size(k)`, `glyph_color(k)`,
    * `glyph_coverage(k, uv)` (k is the index into `target.glyphs`). */
@@ -367,6 +405,9 @@ function layerSource(
     `const FX_SPACE : f32 = ${o.space === 'viewport' ? '1.0' : '0.0'};`,
     BINDINGS_WGSL,
     o.image ? IMAGE_WGSL : '',
+    o.images?.length
+      ? `const FX_IMAGES : u32 = ${o.images.length}u;\n${IMAGES_WGSL}`
+      : '',
     o.glyphs ? GLYPHS_WGSL : '',
     o.trail ? trailHelpers(1, 10) : '',
     HELPERS_WGSL,
@@ -501,6 +542,10 @@ export function createLayer<S extends ParamSchema>(
     x === undefined ? null : x instanceof Element ? x : x.el
   const imageEl = elOf(o.image)
   const glyphEl = elOf(o.glyphs)
+  const imageEls = (o.images ?? []).map((x) => elOf(x) as Element)
+  const images = imageEls.length
+    ? new ImageArray(device, graph, imageEls, o.imageSize ?? 512, label)
+    : null
   const trail: TrailState | null = trailState(o.trail)
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({
     binding,
@@ -524,6 +569,17 @@ export function createLayer<S extends ParamSchema>(
           ]
         : []),
       ...(glyphEl ? [6, 7, 8, 9].map(storage) : []),
+      ...(images
+        ? [
+            {
+              binding: 12,
+              visibility: VF,
+              texture: { viewDimension: '2d-array' as const }
+            },
+            { binding: 13, visibility: VF, sampler: {} },
+            storage(14)
+          ]
+        : []),
       ...(trail
         ? [
             storage(10),
@@ -736,6 +792,13 @@ export function createLayer<S extends ParamSchema>(
       )
       key.push(t.field)
     }
+    if (images) {
+      entries.push(
+        { binding: 12, resource: images.view },
+        { binding: 13, resource: images.sampler },
+        { binding: 14, resource: { buffer: images.info } }
+      )
+    }
     if (imageEl || glyphEl) {
       device.queue.writeBuffer(fxBuf, 48, side)
     }
@@ -861,6 +924,7 @@ export function createLayer<S extends ParamSchema>(
       } finally {
         inFrame = false
       }
+      images?.update()
       ensureData()
       if (dataBuf) {
         for (const [lo, hi] of mergeRanges(dirty, count)) {
@@ -913,6 +977,7 @@ export function createLayer<S extends ParamSchema>(
     destroy() {
       removeExtra()
       res.destroy()
+      images?.destroy()
       glyphIndex.destroy()
       dataBuf?.destroy()
       fxBuf.destroy()

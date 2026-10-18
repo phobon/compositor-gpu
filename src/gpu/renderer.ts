@@ -453,6 +453,9 @@ export class Renderer {
   private fixedScrollY: number | null = null
   /** Active non-builtin materials when `valid` was drawn. */
   private validMats: string | null = ''
+  /** An extra layer was drawn into `valid` (its pixels stay there until
+   * the rows are redrawn without it). */
+  private validExtras = false
   /** layerState's key and doc-y rows when `kept` was last drawn. */
   private layerKey = ''
   private layerRows: [number, number][] = []
@@ -716,10 +719,10 @@ export class Renderer {
     ) {
       return true
     }
-    for (const layer of this.extras.values()) {
-      if (layer.active()) {
-        return true
-      }
+    // An active extra layer draws differently every frame; one that was
+    // drawn and has stopped leaves its pixels in the kept rows.
+    if (this.validExtras || this.extrasActive()) {
+      return true
     }
     // Materials: one that may draw differently this frame, or a change in
     // which are active (records switch pipelines).
@@ -729,6 +732,15 @@ export class Renderer {
     // Layer transforms and regions are damage (layerState), unless they
     // nest or sit in viewport space.
     return this.layerState(scene, ctx).fallback
+  }
+
+  private extrasActive(): boolean {
+    for (const layer of this.extras.values()) {
+      if (layer.active()) {
+        return true
+      }
+    }
+    return false
   }
 
   /** Ids of the active non-builtin materials; with `changing`, null when
@@ -1258,6 +1270,7 @@ export class Renderer {
       this.layerKey = layers.key
       this.layerRows = layers.rows
       this.validMats = this.activeMats(false)
+      this.validExtras = this.extrasActive()
     }
     main.scissor = band
     this.lastFillRows =

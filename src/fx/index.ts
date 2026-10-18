@@ -78,6 +78,11 @@ export {
   edgeLens
 } from './presets/edgeLens'
 export {
+  type GalleryOptions,
+  type GallerySchema,
+  gallery
+} from './presets/gallery'
+export {
   type GlitchSlicesOptions,
   type GlitchSlicesSchema,
   glitchSlices

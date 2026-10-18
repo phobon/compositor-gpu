@@ -275,6 +275,8 @@ fx.layer({
   vertex: hook, fragment: hook,      // WGSL or tgpu.fn (see TypeGPU)
   simulate?: hook,                   // compute step, see below
   image?: target | element,          // sample its image: image(uv)
+  images?: (target | element)[],     // several: image_at(k, uv)
+  imageSize?: 512,                   // texels per images slice
   glyphs?: target | element,         // draw its glyphs: glyph_*(k, ...)
   params?: { ...schema },
   enabled?: true, continuous?: false,
@@ -358,6 +360,23 @@ fn image_level(uv : vec2f, lod : f32) -> vec4f  // lod > 0 can bleed
 
 The whole image (its texels, not the `object-fit` crop). Transparent
 until it decodes; atlas and texture changes are followed.
+
+**`images: targets`** binds several elements' image records, each
+copied (stretched) into its own `imageSize` × `imageSize` slice of a
+mipmapped texture array, from the source's own mips:
+
+```wgsl
+fn images_count() -> u32
+fn image_size_at(k : u32) -> vec2f          // texels, 0 until decoded
+fn image_at(k : u32, uv : vec2f) -> vec4f   // premultiplied; mip from uv's
+                                            // derivatives: fragment hook,
+                                            // uniform control flow
+fn image_at_level(k : u32, uv : vec2f, lod : f32) -> vec4f
+```
+
+A slice is re-copied (in its own submit, before the frame renders) when
+its source's view or texels change: a decode, an atlas repack. It lags
+the image record by a frame.
 
 **`glyphs: target`** binds the element's mirrored glyphs (the same set
 and order as `target.glyphs`), drawn with Slug's coverage:
@@ -922,6 +941,22 @@ layer draws nothing).
   target's images fade in over the first `fade` of `progress`, from
   washed toward `washColor` and grey, the colour coming up as
   (1 − progress)² falls to 0. Destroy it at 1.
+- `gallery(fx, { images, aspect = 0.75, imageSize = 512, backdrop, rotation
+  = 0, speed = 12, radius = 420, width = 220, tilt = 12, fov = 50,
+  distance = 1200, far = 0.45, corner = 10, opacity = 1 })`: a Layer
+  (viewport space, above everything) drawing the `images` targets as
+  planes on a ring in perspective: `radius` px around a centre
+  `distance` px from the eye, `fov` degrees, tilted `tilt` degrees,
+  turned `rotation` degrees and spinning `speed` degrees a second
+  (held under reduced motion), centred on the viewport plus
+  `params.offset`. Planes are `width` px wide at the image's aspect
+  (`aspect` until known; cover-fitted, `corner` px rounded, edges
+  anti-aliased), darkened toward `far` at the back of the ring and
+  drawn back to front; `backdrop` fills the viewport behind them. The
+  projection runs on the CPU each frame and the fragment divides by
+  the interpolated 1/z, so the images are perspective-correct. Open it
+  through a transition: `capture()`, `enabled = true`, `settled()`,
+  progress (`playground/gallery.html`).
 - `radialReveal(fx, { soft = 48, band = 120, warp = 24, fringe = 6,
   fromPointer = true, timeout? })`: a Transition (see Transitions). A
   circle grows from `params.center` (uv; capture() sets it to the
