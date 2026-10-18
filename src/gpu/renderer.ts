@@ -451,11 +451,20 @@ export class Renderer {
   /** Scroll position fixed content was last drawn at in `kept` (it sits
    * there until those rows are redrawn). */
   private fixedScrollY: number | null = null
+  /** Active non-builtin materials when `valid` was drawn. */
+  private validMats: string | null = ''
+  /** layerState's key and doc-y rows when `kept` was last drawn. */
+  private layerKey = ''
+  private layerRows: [number, number][] = []
   /** The largest scroll step of the last 200 ms, CSS px (fillBand). */
   private lastStep = 0
   /** Runs culled to the pending rows (see stripRuns), their region and
    * batch list. */
   private stripCulled: Runs | null = null
+  /** Runs culled to 128 CSS px tiles of rows (rowRuns), by tile span,
+   * for `rowBatches`. */
+  private rowCulled = new Map<string, Runs>()
+  private rowBatches: Scene['batches'] | null = null
   private stripRegion: Region | null = null
   private stripBatches: Scene['batches'] | null = null
   private clearRect: ClearRect | null = null
@@ -697,13 +706,12 @@ export class Renderer {
    * settling, or content drawn differently every frame (viewport-space
    * records, active extra layers, regions, layer transforms, `/fx`
    * materials, backdrops). Doesn't change state. */
-  private contentChanged(scene: Scene): boolean {
+  private contentChanged(scene: Scene, ctx: FrameContext): boolean {
     if (
       scene.batches !== this.validBatches ||
       scene.version !== this.validVersion ||
       materialPipelinesSettled() !== this.validSettled ||
       scene.backdrops.length > 0 ||
-      this.transforms.size > 0 ||
       this.passes.some((p) => scene.isDirty(p.layer))
     ) {
       return true
@@ -713,17 +721,88 @@ export class Renderer {
         return true
       }
     }
-    for (const region of this.regions.values()) {
-      if (region.active()) {
-        return true
+    // Materials: one that may draw differently this frame, or a change in
+    // which are active (records switch pipelines).
+    if (this.activeMats(true) !== this.validMats) {
+      return true
+    }
+    // Layer transforms and regions are damage (layerState), unless they
+    // nest or sit in viewport space.
+    return this.layerState(scene, ctx).fallback
+  }
+
+  /** Ids of the active non-builtin materials; with `changing`, null when
+   * one of them may draw differently this frame. */
+  private activeMats(changing: boolean): string | null {
+    let mats = ''
+    for (const [id, m] of this.materials) {
+      if (m.builtin || !m.active()) {
+        continue
+      }
+      if (changing && (m.changed?.() ?? true)) {
+        return null
+      }
+      mats += `${id},`
+    }
+    return mats
+  }
+
+  /**
+   * The doc-y intervals (CSS px) groups under a layer transform or an
+   * active region paint at this frame's values, a key of those values,
+   * whether any region is active (it may draw differently every frame),
+   * and `fallback` when the damage can't be bounded this way (such groups
+   * nested in each other, or in viewport space).
+   */
+  private layerState(
+    scene: Scene,
+    ctx: FrameContext
+  ): {
+    rows: [number, number][]
+    key: string
+    live: boolean
+    fallback: boolean
+  } {
+    let rows: [number, number][] = []
+    let key = ''
+    let live = false
+    let fallback = false
+    const isolated = scene.groups.filter((g) => g.region !== undefined)
+    for (const g of isolated) {
+      const id = g.region as number
+      const region = this.regions.get(id)
+      const t = this.transforms.get(id)
+      const active = region?.active() ?? false
+      if (!active && !t) {
+        continue
+      }
+      if (
+        g.space === 'viewport' ||
+        g.vbounds !== null ||
+        isolated.some((h) => h !== g && h.first <= g.first && g.last <= h.last)
+      ) {
+        fallback = true
+      }
+      live ||= active
+      const e = groupExtent(g, ctx)
+      if (!e) {
+        continue
+      }
+      const pad = (active ? Math.max(0, region?.pad() ?? 0) : 0) + 2
+      rows = addRows(rows, e[1] - pad, e[3] + pad)
+      if (t) {
+        key += `${id}:${t.x},${t.y},${t.scaleX},${t.scaleY},${t.rotate},${t.opacity},${t.originX},${t.originY};`
+        const m = layerAffine(g, t, ctx)
+        if (m) {
+          const r = mapRect(m, e[0], e[1], e[2], e[3])
+          rows = addRows(rows, r[1] - pad, r[3] + pad)
+        }
+      }
+      if (active) {
+        key += `${id}:r;`
       }
     }
-    for (const m of this.materials.values()) {
-      if (m.active() && !m.builtin) {
-        return true
-      }
-    }
-    return false
+    return { rows, key, live, fallback }
   }
 
   /** Viewport-y intervals (CSS px) that fixed content paints, padded for
@@ -814,7 +893,7 @@ export class Renderer {
       at[1] !== ctx.canvasY ||
       at[2] !== sx ||
       at[3] !== sy ||
-      this.contentChanged(scene)
+      this.contentChanged(scene, ctx)
     ) {
       return false
     }
@@ -826,6 +905,11 @@ export class Renderer {
     )
     if (this.fixedScrollY !== ctx.scrollY && this.fixedRows(scene).length > 0) {
       // Fixed content moved against the canvas.
+      return false
+    }
+    const layers = this.layerState(scene, ctx)
+    if (layers.live || layers.key !== this.layerKey) {
+      // A layer transform moved or a region pass is drawing.
       return false
     }
     return rowsMissing(y0, y1, this.valid).length === 0
@@ -951,7 +1035,7 @@ export class Renderer {
     this.lastSkipped = false
     this.presentedChain = chain !== null
     // Before the uploads clear the dirty flags.
-    const changed = this.contentChanged(scene)
+    const changed = this.contentChanged(scene, ctx)
     if (changed) {
       this.valid = []
     }
@@ -1091,6 +1175,9 @@ export class Renderer {
     }
     /** The band's draw is the strip's (culled to the pending rows). */
     let bandIsStrip = false
+    /** The band was cut to the rows still to draw: its draw (and the
+     * extra draws) are culled to their own rows, not the whole band. */
+    let trimmed = false
     /** More rows drawn after the band, each under its own scissor and
      * culled like the band: fixed content's old and new rows when it
      * moved against the canvas (skipUnchanged). */
@@ -1116,6 +1203,17 @@ export class Renderer {
           need = addRows(need, a, b)
         }
       }
+      const layers = this.layerState(scene, ctx)
+      if (layers.live || layers.key !== this.layerKey) {
+        // Where transformed or region-drawn groups were and are.
+        for (const [a, b] of [...layers.rows, ...this.layerRows]) {
+          const y0 = clamp(Math.floor((a - main.oy) * main.sy), main.devH)
+          const y1 = clamp(Math.ceil((b - main.oy) * main.sy), main.devH)
+          if (y1 > y0) {
+            need = addRows(need, y0, y1)
+          }
+        }
+      }
       // Rows close together are drawn as one (a draw costs vertex work
       // whatever its scissor).
       const parts: [number, number][] = []
@@ -1129,6 +1227,7 @@ export class Renderer {
       }
       const p0 = parts[0]
       if (p0) {
+        trimmed = true
         band = [0, p0[0], main.devW, p0[1] - p0[0]]
         for (const [a, b] of parts.slice(1)) {
           extra.push([0, a, main.devW, b - a])
@@ -1155,6 +1254,10 @@ export class Renderer {
       this.validSettled = materialPipelinesSettled()
       // Fixed content is drawn at this scroll wherever it lands.
       this.fixedScrollY = ctx.scrollY
+      const layers = this.layerState(scene, ctx)
+      this.layerKey = layers.key
+      this.layerRows = layers.rows
+      this.validMats = this.activeMats(false)
     }
     main.scissor = band
     this.lastFillRows =
@@ -1181,9 +1284,10 @@ export class Renderer {
     let instances = 0
     this.lastCullMs = 0
     let culled = this.cullDraws ? this.cullFor(scene, ctx) : null
-    const bandCulled = culled
     if (bandIsStrip && culled && band) {
       culled = this.stripRuns(scene, ctx, main, band)
+    } else if (trimmed && culled && band) {
+      culled = this.rowRuns(scene, ctx, main, band)
     }
     let slot = 0
     const list = scene.batches
@@ -1506,7 +1610,9 @@ export class Renderer {
       main.scissor = r
       this.restoreScissor(rp, main)
       this.clearRect?.draw(rp)
-      culled = bandCulled
+      if (culled) {
+        culled = this.rowRuns(scene, ctx, main, r)
+      }
       rp = drawRange(rp, main, 0, list.length, 'main')
     }
     if (extra.length > 0) {
@@ -2112,6 +2218,7 @@ export class Renderer {
     if (updateBounds(scene, scene.batches)) {
       this.culled = null
       this.stripCulled = null
+      this.rowCulled.clear()
     }
     if (
       this.culled &&
@@ -2136,6 +2243,48 @@ export class Renderer {
     this.culledBatches = scene.batches
     this.culledRegion = region
     return this.culled
+  }
+
+  /** The main target's runs culled to the rows of `r` (device px of `t`),
+   * snapped out to 128 CSS px tiles so successive frames reuse them;
+   * cached per batch list (a few spans). */
+  private rowRuns(
+    scene: Scene,
+    ctx: FrameContext,
+    t: Target,
+    r: readonly [number, number, number, number]
+  ): Runs {
+    if (this.rowBatches !== scene.batches) {
+      this.rowCulled.clear()
+      this.rowBatches = scene.batches
+    }
+    const tile = 128
+    const a = Math.floor((r[1] / t.sy + t.oy - 8) / tile)
+    const b = Math.ceil(((r[1] + r[3]) / t.sy + t.oy + 8) / tile)
+    const key = `${a}:${b}`
+    const hit = this.rowCulled.get(key)
+    if (hit) {
+      return hit
+    }
+    const t0 = performance.now()
+    const runs = cullRuns(
+      scene,
+      scene.batches,
+      [ctx.canvasX, a * tile, ctx.canvasX + ctx.canvasWidth, b * tile],
+      (id) => {
+        const m = this.materials.get(id)
+        return m !== undefined && !m.builtin
+      }
+    )
+    this.lastCullMs += performance.now() - t0
+    if (this.rowCulled.size >= 16) {
+      const first = this.rowCulled.keys().next().value
+      if (first !== undefined) {
+        this.rowCulled.delete(first)
+      }
+    }
+    this.rowCulled.set(key, runs)
+    return runs
   }
 
   /** The main target's runs culled to `strip` (device rows of `t`) and

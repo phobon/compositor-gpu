@@ -320,6 +320,24 @@ async function boot(): Promise<void> {
     async 'fx-transforms'() {
       await window.__perf?.animate('gpu', k(120))
     },
+    // One card in view bobbing through fx.transform while the page is
+    // still (a hover or attention animation): the rest of the page is
+    // unchanged.
+    async 'fx-one'() {
+      const card = inView(1)[0]
+      if (!card) {
+        return
+      }
+      const t = fx.transform(card)
+      await raf2()
+      for (let f = 0, n = k(120); f < n; f++) {
+        t.y = 8 * Math.sin(f / 6)
+        t.scale = 1 + 0.02 * Math.sin(f / 9)
+        await raf()
+      }
+      t.destroy()
+      await raf2()
+    },
     // The /duo bento reveal: cards in view fade and rise through
     // fx.transform, staggered, each blurred by its own region pass whose
     // radius falls to 0; then the passes go away.

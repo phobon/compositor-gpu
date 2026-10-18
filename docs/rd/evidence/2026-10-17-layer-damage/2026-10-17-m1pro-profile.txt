@@ -1,0 +1,62 @@
+[profile] headed: 155.0.8059.84
+[profile] perf.html n=400 ready
+[profile] adapter: apple / metal-3 / Apple M1 Pro, 155.0.8059.84
+[profile] fx-transforms
+[profile]   122 frames
+[profile] reveal
+[profile]   121 frames
+
+[profile] native GPU, GPU timing on
+
+fx-transforms: 122 frames over 1.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 2 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.40    0.70   48.50   52.70
+    read                0.00    0.00   21.70   24.30
+      scene             0.00    0.00   14.90   17.30
+        batches         0.00    0.00   10.50   11.10
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00   19.90   26.00
+      text              0.00    0.00   16.10   21.60
+    encode              0.30    0.50    4.00    4.90
+      cull              0.00    0.00    2.10    4.70
+    other               0.20    0.30    0.40    1.10
+  gpu total             6.92    7.86    9.24   13.80
+    layer              49.21   58.38   60.36   65.71
+      alone             0.48    0.53    1.13    1.41
+    copy                5.40    7.56    7.98   12.24
+      alone             0.44    0.47    0.49    0.49
+    main                5.98    7.15    7.55   13.33
+      alone             0.00    0.00    0.42    1.56
+
+reveal: 121 frames over 1.5 s, refresh 8.33 ms (120 Hz)
+  late 28, dropped 60; skipped 3; reads: 2 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.40   16.80   17.60  283.20
+  cpu total             0.40    0.60   43.90   45.50
+    read                0.00    0.00   20.10   21.20
+      scene             0.00    0.00   15.40   16.60
+        batches         0.00    0.00   11.50   11.90
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00   19.90   21.20
+      text              0.00    0.00   18.30   19.50
+    encode              0.30    0.50    2.40    4.20
+      cull              0.00    0.00    2.20    2.60
+    other               0.10    0.20    0.30    0.30
+  gpu total             8.46   14.08   23.20   23.20
+    fx:blur            81.09  162.77  283.42  283.42
+      alone             0.00    0.00    0.00    0.00
+    region             39.51   76.41  130.90  130.90
+      alone             0.02    0.07    0.08    0.08
+    copy                7.58   12.73   16.31   16.31
+      alone             0.45    0.48    0.72    0.72
+    main                7.31   12.63   15.88   15.88
+      alone             0.00    0.76    1.20    1.20
+  hitch +0.35 s: 283.2 ms (33 missed), gpu: 13.7 ms on the GPU in the frame before; copy 12.7 ms, main 12.5 ms, fx:blur 12.0 ms
+  hitch +0.53 s: 17.6 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.43 s: 17.3 ms (1 missed), gpu: 13.7 ms on the GPU in the frame before; copy 12.7 ms, main 12.5 ms, fx:blur 12.0 ms
+  hitch +0.92 s: 16.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.68 s: 16.8 ms (1 missed), gpu: 13.3 ms on the GPU in the frame before; copy 12.0 ms, main 11.9 ms, fx:blur 11.3 ms
+
+[profile] reports in /Users/phobon/code/compositor-gpu/test/profile/out/last

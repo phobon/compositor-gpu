@@ -1,0 +1,5 @@
+full        rows drawn 2700, instances 14800, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1815, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6453, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1815, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6453, pending 0, flat viewport rows after a 600 px stall 474 of 900, 516016 px differ from full (apple)

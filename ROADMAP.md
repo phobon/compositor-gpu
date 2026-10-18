@@ -516,11 +516,20 @@ perspective transforms · culling · WebGL2 backend.
 - [x] Fixed content as damage (2026-10-17): its old and new rows redrawn
       on scroll instead of the band; ~3 ms GPU at dpr 2 with a fixed bar
       (was ~6.9). See `docs/rd/experiments/2026-10-17-fixed-damage.md`
-- [ ] Re-anchor frames with fixed content issue up to four scissored
-      draws (p99 8.3 ms on `scroll-long --fixed`); merge them when they
-      cover most of the band
-- [ ] `/fx` layers and materials, and sticky elements (re-read every
-      frame while they move), still redraw the band every frame
+- [x] Partial redraws culled to their own rows (2026-10-17): `scroll
+      --fixed` p99 4.10 -> 3.32 ms, `scroll-long --fixed` 8.33 -> 7.95 ms
+      (`docs/rd/experiments/2026-10-17-row-culling.md`)
+- [ ] Re-anchor frames with fixed content still ~8 ms at p99 (fill and
+      copies, not draw count): time their parts with a profiler mark,
+      then shrink or defer the first strip on those frames
+- [x] Layer transforms and region passes as damage, static materials
+      no longer a change (2026-10-17): one animated card 6.1 -> 4.2 ms GPU
+      at dpr 2 (`docs/rd/experiments/2026-10-17-layer-damage.md`)
+- [ ] A transformed group's texture is re-rendered every frame even when
+      only its affine changed
+- [ ] `/fx` extra layers (`fx.layer`), changing materials and sticky
+      elements (re-read every frame while they move) still redraw the
+      band every frame
 - [ ] Drawn scroll frames: cull the thin newly needed rows' draws to
       those rows; the full kept-to-canvas copy remains
 - [x] Opacity-group pass cost measured (2026-10-14): the reported 2.6-3.2 ms

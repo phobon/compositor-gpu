@@ -157,8 +157,10 @@ Measuring notes learned along the way:
    unchanged content draw only rows not yet drawn or nothing; drawn
    frames ~2 ms at dpr 2 (was 7.5). Fixed content handled as damage
    2026-10-17 (~3 ms with a fixed bar, was ~6.9;
-   `experiments/2026-10-17-fixed-damage.md`). Still redrawing every
-   frame: `/fx` layers/materials and moving sticky elements.
+   `experiments/2026-10-17-fixed-damage.md`). Layer transforms and
+   region passes handled as damage 2026-10-17 (one animated card 6.1 ->
+   4.2 ms; `experiments/2026-10-17-layer-damage.md`). Still redrawing
+   every frame: `fx.layer`, changing materials, moving sticky elements.
 7. Older items still open in ROADMAP: `calt`/`dlig`, atlas gutters,
    `url()` filters, external `<use href>`, perspective / 3D transforms,
    optional WebGL2 backend, spec deviation notes in `docs/EFFECTS.md`,

@@ -1,0 +1,66 @@
+round 2026-10-17 on MacBookPro.localdomain, a45b0d4 9 files changed
+== visual (exit 0): npx tsx test/visual/run.ts
+[visual] vite dev server at http://localhost:51220/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+[visual] OK
+== fx (exit 0): npx tsx test/fx/run.ts
+[fx] vite dev server at http://localhost:51554/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+[fx] OK
+== edit (exit 0): npx tsx test/edit/run.ts --headed
+partial reads 21, patched 19 (opacity 2 of 2, batches kept 10); 0 px differ between the patched and rebuilt canvas
+== fill (exit 0): npx tsx test/fill/run.ts --headed
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 474 of 900, 516016 px differ from full (apple)
+== fill-up (exit 0): npx tsx test/fill/run.ts --headed --up
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 472 of 900, 517978 px differ from full (apple)
+== profile (exit 0): npx tsx test/profile/run.ts --headed --only fx-one,fx-transforms,reveal --nodim --dpr 2 --band
+fx-transforms: 122 frames over 1.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 2 partial, 0 full, 0 escalated
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.40    0.70   48.50   52.70
+  gpu total             6.92    7.86    9.24   13.80
+    copy                5.40    7.56    7.98   12.24
+    main                5.98    7.15    7.55   13.33
+reveal: 121 frames over 1.5 s, refresh 8.33 ms (120 Hz)
+  late 28, dropped 60; skipped 3; reads: 2 partial, 0 full, 0 escalated
+  frame interval        8.40   16.80   17.60  283.20
+  cpu total             0.40    0.60   43.90   45.50
+  gpu total             8.46   14.08   23.20   23.20
+    copy                7.58   12.73   16.31   16.31
+    main                7.31   12.63   15.88   15.88
+  hitch +0.35 s: 283.2 ms (33 missed), gpu: 13.7 ms on the GPU in the frame before; copy 12.7 ms, main 12.5 ms, fx:blur 12.0 ms
+  hitch +0.53 s: 17.6 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.43 s: 17.3 ms (1 missed), gpu: 13.7 ms on the GPU in the frame before; copy 12.7 ms, main 12.5 ms, fx:blur 12.0 ms
+  hitch +0.92 s: 16.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.68 s: 16.8 ms (1 missed), gpu: 13.3 ms on the GPU in the frame before; copy 12.0 ms, main 11.9 ms, fx:blur 11.3 ms
+== profile--noskip (exit 0): npx tsx test/profile/run.ts --headed --only fx-one,fx-transforms,reveal --nodim --dpr 2 --band --noskip
+fx-transforms: 122 frames over 1.1 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 0; reads: 2 partial, 0 full, 0 escalated
+  frame interval        8.30    9.00    9.30    9.30
+  cpu total             0.40    0.60   48.00   59.10
+  gpu total             6.85    7.73   11.16   11.39
+    copy                5.32    7.32    9.41   10.70
+    main                5.93    7.00   10.31   10.92
+reveal: 121 frames over 1.3 s, refresh 8.33 ms (120 Hz)
+  late 29, dropped 29; skipped 0; reads: 2 partial, 0 full, 0 escalated
+  frame interval        8.40   16.80   17.40   17.50
+  cpu total             0.40    0.50   43.10   44.90
+  gpu total             8.92   14.60   21.48   21.48
+    copy                7.90   13.48   14.36   14.36
+    main                7.81   13.41   16.03   16.03
+  hitch +0.17 s: 17.5 ms (1 missed), gpu: 14.6 ms on the GPU in the frame before; main 13.4 ms, copy 13.2 ms, fx:blur 12.3 ms
+  hitch +0.33 s: 17.4 ms (1 missed), gpu: 14.1 ms on the GPU in the frame before; copy 13.2 ms, main 13.0 ms, fx:blur 11.9 ms
+  hitch +0.51 s: 17.0 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)
+  hitch +0.60 s: 17.0 ms (1 missed), gpu: 12.1 ms on the GPU in the frame before; copy 11.3 ms, main 10.9 ms, fx:blur 9.8 ms
+  hitch +0.36 s: 16.9 ms (1 missed), outside: not in the compositor (layout, paint, GC or other script)

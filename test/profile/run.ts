@@ -66,6 +66,7 @@ export const SCENARIOS = [
   'full-read',
   'css-transforms',
   'fx-transforms',
+  'fx-one',
   'reveal',
   'blur-scroll',
   'groups',
