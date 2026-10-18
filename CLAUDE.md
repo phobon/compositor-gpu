@@ -57,7 +57,9 @@ members in a 128px grid and tests text runs per glyph (a run's union rect
 spans whole paragraphs and blocked every merge), and shadow records use a
 1.5σ `batchRect` footprint. On the main target each batch draws only
 the instance runs whose records reach the canvas region grown by half a
-canvas (`gpu/cull.ts`, cached per batch list until the canvas leaves that
+canvas (`gpu/cull.ts`: a `Culler` owning the bounds, the idle-built index
+and three cached queries, `canvas` / `rows` / `strip`, each cached per
+batch list until the canvas leaves that
 region; each instance's bounds are computed once per batch list into
 typed arrays, walked on the first queries and indexed by y in idle time
 250 ms later, so a scroll's recompute visits only nearby instances; a
@@ -139,7 +141,7 @@ from the one it was last drawn at (`fixedScrollY`), its rows at both
 scrolls (`fixedRows`: record rects, glyphs with text-shadow extent,
 groups' `vbounds`) are drawn as extra scissored draws with the band's
 remaining rows (`docs/rd/experiments/2026-10-17-fixed-damage.md`), each
-of those draws culled to its own rows (`rowRuns`: 128 CSS px tiles,
+of those draws culled to its own rows (`Culler.rows`: 128 CSS px tiles,
 cached per batch list); a
 frame after a post-chain frame is never skipped
 (`docs/rd/experiments/2026-10-16-skip-unchanged.md`); `'band-clear'` clears

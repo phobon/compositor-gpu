@@ -1,0 +1,24 @@
+round 2026-10-18 on MacBookPro.localdomain, 8e98e6f 7 files changed
+== visual (exit 0): npx tsx test/visual/run.ts
+[visual] vite dev server at http://localhost:56412/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+[visual] OK
+== fx (exit 0): npx tsx test/fx/run.ts
+[fx] vite dev server at http://localhost:56508/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+[fx] OK
+== fill (exit 0): npx tsx test/fill/run.ts --headed
+full        rows drawn 2700, instances 15030, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full, scrollY 3320 -> 3920 (apple)
+band        rows drawn 4, instances 1711, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full, scrollY 3320 -> 3920 (apple)
+bandnostrip rows drawn 0, instances 0, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full, scrollY 3320 -> 3920 (apple)
+bandcanvas  rows drawn 4, instances 1711, pending 0, flat viewport rows after a 600 px stall 34 of 900, 0 px differ from full, scrollY 3320 -> 3920 (apple)
+bandclear   rows drawn 1156, instances 6347, pending 0, flat viewport rows after a 600 px stall 492 of 900, 529184 px differ from full, scrollY 3320 -> 3920 (apple)
+== fill-up (exit 0): npx tsx test/fill/run.ts --headed --up
+full        rows drawn 2700, instances 15030, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full, scrollY 3320 -> 2720 (apple)
+band        rows drawn 4, instances 1711, pending 0, flat viewport rows after a -600 px stall 39 of 900, 4 px differ from full, scrollY 3320 -> 2720 (apple)
+bandnostrip rows drawn 1156, instances 6347, pending 0, flat viewport rows after a -600 px stall 39 of 900, 4 px differ from full, scrollY 3320 -> 2720 (apple)
+bandcanvas  rows drawn 4, instances 1711, pending 0, flat viewport rows after a -600 px stall 39 of 900, 4 px differ from full, scrollY 3320 -> 2720 (apple)
+bandclear   rows drawn 1156, instances 6347, pending 0, flat viewport rows after a -600 px stall 461 of 900, 498971 px differ from full, scrollY 3320 -> 2720 (apple)

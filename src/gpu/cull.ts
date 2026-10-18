@@ -63,9 +63,36 @@ interface Bounds {
   applied: number
 }
 
-/** Bounds by the batches they were computed for: batches are rebuilt on
- * every re-sort. */
-const boundsCache = new WeakMap<readonly DrawBatch[], Bounds>()
+/** When to build y indexes: `after(ms, f)` once bounds have lasted a
+ * while, then `idle(f)` per layer (requestIdleCallback in the browser;
+ * tests run them on demand). */
+export interface CullScheduler {
+  after(ms: number, f: () => void): void
+  idle(f: () => void): void
+}
+
+const browserScheduler: CullScheduler = {
+  after: (ms, f) => {
+    setTimeout(f, ms)
+  },
+  idle: (f) => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(f, { timeout: 1000 })
+    } else {
+      setTimeout(f, 50)
+    }
+  }
+}
+
+/** One culler's state below its caches. */
+interface CullState {
+  /** Bounds by the batches they were computed for: batches are rebuilt
+   * on every re-sort. */
+  cache: WeakMap<readonly DrawBatch[], Bounds>
+  /** The bounds waiting for an idle index build (only the latest). */
+  pending: Bounds | null
+  schedule: CullScheduler
+}
 
 function put(b: Float32Array, i: number, r: Rect, fixed: boolean): void {
   const o = i * 4
@@ -80,8 +107,12 @@ function put(b: Float32Array, i: number, r: Rect, fixed: boolean): void {
   b[o + 3] = r.y + r.height
 }
 
-function bounds(scene: Scene, batches: readonly DrawBatch[]): Bounds {
-  const cached = boundsCache.get(batches)
+function bounds(
+  st: CullState,
+  scene: Scene,
+  batches: readonly DrawBatch[]
+): Bounds {
+  const cached = st.cache.get(batches)
   if (cached) {
     return cached
   }
@@ -116,7 +147,7 @@ function bounds(scene: Scene, batches: readonly DrawBatch[]): Bounds {
       text: { b: text, index: null }
     }
   }
-  boundsCache.set(batches, out)
+  st.cache.set(batches, out)
   return out
 }
 
@@ -176,11 +207,12 @@ function bucketsOf(
  * next query walks; the index is rebuilt in idle time). False when there
  * was nothing new to apply.
  */
-export function updateBounds(
+function updateBounds(
+  st: CullState,
   scene: Scene,
   batches: readonly DrawBatch[]
 ): boolean {
-  const all = boundsCache.get(batches)
+  const all = st.cache.get(batches)
   if (!all || all.applied >= scene.moved.length) {
     return false
   }
@@ -255,7 +287,7 @@ export function updateBounds(
   }
   all.applied = scene.moved.length
   if (Object.values(all.layers).some((l) => !l.index)) {
-    indexWhenIdle(all)
+    indexWhenIdle(st, all)
   }
   return true
 }
@@ -385,37 +417,31 @@ function query(b: Float32Array, ix: LayerIndex, g: Region): Uint32Array {
   return Uint32Array.from(out).sort()
 }
 
-/** The bounds waiting for an idle index build (only the latest). */
-let pending: Bounds | null = null
 const INDEX_AFTER_MS = 250
 
 /** Build `all`'s indexes once it has lasted INDEX_AFTER_MS, when the main
  * thread is next idle, one layer per idle period, unless newer bounds
  * replace it first (a page re-sorting every frame never builds one). */
-function indexWhenIdle(all: Bounds): void {
-  if (pending === all) {
+function indexWhenIdle(st: CullState, all: Bounds): void {
+  if (st.pending === all) {
     return
   }
-  pending = all
-  const idle =
-    typeof requestIdleCallback === 'function'
-      ? (f: () => void) => requestIdleCallback(f, { timeout: 1000 })
-      : (f: () => void) => setTimeout(f, 50)
+  st.pending = all
   const step = (): void => {
-    if (pending !== all) {
+    if (st.pending !== all) {
       return
     }
     for (const name in all.layers) {
       const layer = all.layers[name] as Layer
       if (!layer.index) {
         layer.index = buildIndex(layer.b)
-        idle(step)
+        st.schedule.idle(step)
         return
       }
     }
-    pending = null
+    st.pending = null
   }
-  setTimeout(() => idle(step), INDEX_AFTER_MS)
+  st.schedule.after(INDEX_AFTER_MS, () => st.schedule.idle(step))
 }
 
 /** First position in ascending `v` whose value is at least `x`. */
@@ -438,13 +464,14 @@ function lowerBound(v: Uint32Array, x: number): number {
  * Batches whose material `keep` returns true for (vertex hooks may move
  * geometry anywhere) are drawn whole.
  */
-export function cullRuns(
+function cullRuns(
+  st: CullState,
   scene: Scene,
   batches: readonly DrawBatch[],
   region: Region,
   keep: (material: number) => boolean
 ): Runs {
-  const all = bounds(scene, batches)
+  const all = bounds(st, scene, batches)
   const vis: Record<string, Uint32Array> = {}
   let walked = false
   for (const name in all.layers) {
@@ -457,7 +484,7 @@ export function cullRuns(
     }
   }
   if (walked) {
-    indexWhenIdle(all)
+    indexWhenIdle(st, all)
   }
   const out: Runs = []
   for (const b of batches) {
@@ -495,4 +522,150 @@ export function cullRuns(
     out.push(runs.length === 2 && runs[1] === b.count ? null : runs)
   }
   return out
+}
+
+/** Row tiles for `rows` (CSS px), and the tile spans kept per batch list. */
+const ROW_TILE = 128
+const ROW_SPANS = 16
+/** Rows grown by this much (CSS px): anti-aliased edges reach past the
+ * bounds. */
+const EDGE = 8
+
+/**
+ * The main target's draw culling, cached. Three queries, all in document
+ * CSS px: the canvas region (`canvas`), rows the fill planner redraws
+ * (`rows`), and a strip of rows a re-anchor newly covered (`strip`). Each
+ * cache holds until the batch list changes, records move in place
+ * (Scene.moved), or a query leaves the region it was computed for.
+ */
+export class Culler {
+  private readonly st: CullState
+  private canvasRuns: Runs | null = null
+  private canvasRegion: Region | null = null
+  private canvasBatches: readonly DrawBatch[] | null = null
+  private rowSpans = new Map<string, Runs>()
+  private rowBatches: readonly DrawBatch[] | null = null
+  private stripRuns: Runs | null = null
+  private stripRegion: Region | null = null
+  private stripBatches: readonly DrawBatch[] | null = null
+  private ms = 0
+
+  /** `keep`: batches of these materials are drawn whole (their vertex
+   * hooks may move geometry anywhere). */
+  constructor(
+    private readonly keep: (material: number) => boolean,
+    schedule: CullScheduler = browserScheduler
+  ) {
+    this.st = { cache: new WeakMap(), pending: null, schedule }
+  }
+
+  /** ms spent computing runs since the last call. */
+  takeMs(): number {
+    const ms = this.ms
+    this.ms = 0
+    return ms
+  }
+
+  /** Records moved in place under the same batches (Scene.refit): their
+   * bounds change, so every cached query is dropped. */
+  private sync(scene: Scene): void {
+    if (updateBounds(this.st, scene, scene.batches)) {
+      this.canvasRuns = null
+      this.stripRuns = null
+      this.rowSpans.clear()
+    }
+  }
+
+  private cull(scene: Scene, region: Region): Runs {
+    const t0 = performance.now()
+    const runs = cullRuns(this.st, scene, scene.batches, region, this.keep)
+    this.ms += performance.now() - t0
+    return runs
+  }
+
+  /** Runs for `view`, computed for it grown by `grow` (x, y) on each side
+   * and reused while later views stay inside that. */
+  canvas(scene: Scene, view: Region, grow: readonly [number, number]): Runs {
+    this.sync(scene)
+    const r = this.canvasRegion
+    if (
+      this.canvasRuns &&
+      this.canvasBatches === scene.batches &&
+      r &&
+      view[0] >= r[0] &&
+      view[1] >= r[1] &&
+      view[2] <= r[2] &&
+      view[3] <= r[3]
+    ) {
+      return this.canvasRuns
+    }
+    const [mx, my] = grow
+    const region: Region = [
+      view[0] - mx,
+      view[1] - my,
+      view[2] + mx,
+      view[3] + my
+    ]
+    this.canvasRuns = this.cull(scene, region)
+    this.canvasBatches = scene.batches
+    this.canvasRegion = region
+    return this.canvasRuns
+  }
+
+  /** Runs for rows y0..y1 between x0 and x1, snapped out to 128 px tiles
+   * so successive frames reuse them (a few spans per batch list). */
+  rows(scene: Scene, x0: number, x1: number, y0: number, y1: number): Runs {
+    this.sync(scene)
+    if (this.rowBatches !== scene.batches) {
+      this.rowSpans.clear()
+      this.rowBatches = scene.batches
+    }
+    const a = Math.floor((y0 - EDGE) / ROW_TILE)
+    const b = Math.ceil((y1 + EDGE) / ROW_TILE)
+    const key = `${a}:${b}`
+    const hit = this.rowSpans.get(key)
+    if (hit) {
+      return hit
+    }
+    const runs = this.cull(scene, [x0, a * ROW_TILE, x1, b * ROW_TILE])
+    if (this.rowSpans.size >= ROW_SPANS) {
+      const first = this.rowSpans.keys().next().value
+      if (first !== undefined) {
+        this.rowSpans.delete(first)
+      }
+    }
+    this.rowSpans.set(key, runs)
+    return runs
+  }
+
+  /** Runs for a strip of rows y0..y1, computed for the whole interval
+   * `from` it was taken from (y0, y1) so later strips reuse them, and
+   * reused while later strips stay inside it. */
+  strip(
+    scene: Scene,
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number,
+    from: readonly [number, number] | null
+  ): Runs {
+    this.sync(scene)
+    const r = this.stripRegion
+    if (
+      this.stripRuns &&
+      this.stripBatches === scene.batches &&
+      r &&
+      y0 >= r[1] &&
+      y1 <= r[3]
+    ) {
+      return this.stripRuns
+    }
+    const py0 = from ? Math.min(y0, from[0]) : y0
+    const py1 = from ? Math.max(y1, from[1]) : y1
+    const region: Region = [x0, py0 - EDGE, x1, py1 + EDGE]
+    this.stripRuns = this.cull(scene, region)
+    this.stripBatches = scene.batches
+    this.stripRegion = region
+    return this.stripRuns
+  }
 }

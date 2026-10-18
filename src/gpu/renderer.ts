@@ -6,7 +6,7 @@ import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext, Layer } from '../types'
 import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
-import { cullRuns, type Region, type Runs, updateBounds } from './cull'
+import { Culler, type Runs } from './cull'
 import type { GpuContext } from './device'
 import { type EffectSnapshot, snapshotEffects } from './effect_snapshot'
 import { type DrawPlan, type FillInput, FillPlanner } from './fill_planner'
@@ -202,12 +202,13 @@ export class Renderer {
   /** Skip instances outside the canvas region, or the band with
    * `canvasFill: 'band'` (CompositorOptions.cullDraws). */
   cullDraws: boolean | 'canvas' = true
-  /** Cached culling: for these batches, within `culledRegion` (the canvas
-   * region grown by half its size each way, kept while the canvas stays
-   * inside it). */
-  private culled: Runs | null = null
-  private culledBatches: readonly DrawBatch[] | null = null
-  private culledRegion: Region | null = null
+  /** The main target's draw culling and its caches (cull.ts). Batches of
+   * non-builtin materials are drawn whole: vertex hooks may move geometry
+   * anywhere. */
+  private readonly culler = new Culler((id) => {
+    const m = this.materials.get(id)
+    return m !== undefined && !m.builtin
+  })
   /** Instances submitted in the last frame (stats().instances). */
   lastInstances = 0
   /** Render passes the last frame spent on group textures
@@ -247,15 +248,6 @@ export class Renderer {
     version: number
     rows: [number, number][]
   } | null = null
-  /** Runs culled to the pending rows (see stripRuns), their region and
-   * batch list. */
-  private stripCulled: Runs | null = null
-  /** Runs culled to 128 CSS px tiles of rows (rowRuns), by tile span,
-   * for `rowBatches`. */
-  private rowCulled = new Map<string, Runs>()
-  private rowBatches: Scene['batches'] | null = null
-  private stripRegion: Region | null = null
-  private stripBatches: Scene['batches'] | null = null
   private clearRect: ClearRect | null = null
   /** This frame's band in document CSS px (y0, y1), or null when the
    * whole canvas is drawn (cullFor). */
@@ -1025,6 +1017,7 @@ export class Renderer {
       rp = drawRange(rp, main, 0, list.length, 'main')
       main.scissor = band
     }
+    this.lastCullMs = this.culler.takeMs()
     this.lastBatches = batches
     this.lastGroups = groups
     this.lastGroupPasses = groupPasses
@@ -1492,131 +1485,52 @@ export class Renderer {
     child.view = out.view
   }
 
-  /** The main target's culled runs (see gpu/cull.ts), recomputed when the
-   * batches change or the canvas (or the band being drawn) leaves the
-   * cached region. */
+  /** The main target's culled runs for the canvas region, or the band
+   * with canvasFill 'band' (cull.ts caches them). */
   private cullFor(scene: Scene, ctx: FrameContext): Runs {
     const band = this.cullDraws === 'canvas' ? null : this.bandY
     const x0 = ctx.canvasX
     const y0 = band ? band[0] : ctx.canvasY
-    const x1 = x0 + ctx.canvasWidth
-    const y1 = band ? band[1] : y0 + ctx.canvasHeight
-    const r = this.culledRegion
-    // Records moved in place under the same batches (Scene.refit): their
-    // bounds change, so the runs are recomputed.
-    if (updateBounds(scene, scene.batches)) {
-      this.culled = null
-      this.stripCulled = null
-      this.rowCulled.clear()
-    }
-    if (
-      this.culled &&
-      this.culledBatches === scene.batches &&
-      r &&
-      x0 >= r[0] &&
-      y0 >= r[1] &&
-      x1 <= r[2] &&
-      y1 <= r[3]
-    ) {
-      return this.culled
-    }
-    const mx = ctx.canvasWidth / 2
-    const my = (band ? ctx.height : ctx.canvasHeight) / 2
-    const region: Region = [x0 - mx, y0 - my, x1 + mx, y1 + my]
-    const t0 = performance.now()
-    this.culled = cullRuns(scene, scene.batches, region, (id) => {
-      const m = this.materials.get(id)
-      return m !== undefined && !m.builtin
-    })
-    this.lastCullMs = performance.now() - t0
-    this.culledBatches = scene.batches
-    this.culledRegion = region
-    return this.culled
+    return this.culler.canvas(
+      scene,
+      [x0, y0, x0 + ctx.canvasWidth, band ? band[1] : y0 + ctx.canvasHeight],
+      [ctx.canvasWidth / 2, (band ? ctx.height : ctx.canvasHeight) / 2]
+    )
   }
 
-  /** The main target's runs culled to the rows of `r` (device px of `t`),
-   * snapped out to 128 CSS px tiles so successive frames reuse them;
-   * cached per batch list (a few spans). */
+  /** The main target's runs culled to the rows of `r` (device px of `t`). */
   private rowRuns(
     scene: Scene,
     ctx: FrameContext,
     t: Target,
     r: readonly [number, number, number, number]
   ): Runs {
-    if (this.rowBatches !== scene.batches) {
-      this.rowCulled.clear()
-      this.rowBatches = scene.batches
-    }
-    const tile = 128
-    const a = Math.floor((r[1] / t.sy + t.oy - 8) / tile)
-    const b = Math.ceil(((r[1] + r[3]) / t.sy + t.oy + 8) / tile)
-    const key = `${a}:${b}`
-    const hit = this.rowCulled.get(key)
-    if (hit) {
-      return hit
-    }
-    const t0 = performance.now()
-    const runs = cullRuns(
+    return this.culler.rows(
       scene,
-      scene.batches,
-      [ctx.canvasX, a * tile, ctx.canvasX + ctx.canvasWidth, b * tile],
-      (id) => {
-        const m = this.materials.get(id)
-        return m !== undefined && !m.builtin
-      }
+      ctx.canvasX,
+      ctx.canvasX + ctx.canvasWidth,
+      r[1] / t.sy + t.oy,
+      (r[1] + r[3]) / t.sy + t.oy
     )
-    this.lastCullMs += performance.now() - t0
-    if (this.rowCulled.size >= 16) {
-      const first = this.rowCulled.keys().next().value
-      if (first !== undefined) {
-        this.rowCulled.delete(first)
-      }
-    }
-    this.rowCulled.set(key, runs)
-    return runs
   }
 
   /** The main target's runs culled to `strip` (device rows of `t`) and
-   * the pending rows after it, cached until the batches change or a
-   * strip leaves the cached rows. */
+   * the pending interval it came from (`stripFrom`). */
   private stripRuns(
     scene: Scene,
     ctx: FrameContext,
     t: Target,
     strip: readonly [number, number, number, number]
   ): Runs {
-    const y0 = strip[1] / t.sy + t.oy
-    const y1 = (strip[1] + strip[3]) / t.sy + t.oy
-    const r = this.stripRegion
-    if (
-      this.stripCulled &&
-      this.stripBatches === scene.batches &&
-      r &&
-      y0 >= r[1] &&
-      y1 <= r[3]
-    ) {
-      return this.stripCulled
-    }
-    // The whole interval the strip came from: later strips reuse it.
     const p = this.stripFrom
-    const py0 = p ? Math.min(y0, p[0] / t.sy + t.oy) : y0
-    const py1 = p ? Math.max(y1, p[1] / t.sy + t.oy) : y1
-    // A few px past the rows: anti-aliased edges reach past the bounds.
-    const region: Region = [
+    return this.culler.strip(
+      scene,
       ctx.canvasX,
-      py0 - 8,
       ctx.canvasX + ctx.canvasWidth,
-      py1 + 8
-    ]
-    const t0 = performance.now()
-    this.stripCulled = cullRuns(scene, scene.batches, region, (id) => {
-      const m = this.materials.get(id)
-      return m !== undefined && !m.builtin
-    })
-    this.lastCullMs += performance.now() - t0
-    this.stripBatches = scene.batches
-    this.stripRegion = region
-    return this.stripCulled
+      strip[1] / t.sy + t.oy,
+      (strip[1] + strip[3]) / t.sy + t.oy,
+      p ? [p[0] / t.sy + t.oy, p[1] / t.sy + t.oy] : null
+    )
   }
 
   /** End `rp`, filter what `target` holds under `rec` into a pooled
