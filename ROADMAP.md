@@ -598,11 +598,19 @@ perspective transforms · culling · WebGL2 backend.
   - [x] P1 presets `rgbSplit`, `glitchSlices`, `vignette` (with `flash`);
         shots `fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`,
         `fx-vignette`, `fx-p1-then-off` (2026-10-18; then-off 0 px)
-  - [ ] P3 transitions between two DOM states through a held snapshot
-        (`fx.transition`, `capture()` / `settled`); experiment
-        `docs/rd/experiments/2026-10-18-snapshot-transitions.md`
-  - [ ] P2 `lens` (fisheye with an RGB fringe at its edge) and
-        `radialReveal` on the pointer, as P3's first transition shader
+  - [x] P3 transitions between two DOM states through a held snapshot
+        (`fx.transition`: `capture()` / `settled()` / `end()`,
+        `prev(uv)`; `playground/transition.html`, shots
+        `fx-transition-*`, `test/transition/run.ts`). 2026-10-18, M1 Pro
+        headed, dpr 2, 20 swaps: 0 frames showed the source DOM;
+        capture() p95 10.3 ms; settled() p50 16 / p95 22.6 ms (max 350
+        ms, the first swap); progress frames 0 late or dropped, interval
+        p95 9.2 ms, `gpu total` p95 0.43 ms (the scene is reused while
+        only progress changes). Ends equal both pages exactly
+  - [ ] P2 `lens` (fisheye with an RGB fringe at its edge, shot
+        `fx-lens`) and `radialReveal` (a transition from the pointer
+        with a bent, fringed edge; `playground/transition.html` uses it,
+        `?lens` adds a lens) (built 2026-10-18, not yet run)
   - [ ] P4 element intro `reveal` (region blur + rgbSplit +
         glitchSlices by one `progress`, staggered; images developing
         through a material)

@@ -61,6 +61,13 @@ import {
   type Transform,
   type TransformOptions
 } from './transform'
+import {
+  SNAPSHOT,
+  Snapshot,
+  type Transition,
+  type TransitionOptions,
+  transitionHandle
+} from './transition'
 
 export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Labels pipelines and shader errors. */
@@ -129,6 +136,9 @@ export interface Effects {
   /** Live pointer state (`ease` is writable). */
   readonly pointer: PointerState
   pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S>
+  /** A fullscreen pass that blends a held snapshot of the outgoing page
+   * (`prev(uv)`) with the incoming one (see TransitionOptions). */
+  transition<S extends ParamSchema>(opts: TransitionOptions<S>): Transition<S>
   /** Instanced quads drawn in paint order (see LayerOptions). */
   layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S>
   /** Re-shade a target's mirrored records (see MaterialOptions). */
@@ -220,6 +230,8 @@ interface PassState {
     bind: (rp: GPURenderPassEncoder) => void
     destroy: () => void
   } | null
+  /** A transition's snapshot (group 3 instead of `image`). */
+  snap: Snapshot | null
 }
 
 /** A Pass object over `s` (shared by the inert and GPU paths).
@@ -349,13 +361,17 @@ function inertEffects(): Effects {
         stages: [],
         region: opts.region ? targetOf(opts.region, cache, null) : null,
         ping: [],
-        image: null
+        image: null,
+        snap: null
       }
       return passHandle<S>(
         s,
         () => {},
         () => {}
       )
+    },
+    transition(opts) {
+      return transitionHandle(this.pass({ ...opts, enabled: false }), null)
     },
     release() {},
     destroy() {
@@ -708,6 +724,13 @@ function buildEffects(compositor: Compositor): Effects {
         }
         lastScene = frame.scene
       }
+      // Transitions: take a requested snapshot of the scene before any
+      // stage runs, and write the hold.
+      for (const p of passes) {
+        if (live(p)) {
+          p.snap?.encode(frame)
+        }
+      }
       const r = frame.rect
       if (running.length > 1) {
         ensureTargets(r.width, r.height)
@@ -840,13 +863,16 @@ function buildEffects(compositor: Compositor): Effects {
       for (const m of materials) {
         m.frame(ctx)
       }
+      for (const p of passes) {
+        p.snap?.frame()
+      }
       // Leaving the offscreen path: free the ping-pong targets.
       if (!chainLive && ping.length > 0) {
         releaseTargets()
       }
     },
     keepAlive() {
-      if (trails.some((t) => t.live())) {
+      if (trails.some((t) => t.live()) || passes.some((p) => p.snap?.busy())) {
         return true
       }
       let any = false
@@ -880,14 +906,16 @@ function buildEffects(compositor: Compositor): Effects {
     index: number,
     over: boolean,
     bindImage: ((rp: GPURenderPassEncoder) => void) | null,
-    trail: TrailState | null
+    trail: TrailState | null,
+    prev = false
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
     const code = stageSource(
       effectSource(fragment, name),
       block.wgsl,
-      bindImage !== null,
-      trail !== null
+      bindImage !== null && !prev,
+      trail !== null,
+      prev
     )
     const layout = trail
       ? bindImage
@@ -970,6 +998,7 @@ function buildEffects(compositor: Compositor): Effects {
     s.stages = []
     s.image?.destroy()
     s.image = null
+    s.snap?.destroy()
     s.paramsBuf?.destroy()
     s.paramsBuf = null
   }
@@ -1201,7 +1230,8 @@ function buildEffects(compositor: Compositor): Effects {
         stages: [],
         region: opts.region ? targetOf(opts.region, targetCache, graph) : null,
         ping: [],
-        image: null
+        image: null,
+        snap: (opts as { [SNAPSHOT]?: Snapshot })[SNAPSHOT] ?? null
       }
       const handler = state.region ? regionHandler(state) : null
       const isolate = (): void => {
@@ -1227,7 +1257,10 @@ function buildEffects(compositor: Compositor): Effects {
             `fx:${opts.name}`
           )
         }
-        const bind = state.image?.bind ?? null
+        const snap = state.snap
+        const bind = snap
+          ? (rp: GPURenderPassEncoder) => snap.bind(rp)
+          : (state.image?.bind ?? null)
         const trail = trailState(opts.trail)
         state.stages = frags.map((f, i) =>
           buildStage(
@@ -1238,7 +1271,8 @@ function buildEffects(compositor: Compositor): Effects {
             i,
             handler !== null && i === frags.length - 1,
             bind,
-            trail
+            trail,
+            snap !== null
           )
         )
         passes.push(state)
@@ -1266,6 +1300,26 @@ function buildEffects(compositor: Compositor): Effects {
         },
         isolate
       )
+    },
+    transition<S extends ParamSchema>(
+      opts: TransitionOptions<S>
+    ): Transition<S> {
+      const snap = destroyed
+        ? null
+        : new Snapshot(
+            {
+              device,
+              format,
+              layout: imageLayout,
+              sampler,
+              timer: graph.shared.timer,
+              complete: () => graph.mirrorComplete(),
+              wake: () => graph.requestFrame()
+            },
+            opts.timeout ?? 1500
+          )
+      const o = { ...opts, enabled: false, [SNAPSHOT]: snap }
+      return transitionHandle(fx.pass<S>(o as PassOptions<S>), snap)
     },
     layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S> {
       if (destroyed) {

@@ -77,11 +77,17 @@ export {
   type GlitchSlicesSchema,
   glitchSlices
 } from './presets/glitchSlices'
+export { type LensOptions, type LensSchema, lens } from './presets/lens'
 export {
   type ProgressiveBlurOptions,
   type ProgressiveBlurSchema,
   progressiveBlur
 } from './presets/progressiveBlur'
+export {
+  type RadialRevealOptions,
+  type RadialRevealSchema,
+  radialReveal
+} from './presets/radialReveal'
 export {
   type RgbSplitOptions,
   type RgbSplitSchema,
@@ -133,3 +139,4 @@ export type {
   TransformOptions,
   TransformValues
 } from './transform'
+export type { Transition, TransitionOptions } from './transition'

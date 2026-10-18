@@ -627,6 +627,41 @@ animate(m, { progress: 1 }, { type: 'spring', bounce: 0.3 })
 
 Manual (tabs, buttons): set `m.progress`, or `m.play()` / `m.reverse()`.
 
+## Transitions
+
+```ts
+const t = fx.transition({
+  name: 'reveal',
+  params: { progress: { type: 'f32', default: 0, min: 0, max: 1 } },
+  fragment: wgsl,          // effect(uv, src, smp), with prev(uv) in scope
+  timeout: 1500            // ms settled() waits at most
+})
+
+await t.capture()          // enable and hold a snapshot of the page now
+swapTheDom()               // route change, innerHTML, ...
+await t.settled()          // the incoming mirror is complete
+await gsap.to(t.params, { progress: 1, duration: 0.6 })
+t.end()                    // disable, free the snapshot
+```
+
+A fullscreen pass (no `region`, `image`, `radius` or `downsample`)
+whose fragment can read the outgoing page: `prev(uv)` is the visible
+viewport as it was on the frame after `capture()`, premultiplied, over
+the same `uv` as `sample(uv)` (which is the live, incoming page).
+`capture()` resolves after that frame's snapshot is encoded; swap the DOM
+then. From then until `settled()` resolves the pass shows `prev` only
+(`holding`), whatever its fragment does, so a half-built incoming
+mirror never shows. `settled()` resolves once the mirror is complete on
+two frames running (the replace-mode handoff's test: fonts resolved, no
+image upload or material compile in flight, no viewport `<img>` still
+loading, no read pending), or after `timeout`. The fragment owns
+progress: return exactly `prev(uv)` at 0 and exactly `sample(uv)` at 1
+and the ends match the two pages pixel for pixel (shots
+`fx-transition-0`, `fx-transition-1`). The snapshot is the scene before
+any pass, so passes created before the transition apply to the incoming
+page only. `playground/transition.html` is a reveal from the pointer;
+`npx tsx test/transition/run.ts` times it.
+
 ## Trails
 
 ```ts
@@ -855,6 +890,23 @@ layer draws nothing).
   toward `color` by up to `amount` from `inner` to `outer` (distance
   from `center`, 1 at a centred vignette's corners), then the whole
   viewport toward `flashColor` by `flash`. Fullscreen only.
+- `lens(fx, { radius = 160, strength = 0.4, fringe = 4, edge = 24,
+  followPointer = true, center?, region? })`: a fisheye within `radius`
+  CSS px of the eased follower (or `center`, uv): sample radius ×
+  (1 − strength × (1 − t²)), t = distance / radius, so the middle
+  magnifies and content near the rim is squeezed (text bends round it);
+  red and blue split radially by up to `fringe` px from 0.6 × radius,
+  fading out over `edge` px past the rim. `radius` 0 draws the page
+  unchanged. Declares `fringe` as its radius.
+- `radialReveal(fx, { soft = 48, band = 120, warp = 24, fringe = 6,
+  fromPointer = true, timeout? })`: a Transition (see Transitions). A
+  circle grows from `params.center` (uv; capture() sets it to the
+  pointer unless `fromPointer: false`) to past the farthest corner as
+  `params.progress` goes 0 → 1, the incoming page inside, a `soft` px
+  edge. Within `band` px of the edge both pages bend inward by up to
+  `warp` px and split red/blue by up to `fringe` px, scaled by
+  4 × progress × (1 − progress), so progress 0 and 1 are exactly the
+  outgoing and incoming pages.
 
 ## Testing hook
 

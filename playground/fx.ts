@@ -21,6 +21,7 @@ import {
   gpu,
   ripple as imageRipple,
   type Layer,
+  lens,
   type Material,
   MatIn,
   type Pass,
@@ -610,6 +611,7 @@ async function boot(): Promise<void> {
     density: 0.4
   })
   const vig = vignette(fx, { enabled: false, amount: 0.7, flash: 0.25 })
+  const lns = lens(fx, { enabled: false, radius: 200, strength: 0.45 })
   if (!vrMode) {
     const kit = mountDials(
       [
@@ -713,6 +715,16 @@ async function boot(): Promise<void> {
           }
         },
         {
+          name: 'lens',
+          effect: lns,
+          params: {
+            radius: [0, 2000, 1],
+            strength: [0, 0.95, 0.01],
+            fringe: [0, 40, 0.5],
+            edge: [0, 200, 1]
+          }
+        },
+        {
           name: 'vignette',
           effect: vig,
           params: {
@@ -809,6 +821,7 @@ async function boot(): Promise<void> {
     rgbp,
     glitch,
     vig,
+    lens: lns,
     sim,
     raw,
     tgbox,

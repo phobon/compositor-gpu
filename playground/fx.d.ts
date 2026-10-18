@@ -41,6 +41,8 @@ declare global {
       glitch: Pass
       /** vignette with a 0.25 white flash. */
       vig: Pass
+      /** lens on the pinned follower. */
+      lens: Pass
       /** M3b: the heading's glyphs drawn by a Layer. */
       lglyphs: Layer
       /** An image Target sampled by a Layer. */

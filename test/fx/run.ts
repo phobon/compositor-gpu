@@ -1,6 +1,7 @@
 /// <reference path="../../playground/fx.d.ts" />
 /// <reference path="../../playground/perf.d.ts" />
 /// <reference path="../../playground/trail.d.ts" />
+/// <reference path="../../playground/transition.d.ts" />
 // Effects harness: loads playground/fx.html?vr (time and pointer pinned via
 // fx.__override), captures each `section[data-vr]` GPU-only with its
 // effect state, and diffs against local goldens (regression gate 0.5%;
@@ -63,7 +64,8 @@
 //   fx-rgbsplit-pointer  rgbSplit on the pinned follower, within a radius
 //   fx-glitch         glitchSlices with the pattern held
 //   fx-vignette       vignette with a white flash
-//   fx-p1-then-off    all four on, then off: equal to the section with
+//   fx-lens           lens on the pinned follower
+//   fx-p1-then-off    all five on, then off: equal to the section with
 //                     nothing enabled exactly
 //   fx-transform-off  the transform section, nothing enabled
 //   fx-transform      three cards with pinned layer transforms (one moved
@@ -82,6 +84,11 @@
 //                 image material
 //   fx-trail-pixel  the same stroke through the pixellate pass
 //   fx-trail-clear  stroke, then trail.clear(): equal to fx-trail-off
+//   fx-transition-a, -b  playground/transition.html, each state alone
+//   fx-transition-0  captured state a, swapped to b, settled, progress 0:
+//                    equal to fx-transition-a exactly
+//   fx-transition-half  the reveal at progress 0.5
+//   fx-transition-1  progress 1: equal to fx-transition-b exactly
 //                 exactly
 //   fx-trail-reuse  the stroke through the page pass alone: the scene is
 //                 still, so frames reuse it (stats().sceneReused); equal
@@ -142,6 +149,7 @@ type Effect =
   | 'rgb-pointer'
   | 'glitch'
   | 'vignette'
+  | 'lens'
   | 'p1'
 
 interface Result {
@@ -226,6 +234,7 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.rgbp.enabled = e === 'rgb-pointer' || e === 'p1'
     h.glitch.enabled = e === 'glitch' || e === 'p1'
     h.vig.enabled = e === 'vignette' || e === 'p1'
+    h.lens.enabled = e === 'lens' || e === 'p1'
     const sim = e === 'sim' || e === 'm3b'
     if (sim) {
       // A fixed step, so the eased dots converge the same way every run.
@@ -857,6 +866,9 @@ async function main(): Promise<void> {
     if (want('fx-vignette')) {
       await capture('fx-displace', 'fx-vignette', 'vignette')
     }
+    if (want('fx-lens')) {
+      await capture('fx-displace', 'fx-lens', 'lens')
+    }
     if (want('fx-p1-then-off')) {
       const s = 'fx-p1-then-off'
       const pre = await capture('fx-displace', `${s}-pre`, 'none')
@@ -1071,6 +1083,89 @@ async function main(): Promise<void> {
           status: n === 0 ? 'ok' : 'fail',
           note: `${n} px differ`
         })
+      }
+    }
+    const trShots = [
+      'fx-transition-a',
+      'fx-transition-0',
+      'fx-transition-half',
+      'fx-transition-1',
+      'fx-transition-b'
+    ]
+    if (trShots.some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`transition: ${m.text()}`)
+        }
+      })
+      try {
+        await p.goto(`${url}transition.html?progress=0`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__tr), null, {
+          timeout: 30_000
+        })
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await frames(10)
+        const nav = await p.evaluate(
+          () => document.getElementById('nav')?.getBoundingClientRect().top
+        )
+        const clip = {
+          x: 0,
+          y: 0,
+          width: VW,
+          height: Math.floor(nav ?? VH) - 8
+        }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(4)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const exact = (name: string, a: PNG, b: PNG): void => {
+          const n = exactDiff(a, b)
+          results.push({
+            name: `${name} (exact)`,
+            regressionPct: diffPng(
+              a,
+              b,
+              resolve(outDir, `${name}-invariant.png`)
+            ),
+            status: n === 0 ? 'ok' : 'fail',
+            note: `${n} px differ`
+          })
+        }
+        const a = await shot('fx-transition-a')
+        // Swaps to state 1 and holds the reveal at progress 0.
+        await p.evaluate(() => window.__tr?.go(1, [0.3, 0.45]))
+        exact('fx-transition-0', a, await shot('fx-transition-0'))
+        await p.evaluate(() => {
+          const r = window.__tr?.reveal
+          if (r) {
+            ;(r.params as Record<string, number>).progress = 0.5
+          }
+        })
+        await shot('fx-transition-half')
+        await p.evaluate(() => {
+          const r = window.__tr?.reveal
+          if (r) {
+            ;(r.params as Record<string, number>).progress = 1
+          }
+        })
+        const one = await shot('fx-transition-1')
+        await p.evaluate(() => window.__tr?.reveal.end())
+        exact('fx-transition-1', await shot('fx-transition-b'), one)
+      } finally {
+        await p.close()
       }
     }
     if (errors.length > 0) {

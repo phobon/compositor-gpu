@@ -434,11 +434,7 @@ export async function createCompositor(
     }
     renderer.render(scene, ctx, dpr)
     if (handoffAt !== null) {
-      const complete =
-        fontsReady &&
-        (imagePass?.pending ?? 0) === 0 &&
-        materialPipelinesPending() === 0 &&
-        !imagesLoading()
+      const complete = mirrorComplete()
       if (complete || performance.now() >= handoffAt) {
         handoffAt = null
         if (handoffHide) {
@@ -596,6 +592,7 @@ export async function createCompositor(
     warmMaterial: (entry) => renderer.warmMaterial(entry),
     nextMaterialId: () => nextMaterial++,
     materialsPending: () => materialPipelinesPending(),
+    mirrorComplete: () => mirrorComplete() && pendingReadFlags === Dirty.NONE,
     hideSource(el, hidden) {
       if (!(el instanceof HTMLElement) || destroyed || lost) {
         return
@@ -856,6 +853,11 @@ export async function createCompositor(
   let handoffAt: number | null = null
   /** An `<img>` in the viewport that hasn't finished loading: the reader
    * skips it until its load event, so ImagePass doesn't count it yet. */
+  const mirrorComplete = (): boolean =>
+    fontsReady &&
+    (imagePass?.pending ?? 0) === 0 &&
+    materialPipelinesPending() === 0 &&
+    !imagesLoading()
   const imagesLoading = (): boolean => {
     const vw = window.innerWidth
     const vh = window.innerHeight

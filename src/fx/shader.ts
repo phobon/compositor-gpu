@@ -84,7 +84,7 @@ fn fx_vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 @fragment
 fn fx_fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
   let uv = (pos.xy * max(fx.scale, 1.0) + fx.dst_origin - fx.origin) / fx.viewport;
-  return effect(uv, fx_src, fx_smp);
+  return fx_call(uv);
 }
 
 // A region pass's last stage, blended over the parent target with the
@@ -92,9 +92,45 @@ fn fx_fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
 @fragment
 fn fx_fs_over(@builtin(position) pos : vec4f) -> @location(0) vec4f {
   let uv = (pos.xy + fx.dst_origin - fx.origin) / fx.viewport;
-  return effect(uv, fx_src, fx_smp) * fx.alpha;
+  return fx_call(uv) * fx.alpha;
 }
 `
+
+const CALL_WGSL = /* wgsl */ `
+fn fx_call(uv : vec2f) -> vec4f {
+  return effect(uv, fx_src, fx_smp);
+}
+`
+
+// A transition (fx.transition): the held snapshot of the outgoing page
+// (bind group 3), and the hold that shows only it until the incoming
+// page's mirror is complete.
+const PREV_WGSL = /* wgsl */ `
+struct FxPrev {
+  size : vec2f,   // runtime: snapshot size, device px
+  hold : f32,     // runtime: 1 while waiting for the incoming page
+  _pad : f32,
+};
+@group(3) @binding(0) var fx_prev : texture_2d<f32>;
+@group(3) @binding(1) var fx_prev_smp : sampler;
+@group(3) @binding(2) var<uniform> fx_prev_info : FxPrev;
+
+// The outgoing page at uv (over the visible viewport), premultiplied.
+fn prev(uv : vec2f) -> vec4f {
+  let t = clamp(uv, vec2f(0.0), vec2f(1.0));
+  return textureSampleLevel(fx_prev, fx_prev_smp, t, 0.0);
+}
+
+fn fx_call(uv : vec2f) -> vec4f {
+  if (fx_prev_info.hold > 0.5) {
+    return prev(uv);
+  }
+  return effect(uv, fx_src, fx_smp);
+}
+`
+
+/** Bytes in the FxPrev uniform. */
+export const FX_PREV_BYTES = 16
 
 // With `image`: the target's pixels (bind group 3).
 const IMAGE_WGSL = /* wgsl */ `
@@ -210,7 +246,8 @@ export function stageSource(
   effect: string | null,
   paramsWgsl: string,
   image = false,
-  trail = false
+  trail = false,
+  prev = false
 ): string {
   return [
     FRAME_WGSL,
@@ -221,6 +258,7 @@ export function stageSource(
     image ? IMAGE_WGSL : '',
     trail ? TRAIL_WGSL : '',
     effect ?? PASSTHROUGH,
+    prev ? PREV_WGSL : CALL_WGSL,
     ENTRY_WGSL
   ].join('\n')
 }

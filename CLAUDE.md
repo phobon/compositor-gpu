@@ -166,9 +166,13 @@ until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 `fx-m3b` exactly), and `fx-follow`, `fx-mat-stagger` (a `mat_index`
 stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
-`fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`, `fx-vignette` and
-`fx-p1-then-off` (all four on, then off: must equal the displace
+`fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`, `fx-vignette`,
+`fx-lens` and `fx-p1-then-off` (all five on, then off: must equal the displace
 section with nothing enabled exactly), on the displace section,
+and on `playground/transition.html` `fx-transition-a` / `-b` (each
+state), `fx-transition-0` (captured a, swapped to b, settled, progress
+0: must equal `-a` exactly), `fx-transition-half`, `fx-transition-1`
+(must equal `-b` exactly),
 `fx-progressive` (progressiveBlur toward the bottom corners, as a region
 pass on an arc of images), and on the transform section
 `fx-transform-off`, `fx-transform` (three cards under pinned layer
@@ -252,7 +256,10 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
 'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
 `clickRipple`/`ripple`/`dissolve`/`rgbSplit`/`glitchSlices`/
-`vignette`. M4 (authoring, `docs/EFFECTS.md`
+`vignette`/`lens`/`radialReveal` (a transition); `fx.transition` (`fx/transition.ts`: a fullscreen pass with
+a held viewport snapshot, `prev(uv)` in group 3, shown alone until
+`settled()` finds `graph.mirrorComplete()` on two frames; `npx tsx
+test/transition/run.ts` times swaps on `playground/transition.html`). M4 (authoring, `docs/EFFECTS.md`
 "Authoring"): `fx.motion` (from/to channels by `progress`, a basic
 `play()`), transforms and motions on one element combined into its
 single layer transform (`fx/compose.ts`), `schema` on every params

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu transition playground</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: 'Inter Play', system-ui, sans-serif; }
+      main { min-height: 100vh; padding: 64px; }
+      main.a { background: #f4f1ea; color: #151517; }
+      main.b { background: #0d0d0f; color: #f4f1ea; }
+      h1 { font-size: 96px; letter-spacing: -0.04em; margin: 0 0 16px; }
+      p { max-width: 56ch; font-size: 20px; line-height: 1.5; }
+      .row { display: flex; gap: 24px; margin-top: 40px; flex-wrap: wrap; }
+      .row img {
+        width: 280px; height: 280px; object-fit: cover; display: block;
+        border-radius: 12px;
+      }
+      main.b .row img { width: 420px; height: 240px; border-radius: 4px; }
+      #nav {
+        position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;
+        display: flex; gap: 8px; font: 14px system-ui;
+      }
+      #nav button { padding: 8px 14px; border-radius: 999px; border: 0; }
+    </style>
+  </head>
+  <body>
+    <main id="page" class="a"></main>
+    <div id="nav" data-gpu-ignore>
+      <button id="prev" type="button">Prev</button>
+      <button id="next" type="button">Next</button>
+    </div>
+    <script type="module" src="./transition.ts"></script>
+  </body>
+</html>

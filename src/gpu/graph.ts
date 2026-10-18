@@ -186,6 +186,10 @@ export interface RenderGraph {
   nextMaterialId(): number
   /** Material pipelines still compiling (test harnesses wait on 0). */
   materialsPending(): number
+  /** The mirror is complete as of this frame's read: fonts resolved, no
+   * image upload or material compile in flight, no viewport `<img>`
+   * still loading, no read pending (the replace-mode handoff's test). */
+  mirrorComplete(): boolean
   /** Hide (or restore) `el`'s own paint in the DOM, as replace mode does
    * per element; the mirror is unaffected. */
   hideSource(el: Element, hidden: boolean): void
