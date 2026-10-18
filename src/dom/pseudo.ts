@@ -58,7 +58,7 @@ import {
   readTextShadows,
   textTransformOf,
   transformText
-} from './textRuns'
+} from './text_runs'
 import {
   applyAffine,
   boxAffine,

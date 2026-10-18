@@ -6,7 +6,7 @@ import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { type Hook, hookSource, LAYER_HOOKS } from './gpu'
-import { ImageArray } from './imageArray'
+import { ImageArray } from './image_array'
 import {
   createParams,
   type ParamBlock,

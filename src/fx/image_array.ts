@@ -1,5 +1,5 @@
 import type { RenderGraph } from '../gpu/graph'
-import type { ImageRegion } from '../images/imageRenderer'
+import type { ImageRegion } from '../images/image_renderer'
 import { reportShaderErrors } from '../util/log'
 
 // A layer's `images` binding: the image records of several elements, each

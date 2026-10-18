@@ -27,7 +27,7 @@ import {
   type RegionFrame,
   type RegionHandler
 } from './graph'
-import { GroupBlur } from './groupBlur'
+import { GroupBlur } from './group_blur'
 import { materialPipelinesSettled } from './material'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 

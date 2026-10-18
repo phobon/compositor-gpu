@@ -1,5 +1,5 @@
 import type { SyncDiagnostics } from './dom/observer'
-import type { TextReadStats } from './dom/textRuns'
+import type { TextReadStats } from './dom/text_runs'
 import type { RenderGraph } from './gpu/graph'
 import type { Profile } from './profile/profiler'
 import type { Glyph } from './scene/records'

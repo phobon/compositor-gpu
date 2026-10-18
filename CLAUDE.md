@@ -727,6 +727,8 @@ When unsure between tiers, pick the cheaper and escalate on failure
 The number of tokens used to edit files is best minimized, all else being equal. Therefore, when it will not affect the end result, try to surgically edit a file rather than rewrite the entire thing.
 
 Please remove all mannered prose.
+
+- Filenames should be lower snake case (ie: `text_rasterizer.ts` not `TextRasterizer.ts`)
 ## Git workflow
 
 Never commit on your own. Make changes and leave them uncommitted so I can

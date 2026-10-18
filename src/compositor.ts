@@ -1,5 +1,5 @@
-import { BoxPass } from './boxes/boxRenderer'
-import { CutoutPass } from './boxes/cutoutPass'
+import { BoxPass } from './boxes/box_renderer'
+import { CutoutPass } from './boxes/cutout_pass'
 import {
   Dirty,
   DomSync,
@@ -8,7 +8,7 @@ import {
   IGNORE_ATTR,
   isIgnored
 } from './dom/observer'
-import { textReadStats } from './dom/textRuns'
+import { textReadStats } from './dom/text_runs'
 import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
 import { blendMaterials } from './gpu/blend'
@@ -21,7 +21,7 @@ import type {
 } from './gpu/graph'
 import { materialPipelinesPending } from './gpu/material'
 import { Renderer } from './gpu/renderer'
-import { ImagePass } from './images/imageRenderer'
+import { ImagePass } from './images/image_renderer'
 import {
   type Profile,
   type ProfileHost,

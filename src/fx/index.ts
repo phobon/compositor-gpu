@@ -51,12 +51,12 @@ export {
   type ClickRippleOptions,
   type ClickRippleSchema,
   clickRipple
-} from './presets/clickRipple'
+} from './presets/click_ripple'
 export {
   type CursorGlowOptions,
   type CursorGlowSchema,
   cursorGlow
-} from './presets/cursorGlow'
+} from './presets/cursor_glow'
 export {
   type DevelopOptions,
   type DevelopSchema,
@@ -76,7 +76,7 @@ export {
   type EdgeLensOptions,
   type EdgeLensSchema,
   edgeLens
-} from './presets/edgeLens'
+} from './presets/edge_lens'
 export {
   type GalleryOptions,
   type GallerySchema,
@@ -86,18 +86,18 @@ export {
   type GlitchSlicesOptions,
   type GlitchSlicesSchema,
   glitchSlices
-} from './presets/glitchSlices'
+} from './presets/glitch_slices'
 export { type LensOptions, type LensSchema, lens } from './presets/lens'
 export {
   type ProgressiveBlurOptions,
   type ProgressiveBlurSchema,
   progressiveBlur
-} from './presets/progressiveBlur'
+} from './presets/progressive_blur'
 export {
   type RadialRevealOptions,
   type RadialRevealSchema,
   radialReveal
-} from './presets/radialReveal'
+} from './presets/radial_reveal'
 export {
   type RevealOptions,
   type RevealSchema,
@@ -107,7 +107,7 @@ export {
   type RgbSplitOptions,
   type RgbSplitSchema,
   rgbSplit
-} from './presets/rgbSplit'
+} from './presets/rgb_split'
 export {
   type RippleOptions,
   type RippleSchema,
@@ -122,13 +122,13 @@ export {
   type TextStaggerOptions,
   type TextStaggerSchema,
   textStagger
-} from './presets/textStagger'
+} from './presets/text_stagger'
 export {
   type TouchTrail,
   type TouchTrailParams,
   type TouchTrailSchema,
   touchTrail
-} from './presets/touchTrail'
+} from './presets/touch_trail'
 export {
   type VignetteOptions,
   type VignetteSchema,

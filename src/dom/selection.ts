@@ -1,7 +1,7 @@
 import type { BoxRecord, GlyphRun, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
 import { toDocRect } from './styles'
-import { graphemes } from './textRuns'
+import { graphemes } from './text_runs'
 
 // The document selection's highlight (`::selection`): boxes of the
 // selected part of each text node, painted under its glyphs, and the

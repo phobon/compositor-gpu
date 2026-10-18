@@ -33,7 +33,7 @@ export type {
   SceneRecord
 } from './scene/records'
 export { SlugText } from './text/slug/rasterizer'
-export type { TextBackend } from './text/textRasterizer'
+export type { TextBackend } from './text/text_rasterizer'
 export type {
   Compositor,
   CompositorOptions,

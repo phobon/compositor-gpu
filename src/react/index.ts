@@ -18,12 +18,12 @@ import {
 import type * as FxLib from '../fx/index'
 import type { Effects, Trail, TrailOptions } from '../fx/index'
 import type { ParamSchema, ParamValues } from '../fx/params'
-import type { EdgeLensOptions } from '../fx/presets/edgeLens'
+import type { EdgeLensOptions } from '../fx/presets/edge_lens'
 import type { SpotlightOptions } from '../fx/presets/spotlight'
 import type {
   TouchTrailParams,
   TouchTrailSchema
-} from '../fx/presets/touchTrail'
+} from '../fx/presets/touch_trail'
 import type { Compositor, CompositorOptions } from '../types'
 
 export type FxLibrary = typeof FxLib

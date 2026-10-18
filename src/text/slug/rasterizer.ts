@@ -8,10 +8,10 @@ import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
-import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlasShader'
-import { resolveFontBytes } from '../fontSource'
-import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyphAtlas'
-import type { TextBackend } from '../textRasterizer'
+import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlas_shader'
+import { resolveFontBytes } from '../font_source'
+import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
+import type { TextBackend } from '../text_rasterizer'
 import {
   type FontHandle,
   type GlyphBands,

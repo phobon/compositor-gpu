@@ -15,7 +15,7 @@
 // are boxes with `line` set, whose pattern the box shader draws.
 import type { BoxRecord, Glyph, GlyphRun, Rect, RGBA } from '../scene/records'
 import { parseColor } from '../util/color'
-import { fontMetrics, measureGlyphInk } from './textRuns'
+import { fontMetrics, measureGlyphInk } from './text_runs'
 import { type Placement, placementAabb, subPlacement } from './transform'
 
 export type DecorationLine = 'underline' | 'overline' | 'line-through'

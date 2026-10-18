@@ -1,5 +1,5 @@
 import type { Glyph, GlyphRun, Rect, RGBA, TextShadow } from '../scene/records'
-import { isColorGrapheme } from '../text/glyphAtlas'
+import { isColorGrapheme } from '../text/glyp'
 import { parseColor } from '../util/color'
 import { splitTopLevel } from '../util/css'
 import { toDocRect } from './styles'

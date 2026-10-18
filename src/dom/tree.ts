@@ -72,7 +72,7 @@ import {
   FAST_TEXT_READ,
   isPlaced,
   readTextNode
-} from './textRuns'
+} from './text_runs'
 import {
   affine,
   composeIndividual,

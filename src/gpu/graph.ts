@@ -1,5 +1,5 @@
 import type { ElNode } from '../dom/tree'
-import type { ImageRegion } from '../images/imageRenderer'
+import type { ImageRegion } from '../images/image_renderer'
 import type { GlyphTable } from '../text/slug/rasterizer'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'

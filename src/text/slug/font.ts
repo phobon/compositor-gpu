@@ -1,5 +1,5 @@
 import * as opentype from 'opentype.js'
-import { installGvarFix } from './gvarFix'
+import { installGvarFix } from './gvar_fix'
 
 /** A quadratic Bézier segment in em space (unitsPerEm normalised to 0..1). */
 export interface Quad {

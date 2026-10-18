@@ -19,15 +19,15 @@ import {
   type AtlasSource,
   ImageAtlas,
   MAX_ENTRY_SIZE
-} from './imageAtlas'
-import { to8Bit } from './pngDepth'
+} from './image_atlas'
+import { to8Bit } from './png_depth'
 import {
   concreteSize,
   requestSvgMarkup,
   type SvgIntrinsic,
   sizedMarkup,
   svgIntrinsic
-} from './svgRaster'
+} from './svg_raster'
 
 /** Rasterised-SVG canvases stay bounded: past this many entries the whole
  * cache is dropped rather than evicted one at a time (`ImagePass.svgCache`). */

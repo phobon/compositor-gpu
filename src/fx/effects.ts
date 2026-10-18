@@ -38,7 +38,7 @@ import {
   type PointerOverride,
   PointerTracker
 } from './pointer'
-import { createReducedMotion } from './reducedMotion'
+import { createReducedMotion } from './reduced_motion'
 import {
   EFFECT_BYTES,
   effectSource,

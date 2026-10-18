@@ -6,7 +6,7 @@
 // loaded it) and decoded from the Blob. Sources fetch can't read
 // (cross-origin without CORS, a failed request) take the element path.
 
-import { isPng16, isPng16Header, maybePng } from './pngDepth'
+import { isPng16, isPng16Header, maybePng } from './png_depth'
 
 export interface Decoded {
   bitmap: ImageBitmap
