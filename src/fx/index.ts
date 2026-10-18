@@ -73,10 +73,20 @@ export {
   edgeLens
 } from './presets/edgeLens'
 export {
+  type GlitchSlicesOptions,
+  type GlitchSlicesSchema,
+  glitchSlices
+} from './presets/glitchSlices'
+export {
   type ProgressiveBlurOptions,
   type ProgressiveBlurSchema,
   progressiveBlur
 } from './presets/progressiveBlur'
+export {
+  type RgbSplitOptions,
+  type RgbSplitSchema,
+  rgbSplit
+} from './presets/rgbSplit'
 export {
   type RippleOptions,
   type RippleSchema,
@@ -98,6 +108,11 @@ export {
   type TouchTrailSchema,
   touchTrail
 } from './presets/touchTrail'
+export {
+  type VignetteOptions,
+  type VignetteSchema,
+  vignette
+} from './presets/vignette'
 export {
   EFFECT_BYTES,
   EFFECT_WGSL,

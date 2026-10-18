@@ -59,6 +59,12 @@
 //   fx-mat-stagger    a glyph material staggered by mat_index
 //   fx-follow-then-off  stagger on, then off: equal to fx-follow exactly
 //   fx-pass-image     the fx-off section through a pass sampling #mat-img
+//   fx-rgbsplit       the displace section through rgbSplit (radial)
+//   fx-rgbsplit-pointer  rgbSplit on the pinned follower, within a radius
+//   fx-glitch         glitchSlices with the pattern held
+//   fx-vignette       vignette with a white flash
+//   fx-p1-then-off    all four on, then off: equal to the section with
+//                     nothing enabled exactly
 //   fx-transform-off  the transform section, nothing enabled
 //   fx-transform      three cards with pinned layer transforms (one moved
 //                     past the row's overflow clip)
@@ -132,6 +138,11 @@ type Effect =
   | 'm3b'
   | 'stagger'
   | 'pimage'
+  | 'rgb'
+  | 'rgb-pointer'
+  | 'glitch'
+  | 'vignette'
+  | 'p1'
 
 interface Result {
   name: string
@@ -211,6 +222,10 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.tgjs.enabled = e === 'tgjs'
     h.stagger.enabled = e === 'stagger'
     h.pimage.enabled = e === 'pimage'
+    h.rgb.enabled = e === 'rgb' || e === 'p1'
+    h.rgbp.enabled = e === 'rgb-pointer' || e === 'p1'
+    h.glitch.enabled = e === 'glitch' || e === 'p1'
+    h.vig.enabled = e === 'vignette' || e === 'p1'
     const sim = e === 'sim' || e === 'm3b'
     if (sim) {
       // A fixed step, so the eased dots converge the same way every run.
@@ -829,6 +844,34 @@ async function main(): Promise<void> {
     }
     if (want('fx-pass-image')) {
       await capture('fx-off', 'fx-pass-image', 'pimage')
+    }
+    if (want('fx-rgbsplit')) {
+      await capture('fx-displace', 'fx-rgbsplit', 'rgb')
+    }
+    if (want('fx-rgbsplit-pointer')) {
+      await capture('fx-displace', 'fx-rgbsplit-pointer', 'rgb-pointer')
+    }
+    if (want('fx-glitch')) {
+      await capture('fx-displace', 'fx-glitch', 'glitch')
+    }
+    if (want('fx-vignette')) {
+      await capture('fx-displace', 'fx-vignette', 'vignette')
+    }
+    if (want('fx-p1-then-off')) {
+      const s = 'fx-p1-then-off'
+      const pre = await capture('fx-displace', `${s}-pre`, 'none')
+      await capture('fx-displace', `${s}-on`, 'p1')
+      const post = await capture('fx-displace', s, 'none')
+      if (pre && post) {
+        const n = exactDiff(pre, post)
+        const pct = diffPng(pre, post, resolve(outDir, `${s}-invariant.png`))
+        results.push({
+          name: `${s} (= pre)`,
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
     }
     const tfs = 'fx-transform'
     const tfInv = [

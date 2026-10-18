@@ -17,13 +17,16 @@ import {
   cursorGlow,
   displace,
   dissolve,
+  glitchSlices,
   gpu,
   ripple as imageRipple,
   type Layer,
   type Material,
   MatIn,
   type Pass,
-  progressiveBlur
+  progressiveBlur,
+  rgbSplit,
+  vignette
 } from '@/fx'
 import { createCompositor } from '@/index'
 import 'dialkit/vanilla/styles.css'
@@ -590,6 +593,23 @@ async function boot(): Promise<void> {
         return i + c * (1.0 - i.a);
       }`
   })
+  // Intro and transition building blocks (P1 of the feature plan).
+  const rgb = rgbSplit(fx, { enabled: false, amount: 10, reach: 500 })
+  const rgbp = rgbSplit(fx, {
+    enabled: false,
+    name: 'rgb-split-pointer',
+    followPointer: true,
+    amount: 14,
+    reach: 200,
+    radius: 360
+  })
+  const glitch = glitchSlices(fx, {
+    enabled: false,
+    rate: 0,
+    seed: 3,
+    density: 0.4
+  })
+  const vig = vignette(fx, { enabled: false, amount: 0.7, flash: 0.25 })
   if (!vrMode) {
     const kit = mountDials(
       [
@@ -665,6 +685,43 @@ async function boot(): Promise<void> {
           params: { delay: [0, 0.3, 0.01] }
         },
         { name: 'passSamplingImage', effect: pimage },
+        {
+          name: 'rgbSplit',
+          effect: rgb,
+          params: {
+            amount: [0, 60, 0.5],
+            reach: [1, 2000, 1],
+            radius: [0, 2000, 1],
+            mode: [0, 1, 1]
+          }
+        },
+        {
+          name: 'rgbSplitPointer',
+          effect: rgbp,
+          params: { amount: [0, 60, 0.5], radius: [0, 2000, 1] }
+        },
+        {
+          name: 'glitchSlices',
+          effect: glitch,
+          params: {
+            amount: [0, 200, 1],
+            height: [1, 200, 1],
+            density: [0, 1, 0.01],
+            split: [0, 40, 0.5],
+            rate: [0, 60, 1],
+            seed: [0, 1000, 1]
+          }
+        },
+        {
+          name: 'vignette',
+          effect: vig,
+          params: {
+            amount: [0, 1, 0.01],
+            inner: [0, 2, 0.01],
+            outer: [0, 2, 0.01],
+            flash: [0, 1, 0.01]
+          }
+        },
         { name: 'useGpuPass', effect: tgjs, params: { amount: [0, 1, 0.01] } }
       ],
       {
@@ -748,6 +805,10 @@ async function boot(): Promise<void> {
     limage,
     stagger,
     pimage,
+    rgb,
+    rgbp,
+    glitch,
+    vig,
     sim,
     raw,
     tgbox,

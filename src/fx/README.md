@@ -836,6 +836,25 @@ layer draws nothing).
   '#fff', place = 'above' })`: a ring per entry of `pointer.clicks`
   (document space, so it stays where clicked), ease-out growth, linear
   fade; `continuous` only while the newest ripple runs.
+- `rgbSplit(fx, { amount = 6, reach = 600, radius = 0, mode =
+  'radial', followPointer = false, center = [0.5, 0.5], direction = [1,
+  0], region? })`: red sampled `amount` CSS px one way, blue the other,
+  green in place; alpha is the largest of the three. Radial (param
+  `mode` 0) offsets along the line from `center` (uv) or the eased
+  follower, growing with distance up to `amount` at `reach` CSS px;
+  linear (1) along `direction`. `radius > 0` fades the split out by that
+  distance from the centre. Declares `amount` as its radius.
+- `glitchSlices(fx, { amount = 24, height = 14, density = 0.3, split =
+  4, rate = 12, seed = 0, region? })`: bands about `height` CSS px tall
+  (jittered per group of three); a `density` share shift sideways by up
+  to `amount` with red and blue split a further `split` px. Reseeds
+  `rate` times a second (0 holds the pattern). Declares `amount + split`
+  as its radius; `continuous` by default.
+- `vignette(fx, { amount = 0.5, inner = 0.45, outer = 1.1, flash = 0,
+  center = [0.5, 0.5], color = '#000', flashColor = '#fff' })`: mixes
+  toward `color` by up to `amount` from `inner` to `outer` (distance
+  from `center`, 1 at a centred vignette's corners), then the whole
+  viewport toward `flashColor` by `flash`. Fullscreen only.
 
 ## Testing hook
 

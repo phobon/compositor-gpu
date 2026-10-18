@@ -33,6 +33,14 @@ declare global {
       stagger: Material
       /** A fullscreen pass sampling #mat-img (`image`). */
       pimage: Pass
+      /** rgbSplit, radial from the centre. */
+      rgb: Pass
+      /** rgbSplit on the pointer follower, fading by its radius. */
+      rgbp: Pass
+      /** glitchSlices, pattern held (rate 0). */
+      glitch: Pass
+      /** vignette with a 0.25 white flash. */
+      vig: Pass
       /** M3b: the heading's glyphs drawn by a Layer. */
       lglyphs: Layer
       /** An image Target sampled by a Layer. */

@@ -594,6 +594,21 @@ perspective transforms · culling · WebGL2 backend.
       inline elements (CSS semantics)
 - [ ] Perspective / 3D transforms (matrix3d is flattened); rotated overflow
       clips (AABB now)
+- [ ] Transition effects (plan of 2026-10-18, from a reference video):
+  - [x] P1 presets `rgbSplit`, `glitchSlices`, `vignette` (with `flash`);
+        shots `fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`,
+        `fx-vignette`, `fx-p1-then-off` (2026-10-18; then-off 0 px)
+  - [ ] P3 transitions between two DOM states through a held snapshot
+        (`fx.transition`, `capture()` / `settled`); experiment
+        `docs/rd/experiments/2026-10-18-snapshot-transitions.md`
+  - [ ] P2 `lens` (fisheye with an RGB fringe at its edge) and
+        `radialReveal` on the pointer, as P3's first transition shader
+  - [ ] P4 element intro `reveal` (region blur + rgbSplit +
+        glitchSlices by one `progress`, staggered; images developing
+        through a material)
+  - [ ] P5 3D image gallery: an `fx.layer` of image quads under its own
+        perspective, sorted back to front, edges anti-aliased in the
+        shader
 
 ## Non-goals (for now)
 CSS filters, the other blend modes, print, nested independent scrollers,
