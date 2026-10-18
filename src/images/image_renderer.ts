@@ -1,18 +1,12 @@
-import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
-import {
-  MAT_DEFAULT_WGSL,
-  MAT_GRID_WGSL,
-  MAT_IN_WGSL,
-  type MaterialBinding,
-  MaterialPipelines,
-  PREMUL_BLEND
-} from '../gpu/material'
+import type { RenderPass, Shared } from '../gpu/frame'
+import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
 import { SD_BOX_WGSL } from '../gpu/sdf'
+import { StorageArray } from '../gpu/storage'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
-import { log, reportShaderErrors } from '../util/log'
+import { log } from '../util/log'
 import { decodeImage } from './decode'
 import {
   type AtlasRect,
@@ -64,7 +58,6 @@ function clamp(v: number, lo: number, hi: number): number {
 // rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
 // xf1(4) + atlas(4) + ry(4)
 const FLOATS_PER_IMAGE = 40
-const BYTES_PER_IMAGE = FLOATS_PER_IMAGE * 4
 
 /** params.y bits 8+: the clip shape index (frame_clip_cov; 0 none). */
 const CLIP_SHIFT = 8
@@ -83,16 +76,7 @@ const FLAG_VIEWPORT = 8
 
 /** The image shader with material hooks `mat` (gpu/material.ts) on a
  * `subdiv` × `subdiv` quad; the default variant has identity hooks. */
-const shader = (
-  mat: string,
-  subdiv: number,
-  wrap: string
-): string => /* wgsl */ `
-${FRAME_WGSL}
-${MAT_IN_WGSL}
-${MAT_GRID_WGSL}
-${mat}
-const MAT_SUBDIV : u32 = ${subdiv}u;
+const shader = (wrap: string): string => /* wgsl */ `
 
 // Local space: the record's untransformed box, origin at its top-left.
 struct Img {
@@ -306,13 +290,10 @@ const TEXTURE_IDLE_MS = 10_000
  */
 export class ImagePass implements RenderPass {
   readonly layer = 'images' as const
-  private pipeline: GPURenderPipeline
-  private readonly materials: MaterialPipelines
+  private readonly pipelines: PassPipelines
   private group1Layout: GPUBindGroupLayout
   private sampler: GPUSampler
-  private buffer: GPUBuffer | null = null
-  private capacity = 0
-  private data = new Float32Array(0)
+  private readonly instances: StorageArray
   /** Standalone textures by source; swept after uploads (TEXTURE_IDLE_MS). */
   private cache = new Map<CanvasImageSource, Cached>()
   /** Rasterised-SVG canvases, keyed by `currentSrc@WxH` so a resize (a new
@@ -361,7 +342,7 @@ export class ImagePass implements RenderPass {
   ) {
     this.atlas = new ImageAtlas(shared.device)
     this.mips = new MipGenerator(shared.device)
-    const { device, frameLayout } = shared
+    const { device } = shared
     this.group1Layout = device.createBindGroupLayout({
       entries: [
         {
@@ -380,52 +361,13 @@ export class ImagePass implements RenderPass {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     })
-    const describe = (
-      code: string,
-      label: string,
-      extra: GPUBindGroupLayout | null
-    ): GPURenderPipelineDescriptor => {
-      const module = device.createShaderModule({ label, code })
-      reportShaderErrors(module, label)
-      const layouts = [frameLayout, this.group1Layout]
-      if (extra) {
-        layouts.push(extra)
-      }
-      return {
-        label,
-        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
-        vertex: { module, entryPoint: 'vs' },
-        fragment: {
-          module,
-          entryPoint: 'fs',
-          targets: [{ format: shared.format, blend: PREMUL_BLEND }]
-        },
-        primitive: { topology: 'triangle-list' }
-      }
-    }
-    this.pipeline = device.createRenderPipeline(
-      describe(shader(MAT_DEFAULT_WGSL, 1, DEFAULT_FS), 'image', null)
-    )
-    this.materials = new MaterialPipelines(
-      'image',
-      device,
-      (code, n, label, layout, wrap) =>
-        describe(wrap(shader(code, n, MATERIAL_FS)), label, layout)
-    )
-  }
-
-  private ensureCapacity(n: number): void {
-    if (n <= this.capacity && this.buffer) {
-      return
-    }
-    const cap = Math.max(n, this.capacity ? this.capacity * 2 : 16)
-    this.buffer?.destroy()
-    this.buffer = this.shared.device.createBuffer({
-      size: cap * BYTES_PER_IMAGE,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    this.pipelines = new PassPipelines(shared, {
+      kind: 'image',
+      label: 'image',
+      layout: this.group1Layout,
+      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS)
     })
-    this.data = new Float32Array(cap * FLOATS_PER_IMAGE)
-    this.capacity = cap
+    this.instances = new StorageArray(device, FLOATS_PER_IMAGE, 16)
   }
 
   /** `source`/`w`/`h` are already resolved (an SVG source has already been
@@ -688,8 +630,8 @@ export class ImagePass implements RenderPass {
     if (images.length === 0) {
       return
     }
-    this.ensureCapacity(images.length)
-    const d = this.data
+    this.instances.ensure(images.length)
+    const d = this.instances.f32
     for (let i = 0; i < images.length; i++) {
       const rec = images[i]
       const o = i * FLOATS_PER_IMAGE
@@ -890,7 +832,10 @@ export class ImagePass implements RenderPass {
         this.shared.device.createBindGroup({
           layout: this.group1Layout,
           entries: [
-            { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
+            {
+              binding: 0,
+              resource: { buffer: this.instances.buffer as GPUBuffer }
+            },
             // Reached only when `cached` was resolved above (spot is null
             // here, and the combined null case already `continue`d).
             { binding: 1, resource: (cached as Cached).view },
@@ -899,13 +844,7 @@ export class ImagePass implements RenderPass {
         })
       )
     }
-    this.shared.device.queue.writeBuffer(
-      this.buffer as GPUBuffer,
-      0,
-      d,
-      0,
-      images.length * FLOATS_PER_IMAGE
-    )
+    this.instances.write(0, images.length)
     this.atlas.flush()
   }
 
@@ -946,20 +885,23 @@ export class ImagePass implements RenderPass {
     if (
       this.atlasBindGroup &&
       this.atlasBindGroupGen === this.atlas.generation &&
-      this.atlasBindGroupBuffer === this.buffer
+      this.atlasBindGroupBuffer === this.instances.buffer
     ) {
       return this.atlasBindGroup
     }
     this.atlasBindGroup = this.shared.device.createBindGroup({
       layout: this.group1Layout,
       entries: [
-        { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
+        {
+          binding: 0,
+          resource: { buffer: this.instances.buffer as GPUBuffer }
+        },
         { binding: 1, resource: this.atlas.view as GPUTextureView },
         { binding: 2, resource: this.sampler }
       ]
     })
     this.atlasBindGroupGen = this.atlas.generation
-    this.atlasBindGroupBuffer = this.buffer
+    this.atlasBindGroupBuffer = this.instances.buffer
     return this.atlasBindGroup
   }
 
@@ -975,16 +917,9 @@ export class ImagePass implements RenderPass {
     if (this.draws.length === 0) {
       return 0
     }
-    const mp = this.materials.get(material)
-    if (!mp && this.materials.held(material)) {
+    const verts = this.pipelines.use(encoder, material)
+    if (verts === null) {
       return 0
-    }
-    encoder.setPipeline(mp ?? this.pipeline)
-    let verts = 6
-    if (mp && material) {
-      encoder.setBindGroup(2, material.bindGroup)
-      const n = Math.max(1, Math.floor(material.subdivisions))
-      verts = 6 * n * n
     }
     const end = first + count
     let issued = 0
@@ -1015,15 +950,15 @@ export class ImagePass implements RenderPass {
   }
 
   dropMaterial(id: number): void {
-    this.materials.drop(id)
+    this.pipelines.drop(id)
   }
 
   warmMaterial(mat: MaterialBinding): void {
-    this.materials.warm(mat)
+    this.pipelines.warm(mat)
   }
 
   destroy(): void {
-    this.buffer?.destroy()
+    this.instances.destroy()
     this.atlas.destroy()
     for (const c of this.cache.values()) {
       c.texture.destroy()

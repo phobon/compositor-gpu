@@ -1,10 +1,10 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import { SD_BOX_WGSL } from '../gpu/sdf'
+import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
 
 const FLOATS_PER_CUT = 24 // 6 * vec4f
-const BYTES_PER_CUT = FLOATS_PER_CUT * 4
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
@@ -89,14 +89,13 @@ export class CutoutPass implements RenderPass {
   readonly layer = 'cutouts' as const
   private pipeline: GPURenderPipeline
   private group1Layout: GPUBindGroupLayout
-  private buffer: GPUBuffer | null = null
+  private readonly cuts: StorageArray
   private bindGroup: GPUBindGroup | null = null
-  private capacity = 0
   private count = 0
-  private data = new Float32Array(0)
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
+    this.cuts = new StorageArray(device, FLOATS_PER_CUT, 16)
     this.group1Layout = device.createBindGroupLayout({
       entries: [
         {
@@ -126,36 +125,21 @@ export class CutoutPass implements RenderPass {
     })
   }
 
-  private ensureCapacity(n: number): boolean {
-    if (n <= this.capacity) {
-      return false
-    }
-    const cap = Math.max(n, this.capacity ? this.capacity * 2 : 16)
-    this.buffer?.destroy()
-    this.buffer = this.shared.device.createBuffer({
-      size: cap * BYTES_PER_CUT,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    })
-    this.data = new Float32Array(cap * FLOATS_PER_CUT)
-    this.capacity = cap
-    return true
-  }
-
   upload(scene: Scene): void {
     const cuts = scene.cutouts
     this.count = cuts.length
     if (this.count === 0) {
       return
     }
-    if (this.ensureCapacity(this.count) || !this.bindGroup) {
+    if (this.cuts.ensure(this.count) || !this.bindGroup) {
       this.bindGroup = this.shared.device.createBindGroup({
         layout: this.group1Layout,
         entries: [
-          { binding: 0, resource: { buffer: this.buffer as GPUBuffer } }
+          { binding: 0, resource: { buffer: this.cuts.buffer as GPUBuffer } }
         ]
       })
     }
-    const d = this.data
+    const d = this.cuts.f32
     const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
     const snap = (v: number) => Math.round(v * dpr) / dpr
     let o = 0
@@ -199,13 +183,7 @@ export class CutoutPass implements RenderPass {
         d[o++] = (c.radiusY ?? c.radius)[k] ?? 0
       }
     }
-    this.shared.device.queue.writeBuffer(
-      this.buffer as GPUBuffer,
-      0,
-      d,
-      0,
-      this.count * FLOATS_PER_CUT
-    )
+    this.cuts.write(0, this.count)
   }
 
   draw(encoder: GPURenderPassEncoder, first: number, count: number): number {
@@ -219,6 +197,6 @@ export class CutoutPass implements RenderPass {
   }
 
   destroy(): void {
-    this.buffer?.destroy()
+    this.cuts.destroy()
   }
 }

@@ -1,4 +1,5 @@
-import { log } from '../util/log'
+import { log, reportShaderErrors } from '../util/log'
+import { FRAME_WGSL, type Shared } from './frame'
 
 // Materials (docs/EFFECTS.md "Material", extension point 2): a record pass
 // (boxes, images, glyphs) compiled with an author's vertex/fragment hooks
@@ -305,4 +306,134 @@ interface SharedPipeline {
   users: Set<number>
   /** Materials to notify (`ready`) when it finishes compiling. */
   waiting: Set<MaterialBinding>
+}
+
+/** A record pass's shader: the Frame uniform, the material interface and
+ * grid, the material's hooks (`MAT_DEFAULT_WGSL` for none) and its cell
+ * count, then the pass's own `body` (structs, vertex shader, fragment
+ * entry point), which starts on a new line. */
+export function passShader(
+  hooks: string,
+  subdiv: number,
+  body: string
+): string {
+  return `
+${FRAME_WGSL}
+${MAT_IN_WGSL}
+${MAT_GRID_WGSL}
+${hooks}
+const MAT_SUBDIV : u32 = ${subdiv}u;${body}`
+}
+
+/** A material pipeline chosen for a draw. */
+export interface PassPipeline {
+  pipeline: GPURenderPipeline
+  /** Vertices per instance: 6 · n² for a material's n × n grid. */
+  verts: number
+  /** Set while drawing with a material's variant (bind group 2). */
+  material: MaterialBinding | null
+}
+
+/**
+ * A record pass's pipelines (box, image, Slug): the default one and each
+ * material's variant, built from one shader body. Bind group 0 is the
+ * shared Frame uniform, 1 the pass's own `layout`, 2 the material's;
+ * blending is premultiplied (a material's blend state for its variant).
+ */
+export class PassPipelines {
+  readonly default: GPURenderPipeline
+  private readonly variants: MaterialPipelines
+
+  /** `body(material)`: the pass's shader after the header (passShader),
+   * with the fragment entry point for a material variant or the
+   * default. */
+  constructor(
+    shared: Pick<Shared, 'device' | 'format' | 'frameLayout'>,
+    opts: {
+      kind: MaterialKind
+      label: string
+      layout: GPUBindGroupLayout
+      body: (material: boolean) => string
+    }
+  ) {
+    const { device, format, frameLayout } = shared
+    const describe = (
+      code: string,
+      label: string,
+      extra: GPUBindGroupLayout | null
+    ): GPURenderPipelineDescriptor => {
+      const module = device.createShaderModule({ label, code })
+      reportShaderErrors(module, label)
+      const layouts = [frameLayout, opts.layout]
+      if (extra) {
+        layouts.push(extra)
+      }
+      return {
+        label,
+        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [{ format, blend: PREMUL_BLEND }]
+        },
+        primitive: { topology: 'triangle-list' }
+      }
+    }
+    this.default = device.createRenderPipeline(
+      describe(
+        passShader(MAT_DEFAULT_WGSL, 1, opts.body(false)),
+        opts.label,
+        null
+      )
+    )
+    this.variants = new MaterialPipelines(
+      opts.kind,
+      device,
+      (code, n, label, layout, wrap) =>
+        describe(wrap(passShader(code, n, opts.body(true))), label, layout)
+    )
+  }
+
+  /** The pipeline to draw `material`'s records with: its variant once
+   * compiled, else the default; null when the material holds its records
+   * back until compiled. */
+  pipelineFor(
+    material: MaterialBinding | null | undefined
+  ): PassPipeline | null {
+    const mp = this.variants.get(material)
+    if (!mp && this.variants.held(material)) {
+      return null
+    }
+    if (mp && material) {
+      const n = Math.max(1, Math.floor(material.subdivisions))
+      return { pipeline: mp, verts: 6 * n * n, material }
+    }
+    return { pipeline: this.default, verts: 6, material: null }
+  }
+
+  /** Set the pipeline (and the material's bind group) for `material`'s
+   * records; the vertex count per instance, or null to draw nothing. */
+  use(
+    encoder: GPURenderPassEncoder,
+    material: MaterialBinding | null | undefined
+  ): number | null {
+    const p = this.pipelineFor(material)
+    if (!p) {
+      return null
+    }
+    encoder.setPipeline(p.pipeline)
+    if (p.material) {
+      encoder.setBindGroup(2, p.material.bindGroup)
+    }
+    return p.verts
+  }
+
+  drop(id: number): void {
+    this.variants.drop(id)
+  }
+
+  warm(mat: MaterialBinding): void {
+    this.variants.warm(mat)
+  }
 }

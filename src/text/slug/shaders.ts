@@ -1,10 +1,3 @@
-import { FRAME_WGSL } from '../../gpu/frame'
-import {
-  MAT_DEFAULT_WGSL,
-  MAT_GRID_WGSL,
-  MAT_IN_WGSL
-} from '../../gpu/material'
-
 /**
  * Slug fragment shader.
  *
@@ -167,18 +160,9 @@ fn slug_coverage(em : vec2f, gref : vec4u, inv : vec2f) -> f32 {
 }
 `
 
-/** The Slug shader with material hooks `mat` (gpu/material.ts) on a
- * `subdiv` × `subdiv` quad; SLUG_WGSL is the default variant. */
-export const slugShader = (
-  mat: string,
-  subdiv: number,
-  material: boolean
-): string => /* wgsl */ `
-${FRAME_WGSL}
-${MAT_IN_WGSL}
-${MAT_GRID_WGSL}
-${mat}
-const MAT_SUBDIV : u32 = ${subdiv}u;
+/** The Slug shader after its header (gpu/material.ts passShader), with
+ * the material variant's fragment entry point or the default's. */
+export const slugBody = (material: boolean): string => /* wgsl */ `
 
 ${SLUG_STRUCTS_WGSL}
 @group(1) @binding(0) var<storage, read> glyphs : array<Glyph>;
@@ -269,5 +253,3 @@ fn fs(in : VOut) -> @location(0) vec4f {
     cov, 0.0, in.idx, 2u));
 }
 `
-
-export const SLUG_WGSL = slugShader(MAT_DEFAULT_WGSL, 1, false)

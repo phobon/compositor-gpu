@@ -1,0 +1,12 @@
+round 2026-10-18 on MacBookPro.localdomain, d33db0a 10 files changed
+== visual (exit 0): npx tsx test/visual/run.ts
+[visual] vite dev server at http://localhost:59918/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+[visual] OK
+== fx (exit 0): npx tsx test/fx/run.ts
+[fx] vite dev server at http://localhost:60003/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+[fx] OK

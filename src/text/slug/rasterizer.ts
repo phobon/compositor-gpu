@@ -1,9 +1,6 @@
 import type { Shared } from '../../gpu/frame'
-import {
-  type MaterialBinding,
-  MaterialPipelines,
-  PREMUL_BLEND
-} from '../../gpu/material'
+import { type MaterialBinding, PassPipelines } from '../../gpu/material'
+import { StorageArray } from '../../gpu/storage'
 import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
@@ -19,7 +16,7 @@ import {
   makeInstance,
   type ParsedFont
 } from './font'
-import { SLUG_WGSL, slugShader } from './shaders'
+import { slugBody } from './shaders'
 
 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
 // written through the shared u32 view of the same buffer.
@@ -95,18 +92,17 @@ export class SlugText implements TextBackend {
    * fall back to the Canvas 2D atlas. */
   readonly failedFaces: string[] = []
 
-  private pipeline: GPURenderPipeline
-  private readonly materials: MaterialPipelines
+  private readonly pipelines: PassPipelines
   private layout: GPUBindGroupLayout
-  private glyphBuf: GPUBuffer | null = null
+  /** One instance per glyph (Slug), and one fallback-atlas quad per
+   * glyph in the same index space (zero in the one that doesn't draw
+   * it), so draw(first, count) is valid for both. */
+  private readonly glyphs: StorageArray
+  private readonly quads: StorageArray
   private readonly bandBuf: GPUBuffer
   private readonly curveBuf: GPUBuffer
   private bindGroup: GPUBindGroup | null = null
-  private glyphCapacity = 0
   private count = 0
-  private glyphBytes = new ArrayBuffer(0)
-  private glyphF32 = new Float32Array(0)
-  private glyphU32 = new Uint32Array(0)
 
   // Fallback atlas quads: a second pipeline sharing the glyph index space.
   // Every glyph writes one instance into each buffer (zero-rect in the one
@@ -121,8 +117,6 @@ export class SlugText implements TextBackend {
     blend: GPUBlendState
   ) => GPURenderPipeline
   private readonly atlasSampler: GPUSampler
-  private quadBuf: GPUBuffer | null = null
-  private quadF32 = new Float32Array(0)
   private atlasBindGroup: GPUBindGroup | null = null
   private atlasGen = -1
   private slugLive = 0
@@ -188,38 +182,14 @@ export class SlugText implements TextBackend {
         buffer: { type: 'read-only-storage' as const }
       }))
     })
-    const describe = (
-      code: string,
-      label: string,
-      extra: GPUBindGroupLayout | null
-    ): GPURenderPipelineDescriptor => {
-      const module = device.createShaderModule({ label, code })
-      reportShaderErrors(module, label)
-      const layouts = [frameLayout, this.layout]
-      if (extra) {
-        layouts.push(extra)
-      }
-      return {
-        label,
-        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
-        vertex: { module, entryPoint: 'vs' },
-        fragment: {
-          module,
-          entryPoint: 'fs',
-          targets: [{ format, blend: PREMUL_BLEND }]
-        },
-        primitive: { topology: 'triangle-list' }
-      }
-    }
-    this.pipeline = device.createRenderPipeline(
-      describe(SLUG_WGSL, 'slug', null)
-    )
-    this.materials = new MaterialPipelines(
-      'glyph',
-      device,
-      (code, n, label, layout, wrap) =>
-        describe(wrap(slugShader(code, n, true)), label, layout)
-    )
+    this.pipelines = new PassPipelines(shared, {
+      kind: 'glyph',
+      label: 'slug',
+      layout: this.layout,
+      body: slugBody
+    })
+    this.glyphs = new StorageArray(device, GLYPH_FLOATS, 256)
+    this.quads = new StorageArray(device, ATLAS_QUAD_FLOATS, 256)
 
     this.atlasLayout = device.createBindGroupLayout({
       entries: [
@@ -607,37 +577,21 @@ export class SlugText implements TextBackend {
   }
 
   private ensureGlyphCapacity(n: number): void {
-    if (n <= this.glyphCapacity && this.glyphBuf) {
+    if (!this.glyphs.ensure(n)) {
       return
     }
-    const cap = Math.max(n, this.glyphCapacity ? this.glyphCapacity * 2 : 256)
-    const device = this.shared.device
-    this.glyphBuf?.destroy()
-    this.glyphBuf = device.createBuffer({
-      size: cap * GLYPH_FLOATS * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    })
-    this.glyphBytes = new ArrayBuffer(cap * GLYPH_FLOATS * 4)
-    this.glyphF32 = new Float32Array(this.glyphBytes)
-    this.glyphU32 = new Uint32Array(this.glyphBytes)
-    this.quadBuf?.destroy()
-    this.quadBuf = device.createBuffer({
-      size: cap * ATLAS_QUAD_FLOATS * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    })
-    this.quadF32 = new Float32Array(cap * ATLAS_QUAD_FLOATS)
-    this.glyphCapacity = cap
+    this.quads.ensure(n)
     this.rebuildBindGroup()
     this.atlasBindGroup = null
   }
 
   /** The instance and outline buffers (null before the first glyph). */
   glyphTable(): GlyphTable | null {
-    if (!this.glyphBuf || this.slugLive === 0) {
+    if (!this.glyphs.buffer || this.slugLive === 0) {
       return null
     }
     return {
-      glyphs: this.glyphBuf,
+      glyphs: this.glyphs.buffer,
       bands: this.bandBuf,
       curves: this.curveBuf,
       start: (run) => this.runStarts.get(run)
@@ -645,13 +599,13 @@ export class SlugText implements TextBackend {
   }
 
   private rebuildBindGroup(): void {
-    if (!this.glyphBuf) {
+    if (!this.glyphs.buffer) {
       return
     }
     this.bindGroup = this.shared.device.createBindGroup({
       layout: this.layout,
       entries: [
-        { binding: 0, resource: { buffer: this.glyphBuf } },
+        { binding: 0, resource: { buffer: this.glyphs.buffer } },
         { binding: 1, resource: { buffer: this.bandBuf } },
         { binding: 2, resource: { buffer: this.curveBuf } }
       ]
@@ -661,7 +615,7 @@ export class SlugText implements TextBackend {
   /** Rebuild the atlas bind group if the quad buffer or texture changed. */
   private ensureAtlasBindGroup(): void {
     const view = this.atlas.view
-    if (!this.quadBuf || !view) {
+    if (!this.quads.buffer || !view) {
       return
     }
     if (this.atlasBindGroup && this.atlasGen === this.atlas.generation) {
@@ -670,7 +624,7 @@ export class SlugText implements TextBackend {
     this.atlasBindGroup = this.shared.device.createBindGroup({
       layout: this.atlasLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.quadBuf } },
+        { binding: 0, resource: { buffer: this.quads.buffer } },
         { binding: 1, resource: view },
         { binding: 2, resource: this.atlasSampler }
       ]
@@ -739,26 +693,13 @@ export class SlugText implements TextBackend {
       return
     }
     const m = this.instances
-    const queue = this.shared.device.queue
     if (this.slugLive > 0) {
-      queue.writeBuffer(
-        this.glyphBuf as GPUBuffer,
-        0,
-        this.glyphBytes,
-        0,
-        m * GLYPH_FLOATS * 4
-      )
+      this.glyphs.write(0, m)
     }
     if (this.atlasLive > 0) {
       this.atlas.flush(this.shared.device)
       this.ensureAtlasBindGroup()
-      queue.writeBuffer(
-        this.quadBuf as GPUBuffer,
-        0,
-        this.quadF32.buffer,
-        0,
-        m * ATLAS_QUAD_FLOATS * 4
-      )
+      this.quads.write(0, m)
     }
   }
 
@@ -811,24 +752,6 @@ export class SlugText implements TextBackend {
     ) {
       return false
     }
-    const queue = this.shared.device.queue
-    const write = (
-      buf: GPUBuffer | null,
-      data: ArrayBufferLike,
-      floats: number,
-      start: number,
-      n: number
-    ): void => {
-      if (buf && n > 0) {
-        queue.writeBuffer(
-          buf,
-          start * floats * 4,
-          data,
-          start * floats * 4,
-          n * floats * 4
-        )
-      }
-    }
     if (atlasBefore) {
       this.atlas.flush(this.shared.device)
       this.ensureAtlasBindGroup()
@@ -837,18 +760,12 @@ export class SlugText implements TextBackend {
       const n = b.glyphs.length
       const shadows = (b.textShadows?.length ?? 0) * n
       if (slugBefore) {
-        write(this.glyphBuf, this.glyphBytes, GLYPH_FLOATS, first, n)
-        write(this.glyphBuf, this.glyphBytes, GLYPH_FLOATS, runBase, shadows)
+        this.glyphs.write(first, n)
+        this.glyphs.write(runBase, shadows)
       }
       if (atlasBefore) {
-        write(this.quadBuf, this.quadF32.buffer, ATLAS_QUAD_FLOATS, first, n)
-        write(
-          this.quadBuf,
-          this.quadF32.buffer,
-          ATLAS_QUAD_FLOATS,
-          runBase,
-          shadows
-        )
+        this.quads.write(first, n)
+        this.quads.write(runBase, shadows)
       }
     }
     return true
@@ -892,9 +809,9 @@ export class SlugText implements TextBackend {
     runBase: number,
     dpr: number
   ): void {
-    const f = this.glyphF32
-    const u = this.glyphU32
-    const q = this.quadF32
+    const f = this.glyphs.f32
+    const u = this.glyphs.u32
+    const q = this.quads.f32
     const pad = ATLAS_PAD / dpr
     const starts = this.shadowStart
     const ids = this.idScratch
@@ -1111,8 +1028,8 @@ export class SlugText implements TextBackend {
 
   /** Zero both pipelines' instance `k`. */
   private zeroInstance(k: number): void {
-    this.glyphF32.fill(0, k * GLYPH_FLOATS, (k + 1) * GLYPH_FLOATS)
-    this.quadF32.fill(0, k * ATLAS_QUAD_FLOATS, (k + 1) * ATLAS_QUAD_FLOATS)
+    this.glyphs.f32.fill(0, k * GLYPH_FLOATS, (k + 1) * GLYPH_FLOATS)
+    this.quads.f32.fill(0, k * ATLAS_QUAD_FLOATS, (k + 1) * ATLAS_QUAD_FLOATS)
   }
 
   /**
@@ -1134,7 +1051,7 @@ export class SlugText implements TextBackend {
     dy: number,
     colour = false
   ): void {
-    const q = this.quadF32
+    const q = this.quads.f32
     const qb = k * ATLAS_QUAD_FLOATS
     if (!e) {
       q.fill(0, qb, qb + ATLAS_QUAD_FLOATS)
@@ -1217,20 +1134,15 @@ export class SlugText implements TextBackend {
       }
       atlasPipeline = p
     }
-    const mp = this.materials.get(material)
-    if (!mp && this.materials.held(material)) {
+    const chosen = this.pipelines.pipelineFor(material)
+    if (!chosen) {
       return 0
     }
-    const slugPipeline = mp ?? this.pipeline
-    let verts = 6
-    if (mp && material) {
-      const n = Math.max(1, Math.floor(material.subdivisions))
-      verts = 6 * n * n
-    }
+    const verts = chosen.verts
     const useSlug = (): void => {
-      encoder.setPipeline(slugPipeline)
-      if (mp && material) {
-        encoder.setBindGroup(2, material.bindGroup)
+      encoder.setPipeline(chosen.pipeline)
+      if (chosen.material) {
+        encoder.setBindGroup(2, chosen.material.bindGroup)
       }
     }
     let draws = 0
@@ -1270,17 +1182,17 @@ export class SlugText implements TextBackend {
   }
 
   dropMaterial(id: number): void {
-    this.materials.drop(id)
+    this.pipelines.drop(id)
     this.atlasBlended.delete(id)
   }
 
   warmMaterial(mat: MaterialBinding): void {
-    this.materials.warm(mat)
+    this.pipelines.warm(mat)
   }
 
   destroy(): void {
-    this.glyphBuf?.destroy()
-    this.quadBuf?.destroy()
+    this.glyphs.destroy()
+    this.quads.destroy()
     this.bandBuf.destroy()
     this.curveBuf.destroy()
     this.atlas.destroy()

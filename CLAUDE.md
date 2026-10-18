@@ -652,8 +652,17 @@ Conventions each pass must follow:
   later siblings), clipped by ancestors only. `auto` draws solid. Focus
   changes no attribute, so `DomSync` re-reads the target's parent on
   `focusin`/`focusout` (`:focus-visible` rings).
-- Grow buffers by doubling in an `ensureCapacity`-style method and rebuild the
-  bind group; `writeBuffer` only the used prefix.
+- Instance buffers are `StorageArray`s (`gpu/storage.ts`): `ensure(n)` grows
+  by doubling and returns true when the buffer was recreated (rebuild the
+  bind groups that reference it); `write(first, count)` uploads only those
+  items.
+- A record pass's pipelines are a `PassPipelines` (`gpu/material.ts`): it
+  assembles the shader (`passShader`: Frame, material interface, the
+  hooks, then the pass's `body`), builds the default pipeline and each
+  material's variant, and at draw time `use(encoder, material)` sets the
+  pipeline and bind group 2 and returns the vertex count (null: a held
+  material, draw nothing; `pipelineFor` when a pass interleaves pipelines,
+  as Slug does with its atlas).
 - Call `reportShaderErrors(module, label)` after `createShaderModule` — it is
   the only way WGSL compile errors become visible.
 

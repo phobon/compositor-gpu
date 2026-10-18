@@ -1,34 +1,16 @@
 import { shadowPad } from '../dom/styles'
-import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
-import {
-  MAT_DEFAULT_WGSL,
-  MAT_GRID_WGSL,
-  MAT_IN_WGSL,
-  type MaterialBinding,
-  MaterialPipelines,
-  PREMUL_BLEND
-} from '../gpu/material'
+import type { RenderPass, Shared } from '../gpu/frame'
+import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { SD_BOX_WGSL } from '../gpu/sdf'
+import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
-import { reportShaderErrors } from '../util/log'
 
 const FLOATS_PER_BOX = 72 // 18 * vec4f
-const BYTES_PER_BOX = FLOATS_PER_BOX * 4
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
-const BYTES_PER_STOP = FLOATS_PER_STOP * 4
 
-/** The box shader with material hooks `mat` (gpu/material.ts) on a
- * `subdiv` × `subdiv` quad; the default variant has identity hooks. */
-const shader = (
-  mat: string,
-  subdiv: number,
-  wrap: string
-): string => /* wgsl */ `
-${FRAME_WGSL}
-${MAT_IN_WGSL}
-${MAT_GRID_WGSL}
-${mat}
-const MAT_SUBDIV : u32 = ${subdiv}u;
+/** The box shader after its header (gpu/material.ts passShader), with
+ * fragment entry point `wrap`. */
+const shader = (wrap: string): string => /* wgsl */ `
 
 struct Box {
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
@@ -725,20 +707,17 @@ function skQuarterArc(r: number): number {
  */
 export class BoxPass implements RenderPass {
   readonly layer = 'boxes' as const
-  private pipeline: GPURenderPipeline
-  private readonly materials: MaterialPipelines
+  private readonly pipelines: PassPipelines
   private group1Layout: GPUBindGroupLayout
-  private buffer: GPUBuffer | null = null
+  /** Instances, and gradient stops (always at least one, so the bind
+   * group is valid with no gradients). */
+  private readonly boxes: StorageArray
+  private readonly stops: StorageArray
   private bindGroup: GPUBindGroup | null = null
-  private capacity = 0
   private count = 0
-  private data = new Float32Array(0)
-  private stopBuffer: GPUBuffer | null = null
-  private stopCapacity = 0
-  private stopData = new Float32Array(0)
 
   constructor(private readonly shared: Shared) {
-    const { device, format, frameLayout } = shared
+    const { device } = shared
     this.group1Layout = device.createBindGroupLayout({
       entries: [
         {
@@ -753,74 +732,14 @@ export class BoxPass implements RenderPass {
         }
       ]
     })
-    const describe = (
-      code: string,
-      label: string,
-      extra: GPUBindGroupLayout | null
-    ): GPURenderPipelineDescriptor => {
-      const module = device.createShaderModule({ label, code })
-      reportShaderErrors(module, label)
-      const layouts = [frameLayout, this.group1Layout]
-      if (extra) {
-        layouts.push(extra)
-      }
-      return {
-        label,
-        layout: device.createPipelineLayout({ bindGroupLayouts: layouts }),
-        vertex: { module, entryPoint: 'vs' },
-        fragment: {
-          module,
-          entryPoint: 'fs',
-          targets: [{ format, blend: PREMUL_BLEND }]
-        },
-        primitive: { topology: 'triangle-list' }
-      }
-    }
-    this.pipeline = device.createRenderPipeline(
-      describe(shader(MAT_DEFAULT_WGSL, 1, DEFAULT_FS), 'box', null)
-    )
-    this.materials = new MaterialPipelines(
-      'box',
-      device,
-      (code, n, label, layout, wrap) =>
-        describe(wrap(shader(code, n, MATERIAL_FS)), label, layout)
-    )
-  }
-
-  /** Grow the instance buffer; returns true when it was recreated. */
-  private ensureCapacity(n: number): boolean {
-    if (n <= this.capacity) {
-      return false
-    }
-    const cap = Math.max(n, this.capacity ? this.capacity * 2 : 64)
-    this.buffer?.destroy()
-    this.buffer = this.shared.device.createBuffer({
-      size: cap * BYTES_PER_BOX,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    this.pipelines = new PassPipelines(shared, {
+      kind: 'box',
+      label: 'box',
+      layout: this.group1Layout,
+      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS)
     })
-    this.data = new Float32Array(cap * FLOATS_PER_BOX)
-    this.capacity = cap
-    return true
-  }
-
-  /**
-   * Grow the stop buffer; returns true when it was recreated. Always holds
-   * at least one stop so the bind group is valid with no gradients.
-   */
-  private ensureStopCapacity(n: number): boolean {
-    const need = Math.max(n, 1)
-    if (need <= this.stopCapacity) {
-      return false
-    }
-    const cap = Math.max(need, this.stopCapacity ? this.stopCapacity * 2 : 16)
-    this.stopBuffer?.destroy()
-    this.stopBuffer = this.shared.device.createBuffer({
-      size: cap * BYTES_PER_STOP,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    })
-    this.stopData = new Float32Array(cap * FLOATS_PER_STOP)
-    this.stopCapacity = cap
-    return true
+    this.boxes = new StorageArray(device, FLOATS_PER_BOX, 64)
+    this.stops = new StorageArray(device, FLOATS_PER_STOP, 16)
   }
 
   upload(scene: Scene): void {
@@ -833,19 +752,19 @@ export class BoxPass implements RenderPass {
     for (const b of boxes) {
       stopCount += b.gradient?.stops.length ?? 0
     }
-    const grewBoxes = this.ensureCapacity(this.count)
-    const grewStops = this.ensureStopCapacity(stopCount)
+    const grewBoxes = this.boxes.ensure(this.count)
+    const grewStops = this.stops.ensure(Math.max(stopCount, 1))
     if (grewBoxes || grewStops || !this.bindGroup) {
       this.bindGroup = this.shared.device.createBindGroup({
         layout: this.group1Layout,
         entries: [
-          { binding: 0, resource: { buffer: this.buffer as GPUBuffer } },
-          { binding: 1, resource: { buffer: this.stopBuffer as GPUBuffer } }
+          { binding: 0, resource: { buffer: this.boxes.buffer as GPUBuffer } },
+          { binding: 1, resource: { buffer: this.stops.buffer as GPUBuffer } }
         ]
       })
     }
-    const d = this.data
-    const sd = this.stopData
+    const d = this.boxes.f32
+    const sd = this.stops.f32
     const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
     const snap = (v: number) => Math.round(v * dpr) / dpr
     // Chrome floors border widths to device px, keeping at least one.
@@ -1004,21 +923,9 @@ export class BoxPass implements RenderPass {
         d[o++] = gt ? (gt[k] ?? 0) : 0
       }
     }
-    this.shared.device.queue.writeBuffer(
-      this.buffer as GPUBuffer,
-      0,
-      d,
-      0,
-      this.count * FLOATS_PER_BOX
-    )
+    this.boxes.write(0, this.count)
     if (so > 0) {
-      this.shared.device.queue.writeBuffer(
-        this.stopBuffer as GPUBuffer,
-        0,
-        sd,
-        0,
-        so
-      )
+      this.stops.write(0, so / FLOATS_PER_STOP)
     }
   }
 
@@ -1031,32 +938,25 @@ export class BoxPass implements RenderPass {
     if (count === 0 || !this.bindGroup) {
       return 0
     }
-    const mp = this.materials.get(material)
-    if (!mp && this.materials.held(material)) {
+    const verts = this.pipelines.use(encoder, material)
+    if (verts === null) {
       return 0
     }
-    encoder.setPipeline(mp ?? this.pipeline)
     encoder.setBindGroup(1, this.bindGroup)
-    let verts = 6
-    if (mp && material) {
-      encoder.setBindGroup(2, material.bindGroup)
-      const n = Math.max(1, Math.floor(material.subdivisions))
-      verts = 6 * n * n
-    }
     encoder.draw(verts, count, 0, first)
     return 1
   }
 
   dropMaterial(id: number): void {
-    this.materials.drop(id)
+    this.pipelines.drop(id)
   }
 
   warmMaterial(mat: MaterialBinding): void {
-    this.materials.warm(mat)
+    this.pipelines.warm(mat)
   }
 
   destroy(): void {
-    this.buffer?.destroy()
-    this.stopBuffer?.destroy()
+    this.boxes.destroy()
+    this.stops.destroy()
   }
 }
