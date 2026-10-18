@@ -1,0 +1,13 @@
+round 2026-10-18 on MacBookPro.localdomain, 64cb618 15 files changed
+== fill (exit 0): npx tsx test/fill/run.ts --headed --blur
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a 600 px stall 24 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 24 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 24 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 24 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 472 of 900, 516016 px differ from full (apple)
+== fill-up (exit 0): npx tsx test/fill/run.ts --headed --up --blur
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 472 of 900, 517978 px differ from full (apple)

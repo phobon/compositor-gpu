@@ -1,0 +1,41 @@
+round 2026-10-18 on MacBookPro.localdomain, 64cb618 15 files changed
+== visual (exit 0): npx tsx test/visual/run.ts
+[visual] vite dev server at http://localhost:49650/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+[visual] OK
+== fx (exit 0): npx tsx test/fx/run.ts
+[fx] vite dev server at http://localhost:49802/
+[fx] falling back to swiftshader (software WebGPU)
+[fx] compositor active (swiftshader) — boxes=94 glyphs=1087 images=16
+[fx] OK
+== edit (exit 0): npx tsx test/edit/run.ts --headed
+partial reads 21, patched 19 (opacity 2 of 2, batches kept 10); 0 px differ between the patched and rebuilt canvas
+== fill (exit 0): npx tsx test/fill/run.ts --headed
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a 600 px stall 26 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a 600 px stall 474 of 900, 516016 px differ from full (apple)
+== fill-up (exit 0): npx tsx test/fill/run.ts --headed --up
+full        rows drawn 2700, instances 14788, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+band        rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandnostrip rows drawn 0, instances 0, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandcanvas  rows drawn 4, instances 1803, pending 0, flat viewport rows after a -600 px stall 39 of 900, 0 px differ from full (apple)
+bandclear   rows drawn 1156, instances 6441, pending 0, flat viewport rows after a -600 px stall 472 of 900, 517978 px differ from full (apple)
+== profile (exit 0): npx tsx test/profile/run.ts --headed --only scroll,scroll-long --nodim --dpr 2 --band
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 120; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.30    9.10    9.30    9.30
+  cpu total             0.10    0.30    0.90    2.80
+  gpu total             2.29    2.75    3.17    3.20
+    copy                0.70    0.79    0.81    0.81
+    main                0.29    0.50    0.56    0.58
+scroll-long: 242 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 151; reads: 0 partial, 0 full, 0 escalated
+  frame interval        8.20    9.10    9.20    9.30
+  cpu total             0.10    0.40    0.60    0.80
+  gpu total             2.28    6.03    6.64    6.64
+    main                1.24    5.29    6.04    6.04
+    copy                0.70    5.17    6.45    6.45

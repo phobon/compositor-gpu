@@ -8,6 +8,8 @@ import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
 import { cullRuns, type Region, type Runs, updateBounds } from './cull'
 import type { GpuContext } from './device'
+import { type EffectSnapshot, snapshotEffects } from './effect_snapshot'
+import { type DrawPlan, type FillInput, FillPlanner } from './fill_planner'
 import {
   CLIP_FLOATS,
   FRAME_BYTES,
@@ -28,7 +30,19 @@ import {
   type RegionHandler
 } from './graph'
 import { GroupBlur } from './group_blur'
+import {
+  type Affine,
+  apply,
+  axisScales,
+  type Box4,
+  groupExtent,
+  invert,
+  layerAffine,
+  layerAlpha,
+  mapRect
+} from './layer_geometry'
 import { materialPipelinesSettled } from './material'
+import { addRows, clamp, hullRows, meet } from './rows'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 
 interface FrameSlot {
@@ -89,7 +103,6 @@ interface Leaf {
 const ATLAS_GUTTER = 2
 /** Smallest strip of a re-anchor's pending rows drawn per frame, CSS px
  * (Renderer.reanchorStrips). */
-const STRIP_MIN = 96
 
 /** A group's texture placement before a texture is chosen (see
  * Renderer.measureGroup). */
@@ -110,207 +123,6 @@ interface GroupPlace {
   kx: number
   ky: number
   xf: Affine | null
-}
-
-/** The rows spanning two full-width device-px rects (x, y, w, h). */
-function hullRows(
-  a: readonly [number, number, number, number],
-  b: readonly [number, number, number, number]
-): [number, number, number, number] {
-  const y0 = Math.min(a[1], b[1])
-  const y1 = Math.max(a[1] + a[3], b[1] + b[3])
-  return [a[0], y0, Math.max(a[2], b[2]), y1 - y0]
-}
-
-/** Rows [y0, y1) not covered by `cover` (disjoint, in order). */
-function rowsMissing(
-  y0: number,
-  y1: number,
-  cover: readonly (readonly [number, number])[]
-): [number, number][] {
-  const out: [number, number][] = []
-  let y = y0
-  for (const [a, b] of cover) {
-    if (b <= y) {
-      continue
-    }
-    if (a >= y1) {
-      break
-    }
-    if (a > y) {
-      out.push([y, a])
-    }
-    y = Math.max(y, b)
-    if (y >= y1) {
-      break
-    }
-  }
-  if (y < y1) {
-    out.push([y, y1])
-  }
-  return out
-}
-
-/** `list` with [y0, y1) added, merged (disjoint, in order). */
-function addRows(
-  list: readonly (readonly [number, number])[],
-  y0: number,
-  y1: number
-): [number, number][] {
-  const all: [number, number][] = [
-    ...list.map((r) => [r[0], r[1]] as [number, number]),
-    [y0, y1]
-  ]
-  all.sort((a, b) => a[0] - b[0])
-  const out: [number, number][] = []
-  for (const iv of all) {
-    const last = out[out.length - 1]
-    if (last && iv[0] <= last[1]) {
-      last[1] = Math.max(last[1], iv[1])
-    } else if (iv[1] > iv[0]) {
-      out.push(iv)
-    }
-  }
-  return out
-}
-
-/** Intersection of two device-px rects (x, y, w, h); w or h 0 when they
- * don't meet. */
-function meet(
-  a: readonly [number, number, number, number],
-  b: readonly [number, number, number, number]
-): [number, number, number, number] {
-  const x = Math.max(a[0], b[0])
-  const y = Math.max(a[1], b[1])
-  const w = Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - x)
-  const h = Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - y)
-  return [x, y, w, h]
-}
-
-function clamp(v: number, max: number): number {
-  return Math.min(Math.max(v, 0), max)
-}
-
-/** A doc-space affine [a, b, c, d, e, f]: (x, y) -> (a x + c y + e,
- * b x + d y + f). */
-type Affine = readonly [number, number, number, number, number, number]
-
-function apply(m: Affine, x: number, y: number): [number, number] {
-  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]
-}
-
-function invert(m: Affine): Affine | null {
-  const det = m[0] * m[3] - m[1] * m[2]
-  if (Math.abs(det) < 1e-9) {
-    return null
-  }
-  const a = m[3] / det
-  const b = -m[1] / det
-  const c = -m[2] / det
-  const d = m[0] / det
-  return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])]
-}
-
-/** `t` as a doc-space affine about its origin in the group's box, or null
- * when it is the identity (or the group has no box). */
-function layerAffine(
-  g: OpacityGroup,
-  t: LayerTransform,
-  ctx: FrameContext
-): Affine | null {
-  const sx = Number.isFinite(t.scaleX) ? t.scaleX : 1
-  const sy = Number.isFinite(t.scaleY) ? t.scaleY : 1
-  const rot = Number.isFinite(t.rotate) ? t.rotate : 0
-  const tx = Number.isFinite(t.x) ? t.x : 0
-  const ty = Number.isFinite(t.y) ? t.y : 0
-  if (tx === 0 && ty === 0 && sx === 1 && sy === 1 && rot % 360 === 0) {
-    return null
-  }
-  const box = g.box
-  if (!box) {
-    return null
-  }
-  const vx = g.space === 'viewport' ? ctx.scrollX : 0
-  const vy = g.space === 'viewport' ? ctx.scrollY : 0
-  const ox =
-    box.x + vx + (Number.isFinite(t.originX) ? t.originX : 0.5) * box.width
-  const oy =
-    box.y + vy + (Number.isFinite(t.originY) ? t.originY : 0.5) * box.height
-  const r = (rot * Math.PI) / 180
-  const cos = Math.cos(r)
-  const sin = Math.sin(r)
-  const a = cos * sx
-  const b = sin * sx
-  const c = -sin * sy
-  const d = cos * sy
-  return [a, b, c, d, ox + tx - (a * ox + c * oy), oy + ty - (b * ox + d * oy)]
-}
-
-type Box4 = [number, number, number, number]
-
-/** Resolution bounds for a transformed group's texture, relative to its
- * parent's: rendered at the transform's own scale (as a browser
- * re-rasters a scaled layer), so text and edges stay crisp scaled down or
- * up and the composite samples about 1:1. */
-const MIN_RES = 1 / 16
-const MAX_RES = 4
-
-/** `m`'s axis scales (the lengths the unit x and y axes map to), clamped
- * to [MIN_RES, MAX_RES]. */
-function axisScales(m: Affine): [number, number] {
-  const c = (v: number) => Math.min(MAX_RES, Math.max(MIN_RES, v))
-  return [c(Math.hypot(m[0], m[1])), c(Math.hypot(m[2], m[3]))]
-}
-
-/** A layer transform's opacity in [0, 1] (1 when not a number). */
-function layerAlpha(t: LayerTransform): number {
-  return Number.isFinite(t.opacity) ? Math.min(1, Math.max(0, t.opacity)) : 1
-}
-
-/** `g`'s doc-space extent at the current scroll (viewport-space members
- * at their viewport rect + scroll), or null when empty. */
-function groupExtent(g: OpacityGroup, ctx: FrameContext): Box4 | null {
-  let bx0 = Number.POSITIVE_INFINITY
-  let by0 = Number.POSITIVE_INFINITY
-  let bx1 = Number.NEGATIVE_INFINITY
-  let by1 = Number.NEGATIVE_INFINITY
-  const d = g.bounds
-  if (d.width > 0 && d.height > 0) {
-    bx0 = d.x
-    by0 = d.y
-    bx1 = d.x + d.width
-    by1 = d.y + d.height
-  }
-  const v = g.vbounds
-  if (v) {
-    bx0 = Math.min(bx0, v.x + ctx.scrollX)
-    by0 = Math.min(by0, v.y + ctx.scrollY)
-    bx1 = Math.max(bx1, v.x + v.width + ctx.scrollX)
-    by1 = Math.max(by1, v.y + v.height + ctx.scrollY)
-  }
-  return bx1 > bx0 && by1 > by0 ? [bx0, by0, bx1, by1] : null
-}
-
-/** AABB of `m` applied to the rect (x0, y0)-(x1, y1). */
-function mapRect(
-  m: Affine,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number
-): [number, number, number, number] {
-  const p = [
-    apply(m, x0, y0),
-    apply(m, x1, y0),
-    apply(m, x0, y1),
-    apply(m, x1, y1)
-  ]
-  return [
-    Math.min(...p.map((q) => q[0])),
-    Math.min(...p.map((q) => q[1])),
-    Math.max(...p.map((q) => q[0])),
-    Math.max(...p.map((q) => q[1]))
-  ]
 }
 
 /** Index of the pop matching the push of `group` at `i`. */
@@ -370,9 +182,6 @@ export class Renderer {
   lastSkipped = false
   /** Frames skipped since creation (stats().skippedFrames). */
   skippedFrames = 0
-  /** The last presented frame came out of the post chain (the canvas then
-   * differs from the kept texture, so a frame can't be skipped). */
-  private presentedChain = false
   /** Wall time spent in pass uploads in the most recent render, ms. */
   lastUploadMs = 0
   /** Wall time from createCommandEncoder to submit in the most recent
@@ -424,23 +233,13 @@ export class Renderer {
   private kept: GPUTexture | null = null
   private keptView: GPUTextureView | null = null
   private keptSpare: GPUTexture | null = null
-  /** The main target's ox, oy, sx, sy when `kept` was last drawn. */
-  private keptAt: [number, number, number, number] | null = null
-  /** Device rows [y0, y1) of `kept` re-anchors newly covered and not yet
-   * drawn (cleared), filled a strip per frame (see nextStrip): disjoint,
-   * in order (two after re-anchors at both ends). */
-  private pending: [number, number][] = []
-  /** The pending interval the last strip was taken from (stripRuns). */
+  /** The kept texture's rows: what each frame draws, what stays valid
+   * (fill_planner.ts). */
+  private readonly planner = new FillPlanner()
+  /** This frame's effect registries view (effect_snapshot.ts). */
+  private fx: EffectSnapshot | null = null
+  /** The pending interval this frame's strip was taken from (stripRuns). */
   private stripFrom: [number, number] | null = null
-  /** canvasFill 'band' with skipUnchanged: device rows of `kept` drawn
-   * since the content last changed (disjoint, in order); band rows in it
-   * aren't redrawn. */
-  private valid: [number, number][] = []
-  /** What `valid` was drawn from: the batch list, scene version and
-   * material-pipeline settle counter. */
-  private validBatches: Scene['batches'] | null = null
-  private validVersion = -1
-  private validSettled = -1
   /** The rows viewport-space (fixed) content covers, as viewport-y CSS
    * px intervals, merged (cached per batch list and version). */
   private fixedOf: {
@@ -448,19 +247,6 @@ export class Renderer {
     version: number
     rows: [number, number][]
   } | null = null
-  /** Scroll position fixed content was last drawn at in `kept` (it sits
-   * there until those rows are redrawn). */
-  private fixedScrollY: number | null = null
-  /** Active non-builtin materials when `valid` was drawn. */
-  private validMats: string | null = ''
-  /** An extra layer was drawn into `valid` (its pixels stay there until
-   * the rows are redrawn without it). */
-  private validExtras = false
-  /** layerState's key and doc-y rows when `kept` was last drawn. */
-  private layerKey = ''
-  private layerRows: [number, number][] = []
-  /** The largest scroll step of the last 200 ms, CSS px (fillBand). */
-  private lastStep = 0
   /** Runs culled to the pending rows (see stripRuns), their region and
    * batch list. */
   private stripCulled: Runs | null = null
@@ -471,20 +257,12 @@ export class Renderer {
   private stripRegion: Region | null = null
   private stripBatches: Scene['batches'] | null = null
   private clearRect: ClearRect | null = null
-  /** [time, |scroll step|] of the frames of the last 200 ms, CSS px
-   * (sizes the band). */
-  private steps: [number, number][] = []
-  private lastScrollY: number | null = null
-  /** The last frame's band in document CSS px (y0, y1), or null when the
-   * whole canvas is drawn. */
+  /** This frame's band in document CSS px (y0, y1), or null when the
+   * whole canvas is drawn (cullFor). */
   private bandY: [number, number] | null = null
   /** Device-px rows a re-anchor covered not yet drawn. */
   get pendingRowCount(): number {
-    let n = 0
-    for (const [a, b] of this.pending) {
-      n += b - a
-    }
-    return n
+    return this.planner.pendingRowCount
   }
   /** Device-px rows the last frame's main pass drew (stats().fillRows). */
   lastFillRows = 0
@@ -686,137 +464,6 @@ export class Renderer {
     rp.setScissorRect(x, y, w, h)
   }
 
-  /** Record this frame's scroll step (sizes the band; also on skipped
-   * frames). */
-  private noteScroll(ctx: FrameContext): void {
-    const dy =
-      this.lastScrollY === null ? 0 : Math.abs(ctx.scrollY - this.lastScrollY)
-    this.lastScrollY = ctx.scrollY
-    const now = performance.now()
-    this.steps.push([now, dy])
-    while ((this.steps[0]?.[0] ?? now) < now - 200) {
-      this.steps.shift()
-    }
-    let step = 0
-    for (const [, d] of this.steps) {
-      step = Math.max(step, d)
-    }
-    this.lastStep = step
-  }
-
-  /** Something drawn into the kept texture may differ from what it holds:
-   * a dirty layer, a new scene version or batch list, a material pipeline
-   * settling, or content drawn differently every frame (viewport-space
-   * records, active extra layers, regions, layer transforms, `/fx`
-   * materials, backdrops). Doesn't change state. */
-  private contentChanged(scene: Scene, ctx: FrameContext): boolean {
-    if (
-      scene.batches !== this.validBatches ||
-      scene.version !== this.validVersion ||
-      materialPipelinesSettled() !== this.validSettled ||
-      scene.backdrops.length > 0 ||
-      this.passes.some((p) => scene.isDirty(p.layer))
-    ) {
-      return true
-    }
-    // An active extra layer draws differently every frame; one that was
-    // drawn and has stopped leaves its pixels in the kept rows.
-    if (this.validExtras || this.extrasActive()) {
-      return true
-    }
-    // Materials: one that may draw differently this frame, or a change in
-    // which are active (records switch pipelines).
-    if (this.activeMats(true) !== this.validMats) {
-      return true
-    }
-    // Layer transforms and regions are damage (layerState), unless they
-    // nest or sit in viewport space.
-    return this.layerState(scene, ctx).fallback
-  }
-
-  private extrasActive(): boolean {
-    for (const layer of this.extras.values()) {
-      if (layer.active()) {
-        return true
-      }
-    }
-    return false
-  }
-
-  /** Ids of the active non-builtin materials; with `changing`, null when
-   * one of them may draw differently this frame. */
-  private activeMats(changing: boolean): string | null {
-    let mats = ''
-    for (const [id, m] of this.materials) {
-      if (m.builtin || !m.active()) {
-        continue
-      }
-      if (changing && (m.changed?.() ?? true)) {
-        return null
-      }
-      mats += `${id},`
-    }
-    return mats
-  }
-
-  /**
-   * The doc-y intervals (CSS px) groups under a layer transform or an
-   * active region paint at this frame's values, a key of those values,
-   * whether any region is active (it may draw differently every frame),
-   * and `fallback` when the damage can't be bounded this way (such groups
-   * nested in each other, or in viewport space).
-   */
-  private layerState(
-    scene: Scene,
-    ctx: FrameContext
-  ): {
-    rows: [number, number][]
-    key: string
-    live: boolean
-    fallback: boolean
-  } {
-    let rows: [number, number][] = []
-    let key = ''
-    let live = false
-    let fallback = false
-    const isolated = scene.groups.filter((g) => g.region !== undefined)
-    for (const g of isolated) {
-      const id = g.region as number
-      const region = this.regions.get(id)
-      const t = this.transforms.get(id)
-      const active = region?.active() ?? false
-      if (!active && !t) {
-        continue
-      }
-      if (
-        g.space === 'viewport' ||
-        g.vbounds !== null ||
-        isolated.some((h) => h !== g && h.first <= g.first && g.last <= h.last)
-      ) {
-        fallback = true
-      }
-      live ||= active
-      const e = groupExtent(g, ctx)
-      if (!e) {
-        continue
-      }
-      const pad = (active ? Math.max(0, region?.pad() ?? 0) : 0) + 2
-      rows = addRows(rows, e[1] - pad, e[3] + pad)
-      if (t) {
-        key += `${id}:${t.x},${t.y},${t.scaleX},${t.scaleY},${t.rotate},${t.opacity},${t.originX},${t.originY};`
-        const m = layerAffine(g, t, ctx)
-        if (m) {
-          const r = mapRect(m, e[0], e[1], e[2], e[3])
-          rows = addRows(rows, r[1] - pad, r[3] + pad)
-        }
-      }
-      if (active) {
-        key += `${id}:r;`
-      }
-    }
-    return { rows, key, live, fallback }
-  }
-
   /** Viewport-y intervals (CSS px) that fixed content paints, padded for
    * anti-aliasing and text shadows. */
   private fixedRows(scene: Scene): [number, number][] {
@@ -856,166 +503,6 @@ export class Renderer {
     return rows
   }
 
-  /** Device rows of `t` that fixed content covers with the page scrolled
-   * to `scrollY`. */
-  private fixedDeviceRows(
-    rows: readonly (readonly [number, number])[],
-    scrollY: number,
-    oy: number,
-    sy: number,
-    h: number
-  ): [number, number][] {
-    let out: [number, number][] = []
-    for (const [a, b] of rows) {
-      const y0 = clamp(Math.floor((a + scrollY - oy) * sy), h)
-      const y1 = clamp(Math.ceil((b + scrollY - oy) * sy), h)
-      if (y1 > y0) {
-        out = addRows(out, y0, y1)
-      }
-    }
-    return out
-  }
-
-  /** skipUnchanged: nothing would be drawn this frame (the canvas didn't
-   * move, no rows are pending, the content is unchanged and the band's
-   * rows are all valid), so no command buffer is needed and the canvas
-   * keeps what it last presented. */
-  private skipFrame(scene: Scene, ctx: FrameContext, dpr: number): boolean {
-    const kept = this.kept
-    if (
-      !this.skipUnchanged ||
-      this.presentedChain ||
-      this.canvasFill !== 'band' ||
-      !kept ||
-      this.pending.length > 0
-    ) {
-      return false
-    }
-    const canvas = this.gpu.context.canvas
-    const w = canvas.width
-    const h = canvas.height
-    const sx = ctx.canvasWidth > 0 ? w / ctx.canvasWidth : dpr
-    const sy = ctx.canvasHeight > 0 ? h / ctx.canvasHeight : dpr
-    const at = this.keptAt
-    if (
-      kept.width !== w ||
-      kept.height !== h ||
-      !at ||
-      at[0] !== ctx.canvasX ||
-      at[1] !== ctx.canvasY ||
-      at[2] !== sx ||
-      at[3] !== sy ||
-      this.contentChanged(scene, ctx)
-    ) {
-      return false
-    }
-    const pad = Math.max(128, 2 * this.lastStep)
-    const y0 = clamp(Math.floor((ctx.scrollY - pad - ctx.canvasY) * sy), h)
-    const y1 = clamp(
-      Math.ceil((ctx.scrollY + ctx.height + pad - ctx.canvasY) * sy),
-      h
-    )
-    if (this.fixedScrollY !== ctx.scrollY && this.fixedRows(scene).length > 0) {
-      // Fixed content moved against the canvas.
-      return false
-    }
-    const layers = this.layerState(scene, ctx)
-    if (layers.live || layers.key !== this.layerKey) {
-      // A layer transform moved or a region pass is drawing.
-      return false
-    }
-    return rowsMissing(y0, y1, this.valid).length === 0
-  }
-
-  /** The main target's visible band (device px), or undefined for all of
-   * it: the viewport plus twice the largest scroll step of the frames of
-   * the last 200 ms (at least 128 CSS px) above and below. */
-  private fillBand(
-    ctx: FrameContext,
-    t: Target
-  ): [number, number, number, number] | undefined {
-    this.bandY = null
-    if (this.canvasFill === 'full') {
-      return undefined
-    }
-    const pad = Math.max(128, 2 * this.lastStep)
-    const y0 = clamp(Math.floor((ctx.scrollY - pad - t.oy) * t.sy), t.devH)
-    const y1 = clamp(
-      Math.ceil((ctx.scrollY + ctx.height + pad - t.oy) * t.sy),
-      t.devH
-    )
-    if (y0 === 0 && y1 === t.devH) {
-      return undefined
-    }
-    this.bandY = [ctx.scrollY - pad, ctx.scrollY + ctx.height + pad]
-    return [0, y0, t.devW, y1 - y0]
-  }
-
-  /**
-   * Everything the scene texture depends on beyond the scene's records,
-   * or null when something drawing into it changes every frame. While the
-   * post chain runs and neither the key nor the records change, the scene
-   * is not redrawn: the chain reads last frame's texture (a trail or a lens
-   * over a still page). Conservative: an active layer or region pass, or
-   * an active material that doesn't report `changed() === false`, forces a
-   * redraw; so does a material pipeline finishing (records switch
-   * pipelines) and any move of the canvas or the scroll.
-   */
-  private reuseKey(ctx: FrameContext, dpr: number): string | null {
-    if (this.pending.length > 0) {
-      // A re-anchor's rows are still being drawn.
-      return null
-    }
-    for (const layer of this.extras.values()) {
-      if (layer.active()) {
-        return null
-      }
-    }
-    for (const region of this.regions.values()) {
-      if (region.active()) {
-        return null
-      }
-    }
-    const mats: number[] = []
-    for (const [id, m] of this.materials) {
-      if (!m.active() || m.builtin) {
-        continue
-      }
-      if (m.changed?.() ?? true) {
-        return null
-      }
-      mats.push(id)
-    }
-    const xf: number[] = []
-    for (const [id, t] of this.transforms) {
-      xf.push(
-        id,
-        t.x,
-        t.y,
-        t.scaleX,
-        t.scaleY,
-        t.rotate,
-        t.opacity,
-        t.originX,
-        t.originY
-      )
-    }
-    return [
-      ctx.canvasX,
-      ctx.canvasY,
-      ctx.canvasWidth,
-      ctx.canvasHeight,
-      ctx.scrollX,
-      ctx.scrollY,
-      ctx.width,
-      ctx.height,
-      dpr,
-      materialPipelinesSettled(),
-      mats.join(','),
-      xf.join(',')
-    ].join('|')
-  }
-
   /**
    * Walk scene.batches in order. A push ends the current render pass and
    * begins one on a pooled offscreen target (cleared) whose Frame uniform
@@ -1028,30 +515,71 @@ export class Renderer {
   render(scene: Scene, ctx: FrameContext, dpr: number): void {
     this.scene = scene
     const chain = this.postChain?.active() ? this.postChain : null
-    this.noteScroll(ctx)
-    if (!chain && this.skipFrame(scene, ctx, dpr)) {
-      this.lastSkipped = true
-      this.skippedFrames++
-      this.lastFillRows = 0
-      this.lastBatches = 0
-      this.lastDraws = 0
-      this.lastInstances = 0
-      this.lastGroups = 0
-      this.lastGroupPasses = 0
-      this.lastUploads = 0
-      this.lastUploadMs = 0
-      this.lastEncodeMs = 0
-      this.lastCullMs = 0
-      return
+    const canvas = this.gpu.context.canvas
+    // Before the uploads clear the dirty flags.
+    const dirty = this.passes.some((p) => scene.isDirty(p.layer))
+    const fx = snapshotEffects(this, {
+      scene,
+      ctx,
+      dpr,
+      dirty,
+      settled: materialPipelinesSettled(),
+      pendingRows: this.planner.pendingRowCount > 0
+    })
+    this.fx = fx
+    const fill: FillInput = {
+      now: performance.now(),
+      scrollY: ctx.scrollY,
+      height: ctx.height,
+      canvasX: ctx.canvasX,
+      canvasY: ctx.canvasY,
+      devW: canvas.width,
+      devH: canvas.height,
+      sx: ctx.canvasWidth > 0 ? canvas.width / ctx.canvasWidth : dpr,
+      sy: ctx.canvasHeight > 0 ? canvas.height / ctx.canvasHeight : dpr,
+      canvasFill: this.canvasFill,
+      skipUnchanged: this.skipUnchanged,
+      reanchorStrips: this.reanchorStrips,
+      chain: chain !== null,
+      backdrop: scene.backdrops.length > 0,
+      content: fx.content,
+      layers: fx.layers,
+      fixed: () => this.fixedRows(scene)
+    }
+    // The post chain over last frame's scene texture: nothing feeding it
+    // changed.
+    const key = chain && this.reuseScene ? fx.reuseKey() : null
+    const reuse =
+      chain !== null &&
+      key !== null &&
+      key === this.sceneKey &&
+      scene.batches === this.sceneBatches &&
+      this.sceneTexture?.width === canvas.width &&
+      this.sceneTexture.height === canvas.height &&
+      !dirty
+    let fillPlan: DrawPlan | null = null
+    if (reuse) {
+      this.planner.reuse(fill)
+    } else {
+      const p = this.planner.plan(fill)
+      if (p.kind === 'skip') {
+        this.lastSkipped = true
+        this.skippedFrames++
+        this.lastFillRows = 0
+        this.lastBatches = 0
+        this.lastDraws = 0
+        this.lastInstances = 0
+        this.lastGroups = 0
+        this.lastGroupPasses = 0
+        this.lastUploads = 0
+        this.lastUploadMs = 0
+        this.lastEncodeMs = 0
+        this.lastCullMs = 0
+        return
+      }
+      fillPlan = p
     }
     this.lastSkipped = false
-    this.presentedChain = chain !== null
-    // Before the uploads clear the dirty flags.
-    const changed = this.contentChanged(scene, ctx)
-    if (changed) {
-      this.valid = []
-    }
-    const key = chain && this.reuseScene ? this.reuseKey(ctx, dpr) : null
     if (scene.backdrops.length > 0 && !this.canvasSampled) {
       // Backdrops read the canvas texture they were drawn over.
       this.canvasSampled = true
@@ -1064,16 +592,10 @@ export class Renderer {
       })
     }
     const texture = this.gpu.context.getCurrentTexture()
-    if (
-      chain &&
-      key !== null &&
-      key === this.sceneKey &&
-      scene.batches === this.sceneBatches &&
-      this.sceneTexture?.width === texture.width &&
-      this.sceneTexture.height === texture.height &&
-      !this.passes.some((p) => scene.isDirty(p.layer))
-    ) {
-      this.renderPostOnly(chain, texture, ctx, dpr)
+    if (!fillPlan) {
+      if (chain) {
+        this.renderPostOnly(chain, texture, ctx, dpr)
+      }
       return
     }
     this.lastReused = false
@@ -1128,155 +650,21 @@ export class Renderer {
       py: 0,
       xf: null
     }
-    let band = this.fillBand(ctx, main)
-    let mainLoad: GPULoadOp = 'clear'
-    /** Rows newly covered by a re-anchor this frame: cleared first. */
-    let cleared: [number, number] | null = null
-    /** Pending rows drawn this frame after the band (a second draw). */
-    let strip: [number, number, number, number] | undefined
-    if (this.canvasFill === 'band') {
-      const stale = this.keepMargins(encoder, texture, main)
+    this.bandY = fillPlan.bandY
+    this.stripFrom = fillPlan.stripFrom
+    if (fillPlan.keep) {
+      this.keepTexture(encoder, texture, fillPlan)
       main.view = this.keptView ?? canvasView
-      if (stale === 'all' || !band) {
-        band = undefined
-        this.bandY = null
-        this.pending = []
-      } else {
-        mainLoad = 'load'
-        if (stale && this.reanchorStrips) {
-          cleared = stale
-        }
-        const pending = this.pending
-        if (
-          pending.length > 0 &&
-          (scene.backdrops.length > 0 || !this.reanchorStrips)
-        ) {
-          // Rows drawn with the band, not culled to it (a backdrop
-          // restarts the pass, so no second draw).
-          let y0 = band[1]
-          let y1 = band[1] + band[3]
-          for (const [a, b] of pending) {
-            y0 = Math.min(y0, a)
-            y1 = Math.max(y1, b)
-          }
-          band = [0, y0, main.devW, y1 - y0]
-          this.pending = []
-          this.bandY = null
-        } else if (pending.length > 0) {
-          const k = Math.ceil(Math.max(STRIP_MIN, 2 * this.lastStep) * main.sy)
-          strip = this.nextStrip(band, main, k)
-          if (
-            strip &&
-            strip[1] <= band[1] + band[3] &&
-            strip[1] + strip[3] >= band[1]
-          ) {
-            // Next to the band: one draw over both, culled to both.
-            band = hullRows(band, strip)
-            strip = undefined
-            if (this.bandY) {
-              this.bandY = [
-                Math.min(this.bandY[0], band[1] / main.sy + main.oy),
-                Math.max(this.bandY[1], (band[1] + band[3]) / main.sy + main.oy)
-              ]
-            }
-          }
-        }
-      }
     } else if (this.kept) {
       this.releaseKept()
     }
-    /** The band's draw is the strip's (culled to the pending rows). */
-    let bandIsStrip = false
-    /** The band was cut to the rows still to draw: its draw (and the
-     * extra draws) are culled to their own rows, not the whole band. */
-    let trimmed = false
-    /** More rows drawn after the band, each under its own scissor and
-     * culled like the band: fixed content's old and new rows when it
-     * moved against the canvas (skipUnchanged). */
-    const extra: [number, number, number, number][] = []
-    if (
-      this.canvasFill === 'band' &&
-      this.skipUnchanged &&
-      band &&
-      !changed &&
-      mainLoad === 'load'
-    ) {
-      // Band rows drawn since the content last changed hold the same
-      // pixels: draw only the rest, plus where fixed content was and is.
-      let need = rowsMissing(band[1], band[1] + band[3], this.valid)
-      const fixed = this.fixedRows(scene)
-      if (fixed.length > 0 && this.fixedScrollY !== ctx.scrollY) {
-        const at = (y: number): [number, number][] =>
-          this.fixedDeviceRows(fixed, y, main.oy, main.sy, main.devH)
-        for (const [a, b] of [
-          ...at(ctx.scrollY),
-          ...at(this.fixedScrollY ?? ctx.scrollY)
-        ]) {
-          need = addRows(need, a, b)
-        }
-      }
-      const layers = this.layerState(scene, ctx)
-      if (layers.live || layers.key !== this.layerKey) {
-        // Where transformed or region-drawn groups were and are.
-        for (const [a, b] of [...layers.rows, ...this.layerRows]) {
-          const y0 = clamp(Math.floor((a - main.oy) * main.sy), main.devH)
-          const y1 = clamp(Math.ceil((b - main.oy) * main.sy), main.devH)
-          if (y1 > y0) {
-            need = addRows(need, y0, y1)
-          }
-        }
-      }
-      // Rows close together are drawn as one (a draw costs vertex work
-      // whatever its scissor).
-      const parts: [number, number][] = []
-      for (const [a, b] of need) {
-        const last = parts[parts.length - 1]
-        if (last && a - last[1] < 64) {
-          last[1] = b
-        } else {
-          parts.push([a, b])
-        }
-      }
-      const p0 = parts[0]
-      if (p0) {
-        trimmed = true
-        band = [0, p0[0], main.devW, p0[1] - p0[0]]
-        for (const [a, b] of parts.slice(1)) {
-          extra.push([0, a, main.devW, b - a])
-        }
-      } else if (strip) {
-        band = strip
-        strip = undefined
-        bandIsStrip = true
-      } else {
-        band = [0, 0, main.devW, 0]
-      }
-    }
-    if (this.canvasFill === 'band') {
-      // What this frame draws becomes valid.
-      if (!band) {
-        this.valid = [[0, main.devH]]
-      } else {
-        for (const r of [band, ...extra, ...(strip ? [strip] : [])]) {
-          this.valid = addRows(this.valid, r[1], r[1] + r[3])
-        }
-      }
-      this.validBatches = scene.batches
-      this.validVersion = scene.version
-      this.validSettled = materialPipelinesSettled()
-      // Fixed content is drawn at this scroll wherever it lands.
-      this.fixedScrollY = ctx.scrollY
-      const layers = this.layerState(scene, ctx)
-      this.layerKey = layers.key
-      this.layerRows = layers.rows
-      this.validMats = this.activeMats(false)
-      this.validExtras = this.extrasActive()
-    }
+    const band = fillPlan.band ?? undefined
+    const strip = fillPlan.strip ?? undefined
+    const extra = fillPlan.extra
+    const cleared = fillPlan.cleared
+    const mainLoad: GPULoadOp = fillPlan.load
     main.scissor = band
-    this.lastFillRows =
-      (main.scissor ? main.scissor[3] : main.devH) +
-      (strip ? strip[3] : 0) +
-      extra.reduce((n, r) => n + r[3], 0)
+    this.lastFillRows = fillPlan.fillRows
     // A strip or an extra draw composites every group again.
     this.composite.begin(
       scene.groups.length * (1 + extra.length + (strip ? 1 : 0))
@@ -1297,9 +685,9 @@ export class Renderer {
     let instances = 0
     this.lastCullMs = 0
     let culled = this.cullDraws ? this.cullFor(scene, ctx) : null
-    if (bandIsStrip && culled && band) {
+    if (fillPlan.cull === 'strip' && culled && band) {
       culled = this.stripRuns(scene, ctx, main, band)
-    } else if (trimmed && culled && band) {
+    } else if (fillPlan.cull === 'rows' && culled && band) {
       culled = this.rowRuns(scene, ctx, main, band)
     }
     let slot = 0
@@ -1318,13 +706,9 @@ export class Renderer {
     const extents: (Box4 | null)[] = []
     for (let gi = 0; gi < scene.groups.length; gi++) {
       const g = scene.groups[gi]
-      const region =
-        g?.region !== undefined ? this.regions.get(g.region) : undefined
-      const t =
-        g?.region !== undefined && !region?.active()
-          ? this.transforms.get(g.region)
-          : undefined
-      xfs[gi] = g && t ? layerAffine(g, t, ctx) : null
+      const e = fx.effectOf(g)
+      xfs[gi] =
+        g && e?.kind === 'transform' ? layerAffine(g, e.transform, ctx) : null
     }
     const popOf = (i: number, group: number): number =>
       skipGroup(list, i, group)
@@ -1485,13 +869,10 @@ export class Renderer {
         }
         const j = popOf(i, batch.group)
         const g = scene.groups[batch.group]
-        const region =
-          g?.region !== undefined ? this.regions.get(g.region) : undefined
-        const pad = region?.active() ? Math.max(0, region.pad()) : 0
-        const t =
-          g?.region !== undefined && !region?.active()
-            ? this.transforms.get(g.region)
-            : undefined
+        const effect = fx.effectOf(g)
+        const region = effect?.kind === 'region' ? effect.region : undefined
+        const pad = region ? Math.max(0, region.pad()) : 0
+        const t = effect?.kind === 'transform' ? effect.transform : undefined
         const tAlpha = t ? layerAlpha(t) : 1
         const xf = xfs[batch.group] ?? null
         if (t && g && !xf && tAlpha === 1 && g.alpha === 1 && !g.filter) {
@@ -1505,7 +886,7 @@ export class Renderer {
         // would land.
         const band = parent.scissor
         const e =
-          g && band && !xf && !region?.active()
+          g && band && !xf && !region
             ? (extents[batch.group] ?? groupExtent(g, ctx))
             : null
         if (
@@ -1523,7 +904,7 @@ export class Renderer {
           g &&
           !t &&
           !xf &&
-          !region?.active() &&
+          !region &&
           g.alpha > 0 &&
           !(g.filter && (g.filter.blur > 0 || g.filter.shadows.length > 0)) &&
           isLeaf(i + 1, j)
@@ -1565,7 +946,7 @@ export class Renderer {
         child.group = batch.group
         plan.set(i, child)
         prepare(child, i + 1, j)
-        const label = region?.active() ? 'region' : t ? 'layer' : 'group'
+        const label = region ? 'region' : t ? 'layer' : 'group'
         groupPasses++
         const rp = drawRange(
           this.beginPass(encoder, child, 'clear', label),
@@ -1576,15 +957,15 @@ export class Renderer {
         )
         rp.end()
         const blur = g?.filter?.blur ?? 0
-        if (blur > 0 && !region?.active()) {
+        if (blur > 0 && !region) {
           this.blurGroup(encoder, child, blur)
         }
-        if (g?.filter && !region?.active()) {
+        if (g?.filter && !region) {
           for (const sh of g.filter.shadows) {
             this.shadowGroup(encoder, child, sh)
           }
         }
-        if (region?.active() && child.pooled) {
+        if (region && child.pooled) {
           child.region = this.regionFrame(child, parent, g, encoder, ctx, dpr)
           region.encode(child.region)
         }
@@ -1732,18 +1113,14 @@ export class Renderer {
     return this.sceneView
   }
 
-  /**
-   * canvasFill 'band': make `kept` match the canvas texture and the main
-   * target's placement. Returns 'all' when nothing kept is usable (new
-   * texture, scale or x change, or a shift that isn't whole rows), the
-   * device rows [y0, y1) left without content after shifting the kept
-   * pixels to a new anchor, or null when all of them still line up.
-   */
-  private keepMargins(
+  /** Make the kept texture this frame's size and carry out the plan's
+   * shift: its pixels move down `plan.shift` rows (copied into the spare
+   * texture, which then swaps in). */
+  private keepTexture(
     encoder: GPUCommandEncoder,
     canvas: GPUTexture,
-    main: Target
-  ): 'all' | [number, number] | null {
+    plan: DrawPlan
+  ): void {
     const { width: w, height: h } = canvas
     const make = (label: string): GPUTexture =>
       this.device.createTexture({
@@ -1757,25 +1134,13 @@ export class Renderer {
           GPUTextureUsage.COPY_DST
       })
     if (this.kept?.width !== w || this.kept.height !== h) {
-      this.releaseKept()
+      this.releaseTextures()
       this.kept = make('kept')
       this.keptView = this.kept.createView()
     }
-    const at = this.keptAt
-    this.keptAt = [main.ox, main.oy, main.sx, main.sy]
-    if (!at || at[0] !== main.ox || at[2] !== main.sx || at[3] !== main.sy) {
-      this.valid = []
-      return 'all'
-    }
-    if (at[1] === main.oy) {
-      return null
-    }
-    // Content moves down the texture by `s` rows.
-    const s = (at[1] - main.oy) * main.sy
-    const r = Math.round(s)
-    if (Math.abs(s - r) > 1e-3 || Math.abs(r) >= h || !this.kept) {
-      this.valid = []
-      return 'all'
+    const r = plan.shift
+    if (r === 0 || !this.kept) {
+      return
     }
     if (this.keptSpare?.width !== w || this.keptSpare.height !== h) {
       this.keptSpare?.destroy()
@@ -1791,109 +1156,20 @@ export class Renderer {
     this.keptSpare = spare
     this.keptView = this.kept.createView()
     this.copy?.release()
-    const fresh: [number, number] = r > 0 ? [0, r] : [h + r, h]
-    // Rows still pending move with the pixels; overlapping intervals
-    // merge, disjoint ones stay apart (the rows between are drawn).
-    const all: [number, number][] = [fresh]
-    for (const [a, b] of this.pending) {
-      const y0 = clamp(a + r, h)
-      const y1 = clamp(b + r, h)
-      if (y1 > y0) {
-        all.push([y0, y1])
-      }
-    }
-    all.sort((a, b) => a[0] - b[0])
-    const out: [number, number][] = []
-    for (const iv of all) {
-      const last = out[out.length - 1]
-      if (last && iv[0] <= last[1]) {
-        last[1] = Math.max(last[1], iv[1])
-      } else {
-        out.push([iv[0], iv[1]])
-      }
-    }
-    this.pending = out
-    // Valid rows move with the pixels too.
-    const valid: [number, number][] = []
-    for (const [a, b] of this.valid) {
-      const y0 = clamp(a + r, h)
-      const y1 = clamp(b + r, h)
-      if (y1 > y0) {
-        valid.push([y0, y1])
-      }
-    }
-    this.valid = valid
-    return fresh
   }
 
-  /**
-   * The strip of pending rows to draw this frame after `band` (full
-   * width; at most `k` rows of the interval nearest the band, from its
-   * end next to the band), updating `pending`; undefined when nothing is
-   * left. Rows the band covers count as drawn.
-   */
-  private nextStrip(
-    band: [number, number, number, number],
-    t: Target,
-    k: number
-  ): [number, number, number, number] | undefined {
-    const b0 = band[1]
-    const b1 = band[1] + band[3]
-    const left: [number, number][] = []
-    for (const [p0, p1] of this.pending) {
-      if (p1 <= b0 || p0 >= b1) {
-        left.push([p0, p1])
-        continue
-      }
-      if (p0 < b0) {
-        left.push([p0, b0])
-      }
-      if (p1 > b1) {
-        left.push([b1, p1])
-      }
-    }
-    let best = -1
-    let bestD = Number.POSITIVE_INFINITY
-    for (let i = 0; i < left.length; i++) {
-      const [p0, p1] = left[i] as [number, number]
-      const d = p0 >= b1 ? p0 - b1 : b0 - p1
-      if (d < bestD) {
-        bestD = d
-        best = i
-      }
-    }
-    const from = left[best]
-    if (!from) {
-      this.pending = []
-      this.stripFrom = null
-      return undefined
-    }
-    const [p0, p1] = from
-    this.stripFrom = [p0, p1]
-    let strip: [number, number, number, number]
-    if (p0 >= b1) {
-      const e = Math.min(p1, p0 + k)
-      from[0] = e
-      strip = [0, p0, t.devW, e - p0]
-    } else {
-      const s0 = Math.max(p0, p1 - k)
-      from[1] = s0
-      strip = [0, s0, t.devW, p1 - s0]
-    }
-    this.pending = left.filter(([a, b]) => b > a)
-    return strip
-  }
-
+  /** Drop the kept texture and the planner's rows for it. */
   private releaseKept(): void {
-    this.pending = []
-    this.valid = []
-    this.stripFrom = null
+    this.planner.release()
+    this.releaseTextures()
+  }
+
+  private releaseTextures(): void {
     this.kept?.destroy()
     this.keptSpare?.destroy()
     this.kept = null
     this.keptSpare = null
     this.keptView = null
-    this.keptAt = null
     this.copy?.release()
   }
 
@@ -2110,8 +1386,8 @@ export class Renderer {
     if (!pooled) {
       return false
     }
-    const region =
-      g?.region !== undefined ? this.regions.get(g.region) : undefined
+    const e = this.fx?.effectOf(g) ?? null
+    const region = e?.kind === 'region' ? e.region : undefined
     if (top.region && region) {
       const r = meet(
         [top.px, top.py, top.w, top.h],

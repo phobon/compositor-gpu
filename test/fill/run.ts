@@ -120,7 +120,7 @@ async function main(): Promise<void> {
         timeout: 120_000
       })
       await page.evaluate('window.__perf.ready')
-      const { rows, instances, pendingRows, adapter } = await page.evaluate(`(async () => {
+      const { rows, instances, pendingRows, adapter, y0, y1 } = await page.evaluate(`(async () => {
         const raf2 = () => new Promise((r) =>
           requestAnimationFrame(() => requestAnimationFrame(r)))
         if (${flag('blur')}) {
@@ -146,16 +146,17 @@ async function main(): Promise<void> {
         const { fillRows: rows, instances, pendingRows } = g.stats()
         const a = await navigator.gpu?.requestAdapter()
         const adapter = a?.info?.description || a?.info?.vendor || 'none'
+        const y0 = window.scrollY
         window.requestAnimationFrame = () => 0
         window.scrollBy(0, ${stall})
         await new Promise((r) => setTimeout(r, 300))
-        return { rows, instances, pendingRows, adapter }
+        return { rows, instances, pendingRows, adapter, y0, y1: window.scrollY }
       })()`)
       const path = resolve(outDir, `${mode}${suffix}.png`)
       const png = PNG.sync.read(await page.screenshot({ path }))
       reference ??= png
       console.log(
-        `${mode.padEnd(11)} rows drawn ${rows}, instances ${instances}, pending ${pendingRows}, flat viewport rows after a ${stall} px stall ${flatRows(png)} of ${png.height}, ${differing(png, reference)} px differ from full (${adapter})`
+        `${mode.padEnd(11)} rows drawn ${rows}, instances ${instances}, pending ${pendingRows}, flat viewport rows after a ${stall} px stall ${flatRows(png)} of ${png.height}, ${differing(png, reference)} px differ from full, scrollY ${y0} -> ${y1} (${adapter})`
       )
       await page.close()
     }

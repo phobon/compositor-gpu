@@ -104,17 +104,28 @@ CSS px or twice the recent scroll step, from the pending interval
 nearest the band, as a second draw culled to that interval (or merged
 into the band when it touches it); pending rows keep the loop running
 and turn scene reuse off, and with a backdrop in the scene they are
-drawn at once (`stats().pendingRows`). With `skipUnchanged` (default;
-`?noskip` / `--noskip`) the renderer keeps the device rows of the kept
+drawn at once (`stats().pendingRows`). Which rows each frame draws, and
+which stay valid, is decided by `gpu/fill_planner.ts` (`FillPlanner`:
+pure, no GPU objects; `plan()` returns skip or a draw plan and updates
+its rows in the same call, `reuse()` on scene-reuse frames); the
+renderer carries the plan out (shift copy, scissors, draws) and owns the
+textures. `npm run test:unit` (`node:test` under tsx, no browser) replays
+traces recorded from the renderer before the planner
+(`test/unit/traces/`) and checks it frame for frame. With
+`skipUnchanged` (default; `?noskip` / `--noskip`) the planner keeps the device rows of the kept
 texture drawn since the content last changed (`valid`, shifted on
 re-anchors): band rows in it aren't redrawn, and a frame with nothing
 to draw returns before `getCurrentTexture` (the canvas keeps what it
 last presented; `stats().skippedFrames`, the profile's `skipped`).
-`contentChanged` is conservative: dirty layers, a new scene version,
-batch list or settled material pipeline, and anything drawn
-differently every frame (active extra layers, a material reporting
-`changed()` or a change in the active set, backdrops) empty `valid`.
-Layer transforms and active region passes are damage (`layerState`:
+The content key (`gpu/effect_snapshot.ts`, `snapshotEffects`: one view
+of the effect registries per frame, built before the uploads) is
+conservative: dirty layers, a new scene version, batch list or settled
+material pipeline, and anything drawn differently every frame (active
+extra layers, a material reporting `changed()` or a change in the
+active set, backdrops) empty `valid`. The snapshot's `effectOf(group)`
+is the one place an active region pass takes precedence over a layer
+transform. Layer transforms and active region passes are damage
+(`layers`:
 their groups' rows at this frame's and the last drawn frame's affine,
 padded by the region's `pad()`; nested or viewport-space ones fall
 back to the full redraw;
@@ -399,9 +410,10 @@ forced-reflow hazard.
 
 **Scene reuse:** while the post chain runs, `Renderer.render` skips
 uploads, groups and the main pass when nothing feeding the scene texture
-changed (`reuseKey`: canvas geometry, scroll, dpr, layer-transform values,
-the active materials and that each reports `changed() === false`, the
-material-pipeline settle counter; no active layer or region; the same
+changed (the snapshot's `reuseKey()`: canvas geometry, scroll, dpr, the
+values of layer transforms on groups in the scene, the active materials
+and that each reports `changed() === false`, the material-pipeline
+settle counter; no active extra layer or region pass in the scene; the same
 batch list; no dirty layer) and runs the chain on last frame's texture
 (`renderPostOnly`, `stats().sceneReused`). `/fx` materials report
 `changed()` from their params, time use, trail and pointer reads.

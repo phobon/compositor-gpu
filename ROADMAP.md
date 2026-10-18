@@ -326,7 +326,7 @@ perspective transforms · culling · WebGL2 backend.
       a group when something inside blends. `test:visual` section
       `filters` (parity ~0.6%).
 - [x] Scene reuse (2026-10-11): post passes over an unchanged scene run on
-      last frame's scene texture (`Renderer.reuseKey`,
+      last frame's scene texture (`reuseKey()` in `gpu/effect_snapshot.ts`,
       `stats().sceneReused`, `sceneReuse: false` to compare);
       material pipelines shared by source and `material.warm()`
 - [x] `filter: drop-shadow()` (2026-10-13): an offset, tinted, blurred
