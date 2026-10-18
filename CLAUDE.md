@@ -258,7 +258,8 @@ integration: checkouts, uncommitted state, how to run the site and the
 readout, and the first move on each open problem. Read it before touching
 the site side.
 
-`ROADMAP.md` is the live checklist, `docs/ARCHITECTURE.md` is the mirror's
+`docs/adr/` records architecture decisions not to revisit without
+new reasons (read before proposing a refactor). `ROADMAP.md` is the live checklist, `docs/ARCHITECTURE.md` is the mirror's
 spec and `docs/EFFECTS.md` the effects layer's (`compositor-gpu/fx`) — the
 spec describes the target, not all of which is built. Currently real: the box
 pass (a complete DOM→GPU vertical slice) and the Slug text pass (font pipeline +
@@ -574,7 +575,7 @@ Conventions each pass must follow:
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch
   list carries `push`/`pop` markers at its cuts. `Renderer.render` runs in
-  two phases: `prepare` renders every group's range into a pooled offscreen
+  two phases: first every group's range is rendered into a pooled offscreen
   texture (own Frame uniform: viewport = texture size, scroll = group
   origin), children before parents, each in its own pass; then each
   target's single pass draws its batches and composites its child groups
@@ -585,7 +586,12 @@ Conventions each pass must follow:
   `packGroups`: shelf-packed with a 2 px gutter, each drawn in its rect
   with its own frame and scissor, composited from its `uv0`; the pooled
   texture's `refs` keep it in use until the last composite);
-  `groupAtlas: false` (`?noatlas`, `--noatlas`) gives each its own;
+  `groupAtlas: false` (`?noatlas`, `--noatlas`) gives each its own.
+  What happens to each group is decided one target at a time by
+  `gpu/group_plan.ts` (`planLevel`, pure: in place, skipped outside the
+  band, a leaf, or its own texture with blur / drop shadows / a region
+  pass, plus the leaves' packing); the renderer plans a target's children
+  once its pooled texture is acquired, then encodes;
   `stats().groupPasses` counts the passes. The main pass is split only at a
   backdrop (below). Records
   therefore carry `opacity = 1`; passes stay unaware. A context with a

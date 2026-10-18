@@ -1,0 +1,49 @@
+[visual] vite dev server at http://localhost:64405/
+[visual] falling back to swiftshader (software WebGPU)
+[visual] chromium launched (swiftshader)
+[visual] compositor active — boxes=245 glyphs=5789 images=43 ligatures=9
+
+section      parity%  regression%  status
+------------------------------------------
+text            0.74         0.00  ok
+decorations     0.69         0.00  ok
+decorstyles     0.91         0.00  ok
+textshadow      0.32         0.00  ok
+ligatures       0.84         0.00  ok
+texttransform    0.54         0.00  ok
+emoji           1.45         0.00  ok
+boxes           0.45         0.00  ok
+outline         0.77         0.00  ok
+outline-focus    0.77         0.00  ok
+borderfill      1.52         0.00  ok
+shadows         0.26         0.00  ok
+images          2.12         0.00  ok
+gradients       1.10         0.00  ok
+bglayers        1.11         0.00  ok
+bglayers-select    9.56         0.00  ok
+selcolor        0.76         0.00  ok
+selcolor-select    9.23         0.00  ok
+png16           0.59         0.00  ok
+roundclip       1.74         0.00  ok
+shapes          0.51         0.00  ok
+overflow        0.21         0.00  ok
+stacking        0.17         0.00  ok
+fixed           0.38         0.00  ok
+fixed-s120      0.39         0.00  ok
+sticky          0.19         0.00  ok
+opacity         0.18         0.00  ok
+transforms      1.10         0.00  ok
+mutations       0.24         0.00  ok
+pseudo          0.56         0.00  ok
+gencontent      1.30         0.00  ok
+shadowgaps      2.05         0.00  ok
+blend           0.40         0.00  ok
+blendgroup      1.00         0.00  ok
+filters         0.75         0.00  ok
+drop-shadow     0.97         0.00  ok
+backdrop        4.11         0.00  ok
+canvas          0.11         0.00  ok
+duo             0.42         0.00  ok
+duo-s900        0.71         0.00  ok
+
+[visual] OK

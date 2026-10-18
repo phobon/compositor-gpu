@@ -1,0 +1,51 @@
+[profile] headed: 155.0.8059.84
+[profile] perf.html n=400 ready
+[profile] adapter: apple / metal-3 / Apple M1 Pro, 155.0.8059.84
+[profile] scroll
+[profile]   239 frames
+[profile] scroll-long
+[profile]   242 frames
+
+[profile] native GPU, GPU timing on
+
+scroll: 239 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 120; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.20    9.30    9.40
+  cpu total             0.10    0.30    0.90    1.80
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.00    0.20    0.70    1.50
+      cull              0.00    0.10    0.70    1.40
+    other               0.10    0.20    0.30    1.10
+  gpu total             1.86    2.30    3.34    3.41
+    copy                0.71    0.73    0.74    0.74
+      alone             0.71    0.73    0.74    0.74
+    main                0.29    0.51    0.58    0.66
+      alone             0.29    0.51    0.58    0.66
+
+scroll-long: 242 frames over 2.0 s, refresh 8.33 ms (120 Hz)
+  late 0, dropped 0; skipped 151; reads: 0 partial, 0 full, 0 escalated
+                         p50     p95     p99     max
+  frame interval        8.30    9.10    9.30    9.40
+  cpu total             0.10    0.40    0.60    1.00
+    read                0.00    0.00    0.00    0.00
+      scene             0.00    0.00    0.00    0.00
+        batches         0.00    0.00    0.00    0.00
+    hooks               0.00    0.10    0.10    0.10
+    upload              0.00    0.00    0.00    0.00
+      text              0.00    0.00    0.00    0.00
+    encode              0.00    0.30    0.50    0.60
+      cull              0.00    0.10    0.40    0.40
+    other               0.10    0.20    0.20    0.40
+  gpu total             2.03    5.75    6.76    6.76
+    main                1.14    5.17    6.03    6.03
+      alone             1.04    1.39    1.70    1.70
+    copy                0.70    5.11    5.58    5.58
+      alone             0.58    0.72    0.93    0.93
+
+[profile] reports in /Users/phobon/code/compositor-gpu/test/profile/out/last
