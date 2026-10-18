@@ -9,6 +9,7 @@ import { materialPipelinesSettled } from '../gpu/material'
 import { timed } from '../gpu/timer'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
+import { EffectsClock } from './clock'
 import { createComposer } from './compose'
 import {
   createLayer,
@@ -17,6 +18,7 @@ import {
   type LayerOptions,
   type LayerState
 } from './layer'
+import { anyEnabled, keepAlive, Lifecycle } from './lifecycle'
 import {
   createMaterial,
   inertMaterial,
@@ -216,10 +218,7 @@ interface PassState {
   radius: () => number
   /** Resolution divisor for all stages but the last (PassOptions). */
   downsample: (dpr: number) => number
-  enabled: boolean
-  continuous: boolean
-  /** ctx.time (ms) of the first frame after enabling; null until then. */
-  enabledAt: number | null
+  life: Lifecycle
   paramsBuf: GPUBuffer | null
   stages: Stage[]
   /** Region passes: the element, and its ping-pong pair (multi-stage). */
@@ -234,38 +233,31 @@ interface PassState {
   snap: Snapshot | null
 }
 
-/** A Pass object over `s` (shared by the inert and GPU paths).
- * `toggled` runs after `enabled` changes. */
+/** `continuous` unless given: whether a stage reads the clock. */
+const passContinuous = <S extends ParamSchema>(opts: PassOptions<S>): boolean =>
+  opts.continuous ??
+  readsTime(...(Array.isArray(opts.fragment) ? opts.fragment : [opts.fragment]))
+
+/** A Pass object over `s` (shared by the inert and GPU paths). */
 function passHandle<S extends ParamSchema>(
   s: PassState,
-  wake: () => void,
-  remove: () => void,
-  toggled?: () => void
+  remove: () => void
 ): Pass<S> {
   return {
     name: s.name,
     params: s.block.values as ParamValues<S>,
     schema: s.block.schema as S,
     get enabled() {
-      return s.enabled
+      return s.life.enabled
     },
     set enabled(on: boolean) {
-      if (on === s.enabled) {
-        return
-      }
-      s.enabled = on
-      if (on) {
-        s.enabledAt = null
-      }
-      toggled?.()
-      wake()
+      s.life.setEnabled(on)
     },
     get continuous() {
-      return s.continuous
+      return s.life.continuous
     },
     set continuous(on: boolean) {
-      s.continuous = on
-      wake()
+      s.life.setContinuous(on)
     },
     get radius() {
       return s.radius()
@@ -350,13 +342,12 @@ function inertEffects(): Effects {
         block,
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
-        enabled: opts.enabled ?? true,
-        continuous:
-          opts.continuous ??
-          readsTime(
-            ...(Array.isArray(opts.fragment) ? opts.fragment : [opts.fragment])
-          ),
-        enabledAt: null,
+        life: new Lifecycle({
+          enabled: opts.enabled ?? true,
+          continuous: passContinuous(opts),
+          timed: true,
+          wake: () => {}
+        }),
         paramsBuf: null,
         stages: [],
         region: opts.region ? targetOf(opts.region, cache, null) : null,
@@ -364,11 +355,7 @@ function inertEffects(): Effects {
         image: null,
         snap: null
       }
-      return passHandle<S>(
-        s,
-        () => {},
-        () => {}
-      )
+      return passHandle<S>(s, () => s.life.destroy())
     },
     transition(opts) {
       return transitionHandle(this.pass({ ...opts, enabled: false }), null)
@@ -451,13 +438,19 @@ function buildEffects(compositor: Compositor): Effects {
   const reduced = createReducedMotion()
   reduced.subscribe(() => graph.requestFrame())
 
-  const anyEnabled = (): boolean =>
-    trails.some((t) => t.enabled) ||
-    passes.some((p) => p.enabled) ||
-    layers.some((l) => l.enabled) ||
-    materials.some((m) => m.enabled)
+  /** The effects clock (clock.ts): ctx.time, held still under reduced
+   * motion, or the test override. */
+  const clock = new EffectsClock(reduced, () => override)
+  /** Every pass, layer, material and trail's lifecycle. */
+  function* lives(): Generator<Lifecycle> {
+    for (const list of [passes, layers, materials, trails]) {
+      for (const e of list) {
+        yield e.life
+      }
+    }
+  }
   const tracker = new PointerTracker(() => {
-    if (anyEnabled()) {
+    if (anyEnabled(lives())) {
       graph.requestFrame()
     }
   })
@@ -643,9 +636,6 @@ function buildEffects(compositor: Compositor): Effects {
 
   // Per-frame state, set in beforeFrame.
   let pointerNow: PointerState = tracker.state
-  /** The effects clock, ms: ctx.time, held still under reduced motion. */
-  let timeMs = 0
-  let clockSet = false
   const effectData = new Float32Array(EFFECT_BYTES / 4)
   /** This frame's running stages, in order (filled by encode), with the
    * device px per texel each one renders at. */
@@ -653,7 +643,7 @@ function buildEffects(compositor: Compositor): Effects {
 
   /** In the fullscreen chain this frame (region passes never are). */
   const live = (p: PassState): boolean =>
-    p.enabled && p.stages.length > 0 && !p.region
+    p.life.enabled && p.stages.length > 0 && !p.region
 
   const writeEffect = (
     p: PassState,
@@ -665,8 +655,8 @@ function buildEffects(compositor: Compositor): Effects {
   ): void => {
     const d = effectData
     const v = frame.viewport
-    d[0] = override?.time ?? timeMs / 1000
-    d[1] = override?.elapsed ?? (timeMs - (p.enabledAt ?? timeMs)) / 1000
+    d[0] = clock.time()
+    d[1] = p.life.elapsed(clock)
     d[2] = v.width
     d[3] = v.height
     d[4] = 1 / Math.max(1, v.width)
@@ -816,10 +806,7 @@ function buildEffects(compositor: Compositor): Effects {
   let pointerMoved = true
   const removeHook = graph.addHook({
     beforeFrame(ctx: FrameContext) {
-      if (!reduced.on || !clockSet) {
-        timeMs = ctx.time
-        clockSet = true
-      }
+      clock.tick(ctx.time)
       tracker.step(ctx.dt, ctx.scrollX, ctx.scrollY)
       const o = override?.pointer
       pointerNow = o
@@ -831,21 +818,16 @@ function buildEffects(compositor: Compositor): Effects {
         t.frame(ctx, pointerNow)
       }
       let chainLive = false
-      let any = false
       for (const p of passes) {
-        if (p.enabled) {
-          any = true
+        if (p.life.enabled) {
           chainLive ||= !p.region
-          p.enabledAt ??= timeMs
+          p.life.start(clock)
         }
-        if (!p.enabled && p.ping.length > 0) {
+        if (!p.life.enabled && p.ping.length > 0) {
           freePing(p)
         }
       }
-      any ||=
-        trails.some((t) => t.enabled) ||
-        layers.some((l) => l.enabled) ||
-        materials.some((m) => m.enabled)
+      const any = anyEnabled(lives())
       // Before the layers' frames: a simulate dispatch is submitted there
       // and must see this frame's pointer.
       if (any) {
@@ -872,28 +854,11 @@ function buildEffects(compositor: Compositor): Effects {
       }
     },
     keepAlive() {
-      if (trails.some((t) => t.live()) || passes.some((p) => p.snap?.busy())) {
-        return true
-      }
-      let any = false
-      // A held clock gives time-driven passes and materials nothing new
-      // to draw; layers may still simulate.
-      const held = reduced.on && override?.time === undefined
-      for (const [list, timed] of [
-        [passes, true],
-        [layers, false],
-        [materials, true]
-      ] as const) {
-        for (const e of list) {
-          if (e.enabled) {
-            if (e.continuous && !(timed && held)) {
-              return true
-            }
-            any = true
-          }
-        }
-      }
-      return any && !override?.pointer && tracker.moving()
+      return keepAlive(
+        lives(),
+        clock,
+        () => !override?.pointer && tracker.moving()
+      )
     }
   })
   graph.setPostChain(chain)
@@ -1078,8 +1043,8 @@ function buildEffects(compositor: Compositor): Effects {
       bh = r.height * s
     }
     const d = effectData
-    d[0] = override?.time ?? timeMs / 1000
-    d[1] = override?.elapsed ?? (timeMs - (p.enabledAt ?? timeMs)) / 1000
+    d[0] = clock.time()
+    d[1] = p.life.elapsed(clock)
     d[2] = bw
     d[3] = bh
     d[4] = 1 / Math.max(1, bw)
@@ -1131,7 +1096,7 @@ function buildEffects(compositor: Compositor): Effects {
   }
   const regionHandler = (p: PassState): RegionHandler => ({
     pad: () => p.radius(),
-    active: () => p.enabled && p.stages.length > 0 && !destroyed,
+    active: () => p.life.enabled && p.stages.length > 0 && !destroyed,
     encode(f) {
       if (p.block.dirty && p.paramsBuf) {
         device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
@@ -1192,11 +1157,7 @@ function buildEffects(compositor: Compositor): Effects {
     frameLayout,
     graph,
     pointerBuf,
-    time: () => override?.time ?? timeMs / 1000,
-    clockMs: () => timeMs,
-    clockHeld: () => reduced.on && override?.time === undefined,
-    elapsedOverride: () => override?.elapsed ?? null,
-    dtOverride: () => override?.dt ?? null,
+    clock,
     pointerMoved: () => pointerMoved,
     wake: () => graph.requestFrame()
   }
@@ -1207,25 +1168,25 @@ function buildEffects(compositor: Compositor): Effects {
       return tracker.state
     },
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
-      // The write hook only runs after `state` exists.
-      const block = createParams(opts.params ?? ({} as S), () => {
-        if (state.enabled) {
-          graph.requestFrame()
-        }
+      const life = new Lifecycle({
+        enabled: opts.enabled ?? true,
+        continuous: passContinuous(opts),
+        timed: true,
+        wake: () => graph.requestFrame(),
+        // Region passes isolate their element only while on.
+        toggled: () => isolate(),
+        busy: () => state.snap?.busy() ?? false
       })
+      const block = createParams(opts.params ?? ({} as S), () =>
+        life.paramsChanged()
+      )
       const generic = block as unknown as ParamBlock<ParamSchema>
       const state: PassState = {
         name: opts.name,
         block: generic,
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
-        enabled: opts.enabled ?? true,
-        continuous:
-          opts.continuous ??
-          readsTime(
-            ...(Array.isArray(opts.fragment) ? opts.fragment : [opts.fragment])
-          ),
-        enabledAt: null,
+        life,
         paramsBuf: null,
         stages: [],
         region: opts.region ? targetOf(opts.region, targetCache, graph) : null,
@@ -1237,7 +1198,7 @@ function buildEffects(compositor: Compositor): Effects {
       const isolate = (): void => {
         const el = state.region?.el
         if (el && handler) {
-          graph.isolate(el, state.enabled && !destroyed ? handler : null)
+          graph.isolate(el, life.enabled && !destroyed ? handler : null)
         }
       }
       if (!destroyed) {
@@ -1277,29 +1238,24 @@ function buildEffects(compositor: Compositor): Effects {
         )
         passes.push(state)
         isolate()
-        if (state.enabled) {
+        if (life.enabled) {
           graph.requestFrame()
         }
       }
-      return passHandle<S>(
-        state,
-        () => graph.requestFrame(),
-        () => {
-          const i = passes.indexOf(state)
-          if (i === -1) {
-            return
-          }
-          passes.splice(i, 1)
-          freePass(state)
-          state.enabled = false
-          isolate()
-          if (passes.length === 0) {
-            releaseTargets()
-          }
-          graph.requestFrame()
-        },
-        isolate
-      )
+      return passHandle<S>(state, () => {
+        const i = passes.indexOf(state)
+        if (i === -1) {
+          return
+        }
+        passes.splice(i, 1)
+        freePass(state)
+        life.enabled = false
+        isolate()
+        if (passes.length === 0) {
+          releaseTargets()
+        }
+        graph.requestFrame()
+      })
     },
     transition<S extends ParamSchema>(
       opts: TransitionOptions<S>
@@ -1352,12 +1308,29 @@ function buildEffects(compositor: Compositor): Effects {
     },
     target: (el) => targetOf(el, targetCache, graph),
     transform(el, opts) {
-      const t = createTransform(composer, true, el, opts)
+      const t = createTransform(composer, true, el, opts, () => {
+        const i = transforms.indexOf(t)
+        if (i !== -1) {
+          transforms.splice(i, 1)
+        }
+      })
       transforms.push(t)
       return t
     },
     motion(el, opts) {
-      const m = createMotion(composer, true, el, opts, () => reduced.on)
+      const m = createMotion(
+        composer,
+        true,
+        el,
+        opts,
+        () => reduced.on,
+        () => {
+          const i = motions.indexOf(m)
+          if (i !== -1) {
+            motions.splice(i, 1)
+          }
+        }
+      )
       motions.push(m)
       return m
     },
@@ -1394,11 +1367,11 @@ function buildEffects(compositor: Compositor): Effects {
       reduced.destroy()
       tracker.unlisten()
       removeHook()
-      for (const t of transforms) {
+      for (const t of [...transforms]) {
         t.destroy()
       }
       transforms.length = 0
-      for (const m of motions) {
+      for (const m of [...motions]) {
         m.destroy()
       }
       motions.length = 0
@@ -1406,7 +1379,7 @@ function buildEffects(compositor: Compositor): Effects {
       graph.setPostChain(null)
       for (const p of passes) {
         freePass(p)
-        p.enabled = false
+        p.life.enabled = false
         if (p.region) {
           graph.isolate(p.region.el, null)
         }

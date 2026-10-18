@@ -55,7 +55,9 @@ export function createTransform(
   composer: Composer,
   gpu: boolean,
   target: Target | Element,
-  opts: TransformOptions = {}
+  opts: TransformOptions = {},
+  /** After destroy() (the runtime forgets it). */
+  onRemove?: () => void
 ): Transform {
   const el = target instanceof Element ? target : target.el
   const c: Contribution = { v: identity(), enabled: opts.enabled ?? true }
@@ -94,6 +96,7 @@ export function createTransform(
       }
       destroyed = true
       remove()
+      onRemove?.()
     }
   } as Transform
   for (const k of KEYS) {

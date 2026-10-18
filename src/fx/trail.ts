@@ -1,5 +1,6 @@
 import type { FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
+import { Lifecycle } from './lifecycle'
 import {
   createParams,
   type ParamBlock,
@@ -93,7 +94,7 @@ export interface TrailBinding {
 /** Runtime-side state of a Trail (effects.ts drives it). */
 export interface TrailState {
   handle: Trail
-  enabled: boolean
+  life: Lifecycle
   /** Fade and deposit for this frame (before anything that reads it). */
   frame(ctx: FrameContext, pointer: PointerState): void
   /** Still fading: keep frames coming. */
@@ -196,17 +197,30 @@ fn fx_trail_cs(@builtin(global_invocation_id) id : vec3u) {
 export function inertTrail(o: TrailOptions = {}): Trail {
   const block = createParams(schema, () => {})
   applyOptions(block, o)
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: null,
+    timed: false,
+    wake: () => {}
+  })
   return {
     name: o.name ?? 'trail',
     params: block.values,
     schema,
     cell: cellOf(o),
-    enabled: o.enabled ?? true,
+    get enabled() {
+      return life.enabled
+    },
+    set enabled(on: boolean) {
+      life.setEnabled(on)
+    },
     pointer: o.pointer ?? true,
     active: false,
     stroke() {},
     clear() {},
-    destroy() {}
+    destroy() {
+      life.destroy()
+    }
   }
 }
 
@@ -238,11 +252,21 @@ export function createTrail(
   const name = o.name ?? 'trail'
   const label = `fx:${name}`
   const cell = cellOf(o)
-  // Writes before `state` exists (applyOptions) wake nothing.
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: null,
+    timed: false,
+    wake: deps.wake,
+    toggled: () => {
+      prev = null
+    },
+    busy: () => life.enabled && handle.active
+  })
+  // Writes before the trail is ready (applyOptions) wake nothing.
   let ready = false
   const block = createParams(schema, () => {
-    if (ready && state.enabled) {
-      deps.wake()
+    if (ready) {
+      life.paramsChanged()
     }
   })
   applyOptions(block, o)
@@ -306,11 +330,10 @@ export function createTrail(
     s: number
     t: number
   }[] = []
-  let destroyed = false
 
   const writeInfo = (): void => {
-    infoData[0] = destroyed ? 0 : cols
-    infoData[1] = destroyed ? 0 : rows
+    infoData[0] = life.destroyed ? 0 : cols
+    infoData[1] = life.destroyed ? 0 : rows
     infoData[2] = cell
     infoData[3] = 0
     device.queue.writeBuffer(info, 0, infoData)
@@ -408,22 +431,17 @@ export function createTrail(
     schema,
     cell,
     get enabled() {
-      return state.enabled
+      return life.enabled
     },
     set enabled(on: boolean) {
-      if (on === state.enabled) {
-        return
-      }
-      state.enabled = on
-      prev = null
-      deps.wake()
+      life.setEnabled(on)
     },
     pointer: o.pointer ?? true,
     get active() {
-      return !destroyed && (energy > EPS || pending.length > 0)
+      return !life.destroyed && (energy > EPS || pending.length > 0)
     },
     stroke(a, b, speed) {
-      if (destroyed) {
+      if (life.destroyed) {
         return
       }
       pending.push({
@@ -437,17 +455,16 @@ export function createTrail(
     clear() {
       // Strokes queued for the next frame go too, or they'd refill it.
       pending = []
-      if (!destroyed && cols > 0) {
+      if (!life.destroyed && cols > 0) {
         zero()
         deps.wake()
       }
     },
     destroy() {
-      if (destroyed) {
+      if (!life.destroy()) {
         return
       }
-      destroyed = true
-      state.enabled = false
+      life.enabled = false
       pending = []
       if (cols > 0) {
         zero()
@@ -460,9 +477,9 @@ export function createTrail(
 
   const state: TrailState = {
     handle,
-    enabled: o.enabled ?? true,
+    life,
     frame(ctx, ptr) {
-      if (!state.enabled || destroyed) {
+      if (!life.enabled || life.destroyed) {
         return
       }
       fit(ctx.width, ctx.height)
@@ -499,7 +516,7 @@ export function createTrail(
       })
       empty = false
     },
-    live: () => state.enabled && handle.active,
+    live: () => life.busy(),
     binding: () => ({ field, info, version }),
     free() {
       field.destroy()
@@ -509,7 +526,7 @@ export function createTrail(
   }
   states.set(handle, state)
   ready = true
-  if (state.enabled) {
+  if (life.enabled) {
     deps.wake()
   }
   return state

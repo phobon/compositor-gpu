@@ -1,7 +1,9 @@
 import type { MaterialEntry, RenderGraph } from '../gpu/graph'
 import type { MaterialKind } from '../gpu/material'
 import type { FrameContext } from '../types'
+import type { EffectsClock } from './clock'
 import { type Hook, hookSource, MATERIAL_HOOKS } from './gpu'
+import { Lifecycle } from './lifecycle'
 import {
   createParams,
   type ParamBlock,
@@ -131,12 +133,7 @@ export interface MaterialDeps {
   device: GPUDevice
   graph: RenderGraph
   pointerBuf: GPUBuffer
-  time(): number
-  /** The effects clock, ms (held still under reduced motion). */
-  clockMs(): number
-  /** The clock is held (reduced motion, no test override). */
-  clockHeld(): boolean
-  elapsedOverride(): number | null
+  clock: EffectsClock
   /** The pointer uniform differs from the previous frame's. */
   pointerMoved(): boolean
   wake(): void
@@ -145,8 +142,7 @@ export interface MaterialDeps {
 /** Runtime-side state of a Material (effects.ts drives it). */
 export interface MaterialState {
   handle: Material<ParamSchema>
-  enabled: boolean
-  continuous: boolean
+  life: Lifecycle
   frame(ctx: FrameContext): void
   destroy(): void
 }
@@ -162,21 +158,48 @@ const materialContinuous = (o: MaterialOptions, hooks?: string): boolean =>
 const kindsOf = (o: MaterialOptions): readonly MaterialKind[] =>
   o.kinds ?? (o.raw ? (Object.keys(o.raw) as MaterialKind[]) : ALL_KINDS)
 
+/** The material's hook WGSL (tgpu.fn hooks resolved; no device
+ * needed), identity hooks for those it leaves out. */
+const materialHooks = (o: MaterialOptions): string =>
+  hookSource(o.name, [
+    [o.vertex ?? IDENTITY_VERTEX, MATERIAL_HOOKS.vertex],
+    [o.fragment ?? IDENTITY_FRAGMENT, MATERIAL_HOOKS.fragment]
+  ]) ?? `${IDENTITY_VERTEX}\n${IDENTITY_FRAGMENT}`
+
 /** A Material with no GPU side (inert runtime). */
 export function inertMaterial<S extends ParamSchema>(
   o: MaterialOptions<S>,
   target: Target
 ): Material<S> {
   const block = createParams(o.params ?? ({} as S), () => {})
+  const opts = o as unknown as MaterialOptions
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: materialContinuous(opts, materialHooks(opts)),
+    timed: true,
+    wake: () => {}
+  })
   return {
     name: o.name,
     params: block.values as ParamValues<S>,
     schema: block.schema,
     target,
-    enabled: o.enabled ?? true,
-    continuous: materialContinuous(o as unknown as MaterialOptions),
+    get enabled() {
+      return life.enabled
+    },
+    set enabled(on: boolean) {
+      life.setEnabled(on)
+    },
+    get continuous() {
+      return life.continuous
+    },
+    set continuous(on: boolean) {
+      life.setContinuous(on)
+    },
     warm() {},
-    destroy() {}
+    destroy() {
+      life.destroy()
+    }
   }
 }
 
@@ -190,25 +213,23 @@ export function createMaterial<S extends ParamSchema>(
   const id = graph.nextMaterialId()
   const label = `fx:${o.name}`
   const hides = o.hideSource ?? (o.vertex !== undefined || o.raw !== undefined)
-  let enabledAt: number | null = null
-  let inFrame = false
-  let destroyed = false
-  const wake = (): void => {
-    if (!inFrame) {
-      deps.wake()
+  const hooks = materialHooks(o as unknown as MaterialOptions)
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: materialContinuous(o as unknown as MaterialOptions, hooks),
+    timed: true,
+    wake: deps.wake,
+    toggled: (on) => {
+      if (on) {
+        fresh = true
+      }
+      apply()
     }
-  }
+  })
 
-  const block = createParams(o.params ?? ({} as S), () => {
-    if (state.enabled) {
-      wake()
-    }
-  }) as unknown as ParamBlock<ParamSchema>
-  const hooks =
-    hookSource(o.name, [
-      [o.vertex ?? IDENTITY_VERTEX, MATERIAL_HOOKS.vertex],
-      [o.fragment ?? IDENTITY_FRAGMENT, MATERIAL_HOOKS.fragment]
-    ]) ?? `${IDENTITY_VERTEX}\n${IDENTITY_FRAGMENT}`
+  const block = createParams(o.params ?? ({} as S), () =>
+    life.paramsChanged()
+  ) as unknown as ParamBlock<ParamSchema>
   const trail = trailState(o.trail)
   // entry.changed's inputs (see frame()).
   const usesPointer = [hooks, ...Object.values(o.raw ?? {})].some(
@@ -295,11 +316,11 @@ export function createMaterial<S extends ParamSchema>(
     layout,
     bindGroup,
     target: target.el,
-    active: () => state.enabled && !destroyed,
+    active: () => life.enabled && !life.destroyed,
     changed: () => changedNow,
     // A pipeline finished compiling: draw with it.
     ready: () => {
-      if (state.enabled) {
+      if (life.enabled) {
         deps.wake()
       }
     }
@@ -307,7 +328,7 @@ export function createMaterial<S extends ParamSchema>(
 
   const apply = (): void => {
     if (hides) {
-      graph.hideSource(target.el, state.enabled && !destroyed)
+      graph.hideSource(target.el, life.enabled && !life.destroyed)
     }
     graph.replace()
   }
@@ -318,51 +339,35 @@ export function createMaterial<S extends ParamSchema>(
     schema: block.schema,
     target,
     get enabled() {
-      return state.enabled
+      return life.enabled
     },
     set enabled(on: boolean) {
-      if (on === state.enabled) {
-        return
-      }
-      state.enabled = on
-      if (on) {
-        enabledAt = null
-        fresh = true
-      }
-      apply()
-      wake()
+      life.setEnabled(on)
     },
     get continuous() {
-      return state.continuous
+      return life.continuous
     },
     set continuous(on: boolean) {
-      if (on === state.continuous) {
-        return
-      }
-      state.continuous = on
-      wake()
+      life.setContinuous(on)
     },
     warm() {
-      if (!destroyed) {
+      if (!life.destroyed) {
         graph.warmMaterial(entry)
       }
     },
     destroy() {
-      if (destroyed) {
-        return
+      if (life.destroy()) {
+        onRemove(state)
+        state.destroy()
       }
-      destroyed = true
-      onRemove(state)
-      state.destroy()
     }
   }
 
   const state: MaterialState = {
     handle,
-    enabled: o.enabled ?? true,
-    continuous: materialContinuous(o as unknown as MaterialOptions, hooks),
+    life,
     frame(ctx) {
-      if (!state.enabled) {
+      if (!life.enabled) {
         return
       }
       // Whether this frame's draw can differ from the last one's
@@ -370,7 +375,7 @@ export function createMaterial<S extends ParamSchema>(
       const trailLive = trail?.live() ?? false
       let changed =
         fresh ||
-        (state.continuous && !deps.clockHeld()) ||
+        (life.continuous && !deps.clock.held()) ||
         o.update !== undefined ||
         block.dirty ||
         trailLive ||
@@ -382,20 +387,15 @@ export function createMaterial<S extends ParamSchema>(
         entry.bindGroup = makeGroup()
         changed = true
       }
-      enabledAt ??= deps.clockMs()
-      const time = deps.time()
-      inFrame = true
-      try {
-        o.update?.(handle as unknown as Material<S>, time, ctx)
-      } finally {
-        inFrame = false
-      }
+      life.start(deps.clock)
+      const time = deps.clock.time()
+      life.inside(() => o.update?.(handle as unknown as Material<S>, time, ctx))
       if (block.dirty) {
         device.queue.writeBuffer(paramsBuf, 0, block.pack())
       }
       const f = fxData
       f[0] = time
-      f[1] = deps.elapsedOverride() ?? (deps.clockMs() - enabledAt) / 1000
+      f[1] = life.elapsed(deps.clock)
       f[2] = graph.shared.dpr
       f[3] = entry.glyphs ?? 0
       f[4] = ctx.scrollX
@@ -423,10 +423,10 @@ export function createMaterial<S extends ParamSchema>(
     }
   }
   const removeEntry = graph.addMaterial(entry)
-  if (hides && state.enabled) {
+  if (hides && life.enabled) {
     graph.hideSource(target.el, true)
   }
-  if (state.enabled) {
+  if (life.enabled) {
     deps.wake()
   }
   return state

@@ -5,8 +5,10 @@ import type { GlyphTable } from '../text/slug/rasterizer'
 import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
+import type { EffectsClock } from './clock'
 import { type Hook, hookSource, LAYER_HOOKS } from './gpu'
 import { ImageArray } from './image_array'
+import { Lifecycle } from './lifecycle'
 import {
   createParams,
   type ParamBlock,
@@ -359,16 +361,7 @@ export interface LayerDeps {
   frameLayout: GPUBindGroupLayout
   graph: RenderGraph
   pointerBuf: GPUBuffer
-  /** Page clock, s (or the test override). */
-  time(): number
-  /** The effects clock, ms (held still under reduced motion). */
-  clockMs(): number
-  /** The clock is held (reduced motion, no test override). */
-  clockHeld(): boolean
-  /** Every effect's elapsed override, s, or null. */
-  elapsedOverride(): number | null
-  /** The simulate step override, s, or null. */
-  dtOverride(): number | null
+  clock: EffectsClock
   /** The frame loop: request a frame. */
   wake(): void
 }
@@ -376,8 +369,7 @@ export interface LayerDeps {
 /** Runtime-side state of a Layer (effects.ts drives it). */
 export interface LayerState {
   handle: Layer<ParamSchema>
-  enabled: boolean
-  continuous: boolean
+  life: Lifecycle
   /** Per-frame: update hook, uploads. */
   frame(ctx: FrameContext): void
   destroy(): void
@@ -439,11 +431,25 @@ const layerContinuous = (o: LayerOptions, hooks?: string): boolean =>
   o.continuous ??
   (o.simulate !== undefined || readsTime(hooks ?? o.vertex, o.fragment))
 
+/** The layer's hook WGSL (tgpu.fn hooks resolved; no device needed). */
+const layerHooks = (o: LayerOptions): string =>
+  hookSource(o.name, [
+    [o.vertex, LAYER_HOOKS.vertex],
+    [o.fragment, LAYER_HOOKS.fragment]
+  ]) ?? DRAW_NOOP
+
 /** A Layer whose GPU side is absent (inert runtime). */
 export function inertLayer<S extends ParamSchema>(
   o: LayerOptions<S>
 ): Layer<S> {
   const block = createParams(o.params ?? ({} as S), () => {})
+  const opts = o as LayerOptions
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: layerContinuous(opts, layerHooks(opts)),
+    timed: false,
+    wake: () => {}
+  })
   const stride = Math.max(1, Math.floor(o.stride))
   let data = new Float32Array(Math.max(0, o.count) * stride)
   if (o.data && o.data.length <= data.length) {
@@ -470,11 +476,23 @@ export function inertLayer<S extends ParamSchema>(
     },
     stride,
     place: o.place ?? 'above',
-    enabled: o.enabled ?? true,
-    continuous: layerContinuous(o as LayerOptions),
+    get enabled() {
+      return life.enabled
+    },
+    set enabled(on: boolean) {
+      life.setEnabled(on)
+    },
+    get continuous() {
+      return life.continuous
+    },
+    set continuous(on: boolean) {
+      life.setContinuous(on)
+    },
     steps: 0,
     markDirty() {},
-    destroy() {}
+    destroy() {
+      life.destroy()
+    }
   }
 }
 
@@ -486,7 +504,6 @@ export function createLayer<S extends ParamSchema>(
 ): LayerState {
   const { device, format, frameLayout, graph } = deps
   const stride = Math.max(1, Math.floor(o.stride))
-  let enabledAt: number | null = null
   // Instance ranges [lo, hi) to upload. Kept apart, not merged into one
   // span: with simulate an upload resets GPU state, so instances between
   // two marked ranges must not be rewritten.
@@ -509,29 +526,29 @@ export function createLayer<S extends ParamSchema>(
     data.set(o.data)
   }
   let place = o.place ?? 'above'
-  let destroyed = false
-  // Inside update(): the frame is already running, so writes must not
-  // request another (the loop would never idle).
-  let inFrame = false
   /** Instances uploaded for this frame (count can change after). */
   let drawn = 0
-  const wake = (): void => {
-    if (!inFrame) {
-      deps.wake()
+  const hooks = layerHooks(o as LayerOptions)
+  // Wakes from inside update() are dropped (Lifecycle.inside): the frame
+  // is already running, and the loop would never idle.
+  const life = new Lifecycle({
+    enabled: o.enabled ?? true,
+    continuous: layerContinuous(o as LayerOptions, hooks),
+    timed: false,
+    wake: deps.wake,
+    toggled: (on) => {
+      if (on) {
+        lastTime = null
+        steps = 0
+      }
     }
-  }
+  })
+  const wake = (): void => life.wake()
 
-  const block = createParams(o.params ?? ({} as S), () => {
-    if (state.enabled) {
-      wake()
-    }
-  }) as unknown as ParamBlock<ParamSchema>
+  const block = createParams(o.params ?? ({} as S), () =>
+    life.paramsChanged()
+  ) as unknown as ParamBlock<ParamSchema>
   const label = `fx:${o.name}`
-  const hooks =
-    hookSource(o.name, [
-      [o.vertex, LAYER_HOOKS.vertex],
-      [o.fragment, LAYER_HOOKS.fragment]
-    ]) ?? DRAW_NOOP
   const module = device.createShaderModule({
     label,
     code: layerSource(o as LayerOptions, block.wgsl, hooks)
@@ -849,29 +866,16 @@ export function createLayer<S extends ParamSchema>(
       graph.replace()
     },
     get enabled() {
-      return state.enabled
+      return life.enabled
     },
     set enabled(on: boolean) {
-      if (on === state.enabled) {
-        return
-      }
-      state.enabled = on
-      if (on) {
-        enabledAt = null
-        lastTime = null
-        steps = 0
-      }
-      wake()
+      life.setEnabled(on)
     },
     get continuous() {
-      return state.continuous
+      return life.continuous
     },
     set continuous(on: boolean) {
-      if (on === state.continuous) {
-        return
-      }
-      state.continuous = on
-      wake()
+      life.setContinuous(on)
     },
     get steps() {
       return steps
@@ -879,23 +883,19 @@ export function createLayer<S extends ParamSchema>(
     markDirty(first = 0, n = Number.POSITIVE_INFINITY) {
       const lo = Math.max(0, Math.floor(first))
       markRange(lo, lo + Math.max(0, Math.ceil(n)))
-      if (state.enabled) {
-        wake()
-      }
+      life.paramsChanged()
     },
     destroy() {
-      if (destroyed) {
-        return
+      if (life.destroy()) {
+        onRemove(state)
+        state.destroy()
       }
-      destroyed = true
-      onRemove(state)
-      state.destroy()
     }
   }
 
   const extra = {
     place: toPlace(place),
-    active: () => state.enabled && drawn > 0 && dataBuf !== null,
+    active: () => life.enabled && drawn > 0 && dataBuf !== null,
     draw(rp: GPURenderPassEncoder) {
       const group = currentGroup()
       if (!group) {
@@ -910,20 +910,14 @@ export function createLayer<S extends ParamSchema>(
 
   const state: LayerState = {
     handle,
-    enabled: o.enabled ?? true,
-    continuous: layerContinuous(o as LayerOptions, hooks),
+    life,
     frame(ctx) {
-      if (!state.enabled) {
+      if (!life.enabled) {
         return
       }
-      enabledAt ??= deps.clockMs()
-      const time = deps.time()
-      inFrame = true
-      try {
-        o.update?.(handle as unknown as Layer<S>, time, ctx)
-      } finally {
-        inFrame = false
-      }
+      life.start(deps.clock)
+      const time = deps.clock.time()
+      life.inside(() => o.update?.(handle as unknown as Layer<S>, time, ctx))
       images?.update()
       ensureData()
       if (dataBuf) {
@@ -944,14 +938,14 @@ export function createLayer<S extends ParamSchema>(
       }
       const f = fxData
       f[0] = time
-      f[1] = deps.elapsedOverride() ?? (deps.clockMs() - enabledAt) / 1000
+      f[1] = life.elapsed(deps.clock)
       f[2] = graph.shared.dpr
       f[3] = drawn
       f[4] = ctx.scrollX
       f[5] = ctx.scrollY
       f[6] = ctx.width
       f[7] = ctx.height
-      const dtOverride = deps.dtOverride()
+      const dtOverride = deps.clock.dtOverride()
       f[8] =
         dtOverride ??
         (lastTime === null ? 0 : Math.min(Math.max(time - lastTime, 0), 1 / 15))
@@ -985,7 +979,7 @@ export function createLayer<S extends ParamSchema>(
       bindGroup = null
     }
   }
-  if (state.enabled) {
+  if (life.enabled) {
     wake()
   }
   return state

@@ -147,6 +147,11 @@ async function boot(): Promise<void> {
   const params = new URLSearchParams(location.search)
   const n = Math.max(1, Number(params.get('n')) || 400)
   const stage = document.getElementById('stage') as HTMLElement
+  // Load the page font before anything is laid out or measured.
+  // `document.fonts.ready` alone resolves at once when the face hasn't
+  // been requested yet, and the layout then changed when it arrived (the
+  // fill harness saw two layouts across page loads).
+  await document.fonts.load('16px "Inter Play"')
   buildGrid(n)
   // `?fixed`: a fixed header bar (viewport-space records), for the fill
   // check's stale-copy test.

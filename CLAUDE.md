@@ -289,10 +289,15 @@ single layer transform (`fx/compose.ts`), `schema` on every params
 object, `createEffects` memoised per compositor and counted
 (`release()`), no DOM fallback (inert without WebGPU); timing comes
 from GSAP/Motion (recipes in `src/fx/README.md`). Reduced motion
-(`fx/reducedMotion.ts`, `fx.reducedMotion` / `setReducedMotion`): the
-effects clock (`timeMs` in `effects.ts`, `deps.clockMs()` for layers and
-materials) holds still, held-clock `continuous` passes/materials stop
-keeping the loop alive, and `motion.play()` jumps; shot `fx-reduced`. The playground's dev server runs `unplugin-typegpu` (dev
+(`fx/reduced_motion.ts`, `fx.reducedMotion` / `setReducedMotion`): the
+effects clock (`fx/clock.ts`, `EffectsClock`: `time`, `held`, `elapsed`,
+the test overrides) holds still, held-clock `continuous` passes/materials
+stop keeping the loop alive, and `motion.play()` jumps; shot
+`fx-reduced`. Passes, layers, materials and trails share
+`fx/lifecycle.ts` (`Lifecycle`: `enabled` / `continuous` with their wake
+rules, the effect's clock start, destroy; `keepAlive` over all of them;
+each kind adds its side effects through `toggled` / `busy`); transforms
+and motions run on the composer. The playground's dev server runs `unplugin-typegpu` (dev
 dependency) for the `'use gpu'` hooks in `fx.html`. Materials: the box, image
 and Slug shaders are templates around `mat_vertex`/`mat_fragment`
 (`gpu/material.ts`; default variant = identity hooks, pixel-identical),

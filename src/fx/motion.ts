@@ -168,7 +168,9 @@ export function createMotion(
   target: Target | Element,
   opts: MotionOptions = {},
   /** Reduced motion is on: play()/reverse() jump to their end. */
-  reduced: () => boolean = () => false
+  reduced: () => boolean = () => false,
+  /** After destroy() (the runtime forgets it). */
+  onRemove?: () => void
 ): Motion {
   const el = target instanceof Element ? target : target.el
   const c: Contribution = { v: identity(), enabled: opts.enabled ?? true }
@@ -310,6 +312,7 @@ export function createMotion(
       stop()
       destroyed = true
       remove()
+      onRemove?.()
     }
   }
   const remove = composer.add(el, c)
