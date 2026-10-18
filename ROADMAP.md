@@ -607,13 +607,16 @@ perspective transforms · culling · WebGL2 backend.
         ms, the first swap); progress frames 0 late or dropped, interval
         p95 9.2 ms, `gpu total` p95 0.43 ms (the scene is reused while
         only progress changes). Ends equal both pages exactly
-  - [ ] P2 `lens` (fisheye with an RGB fringe at its edge, shot
+  - [x] P2 `lens` (fisheye with an RGB fringe at its edge, shot
         `fx-lens`) and `radialReveal` (a transition from the pointer
         with a bent, fringed edge; `playground/transition.html` uses it,
-        `?lens` adds a lens) (built 2026-10-18, not yet run)
-  - [ ] P4 element intro `reveal` (region blur + rgbSplit +
-        glitchSlices by one `progress`, staggered; images developing
-        through a material)
+        `?lens` adds a lens). 2026-10-18: transition frames `gpu total`
+        p95 1.16 ms at dpr 2 (0.43 with a plain circle), 0 dropped
+  - [ ] P4 element intro: `reveal` (one region pass: blur, red/blue
+        split, slices, wash and fade by one `progress`) and `develop`
+        (an image material: fade in from washed and grey); shots
+        `fx-reveal`, `fx-reveal-0`, `fx-reveal-then-off` (built
+        2026-10-18, not yet run)
   - [ ] P5 3D image gallery: an `fx.layer` of image quads under its own
         perspective, sorted back to front, edges anti-aliased in the
         shader

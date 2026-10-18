@@ -58,6 +58,11 @@ export {
   cursorGlow
 } from './presets/cursorGlow'
 export {
+  type DevelopOptions,
+  type DevelopSchema,
+  develop
+} from './presets/develop'
+export {
   type DisplaceOptions,
   type DisplaceSchema,
   displace
@@ -88,6 +93,11 @@ export {
   type RadialRevealSchema,
   radialReveal
 } from './presets/radialReveal'
+export {
+  type RevealOptions,
+  type RevealSchema,
+  reveal
+} from './presets/reveal'
 export {
   type RgbSplitOptions,
   type RgbSplitSchema,

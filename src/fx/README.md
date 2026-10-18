@@ -898,6 +898,30 @@ layer draws nothing).
   red and blue split radially by up to `fringe` px from 0.6 × radius,
   fading out over `edge` px past the rim. `radius` 0 draws the page
   unchanged. Declares `fringe` as its radius.
+- `reveal(fx, target, { progress = 0, blur = 12, split = 8, glitch =
+  24, height = 10, density = 0.35, wash = 0, washColor = '#fff', fade =
+  0.35, seed = 0 })`: an element's entrance as one region pass (three
+  stages: blur x, blur y, the rest). It fades in over the first `fade`
+  of `progress`; as e = (1 − progress)² falls to 0 it sharpens from a
+  `blur` px Gaussian, red and blue converge from `split` px, slices
+  `height` px tall (a `density` share, pattern by `seed`) slide back
+  from up to `glitch` px, and the mix toward `washColor` (by `wash`)
+  clears. Disable or destroy it at 1. Declares max(blur, glitch + split)
+  as its radius. Stagger several from the page:
+
+  ```ts
+  const rs = [...document.querySelectorAll('h1, p')].map((el, i) =>
+    reveal(fx, el, { seed: i }))
+  gsap.to(rs.map((r) => r.params), {
+    progress: 1, duration: 0.9, stagger: 0.08, ease: 'power2.out',
+    onComplete: () => rs.forEach((r) => r.destroy())
+  })
+  ```
+- `develop(fx, { target, progress = 0, wash = 0.6, desaturate = 1, fade
+  = 0.3, washColor = '#fff' })`: an image Material (`hold`): the
+  target's images fade in over the first `fade` of `progress`, from
+  washed toward `washColor` and grey, the colour coming up as
+  (1 − progress)² falls to 0. Destroy it at 1.
 - `radialReveal(fx, { soft = 48, band = 120, warp = 24, fringe = 6,
   fromPointer = true, timeout? })`: a Transition (see Transitions). A
   circle grows from `params.center` (uv; capture() sets it to the

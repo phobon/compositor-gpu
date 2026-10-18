@@ -15,6 +15,7 @@ import {
   clickRipple,
   createEffects,
   cursorGlow,
+  develop,
   displace,
   dissolve,
   glitchSlices,
@@ -26,6 +27,7 @@ import {
   MatIn,
   type Pass,
   progressiveBlur,
+  reveal,
   rgbSplit,
   vignette
 } from '@/fx'
@@ -612,6 +614,18 @@ async function boot(): Promise<void> {
   })
   const vig = vignette(fx, { enabled: false, amount: 0.7, flash: 0.25 })
   const lns = lens(fx, { enabled: false, radius: 200, strength: 0.45 })
+  // Element intro (P4): the displace section's heading and image.
+  const dspSec = document.querySelector('section[data-vr="fx-displace"]')
+  const rvl = reveal(fx, dspSec?.querySelector('h2') as Element, {
+    enabled: false,
+    progress: 0.4,
+    seed: 3
+  })
+  const dev = develop(fx, {
+    target: dspSec?.querySelector('img') as Element,
+    enabled: false,
+    progress: 0.4
+  })
   if (!vrMode) {
     const kit = mountDials(
       [
@@ -725,6 +739,26 @@ async function boot(): Promise<void> {
           }
         },
         {
+          name: 'reveal',
+          effect: rvl,
+          params: {
+            progress: [0, 1, 0.01],
+            blur: [0, 48, 0.5],
+            split: [0, 40, 0.5],
+            glitch: [0, 120, 1],
+            wash: [0, 1, 0.01]
+          }
+        },
+        {
+          name: 'develop',
+          effect: dev,
+          params: {
+            progress: [0, 1, 0.01],
+            wash: [0, 1, 0.01],
+            desaturate: [0, 1, 0.01]
+          }
+        },
+        {
           name: 'vignette',
           effect: vig,
           params: {
@@ -822,6 +856,8 @@ async function boot(): Promise<void> {
     glitch,
     vig,
     lens: lns,
+    reveal: rvl,
+    develop: dev,
     sim,
     raw,
     tgbox,

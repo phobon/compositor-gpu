@@ -168,7 +168,10 @@ stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
 `fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`, `fx-vignette`,
 `fx-lens` and `fx-p1-then-off` (all five on, then off: must equal the displace
-section with nothing enabled exactly), on the displace section,
+section with nothing enabled exactly), `fx-reveal` / `fx-reveal-0`
+(reveal on the section's h2 and develop on its img at progress 0.4 / 0)
+and `fx-reveal-then-off` (must equal the section exactly), on the
+displace section,
 and on `playground/transition.html` `fx-transition-a` / `-b` (each
 state), `fx-transition-0` (captured a, swapped to b, settled, progress
 0: must equal `-a` exactly), `fx-transition-half`, `fx-transition-1`
@@ -256,7 +259,7 @@ and `glyphs` bindings resolved at draw time via `graph.imageOf` /
 (`src/fx/gpu.ts`; tgpu.fn hooks resolved together with `names:
 'random'`), presets `blur`/`progressiveBlur`/`displace`/`cursorGlow`/
 `clickRipple`/`ripple`/`dissolve`/`rgbSplit`/`glitchSlices`/
-`vignette`/`lens`/`radialReveal` (a transition); `fx.transition` (`fx/transition.ts`: a fullscreen pass with
+`vignette`/`lens`/`reveal`/`develop`/`radialReveal` (a transition); `fx.transition` (`fx/transition.ts`: a fullscreen pass with
 a held viewport snapshot, `prev(uv)` in group 3, shown alone until
 `settled()` finds `graph.mirrorComplete()` on two frames; `npx tsx
 test/transition/run.ts` times swaps on `playground/transition.html`). M4 (authoring, `docs/EFFECTS.md`

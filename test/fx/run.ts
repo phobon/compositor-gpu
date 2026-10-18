@@ -65,6 +65,10 @@
 //   fx-glitch         glitchSlices with the pattern held
 //   fx-vignette       vignette with a white flash
 //   fx-lens           lens on the pinned follower
+//   fx-reveal         reveal on the section's h2 and develop on its img,
+//                     both at progress 0.4
+//   fx-reveal-0       both at progress 0 (heading and image hidden)
+//   fx-reveal-then-off  on, then off: equal to the section exactly
 //   fx-p1-then-off    all five on, then off: equal to the section with
 //                     nothing enabled exactly
 //   fx-transform-off  the transform section, nothing enabled
@@ -150,6 +154,8 @@ type Effect =
   | 'glitch'
   | 'vignette'
   | 'lens'
+  | 'reveal'
+  | 'reveal-0'
   | 'p1'
 
 interface Result {
@@ -235,6 +241,12 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.glitch.enabled = e === 'glitch' || e === 'p1'
     h.vig.enabled = e === 'vignette' || e === 'p1'
     h.lens.enabled = e === 'lens' || e === 'p1'
+    h.reveal.enabled = e === 'reveal' || e === 'reveal-0'
+    h.develop.enabled = e === 'reveal' || e === 'reveal-0'
+    for (const m of [h.reveal, h.develop]) {
+      ;(m.params as Record<string, number>).progress =
+        e === 'reveal-0' ? 0 : 0.4
+    }
     const sim = e === 'sim' || e === 'm3b'
     if (sim) {
       // A fixed step, so the eased dots converge the same way every run.
@@ -868,6 +880,28 @@ async function main(): Promise<void> {
     }
     if (want('fx-lens')) {
       await capture('fx-displace', 'fx-lens', 'lens')
+    }
+    if (want('fx-reveal')) {
+      await capture('fx-displace', 'fx-reveal', 'reveal')
+    }
+    if (want('fx-reveal-0')) {
+      await capture('fx-displace', 'fx-reveal-0', 'reveal-0')
+    }
+    if (want('fx-reveal-then-off')) {
+      const s = 'fx-reveal-then-off'
+      const pre = await capture('fx-displace', `${s}-pre`, 'none')
+      await capture('fx-displace', `${s}-on`, 'reveal')
+      const post = await capture('fx-displace', s, 'none')
+      if (pre && post) {
+        const n = exactDiff(pre, post)
+        const pct = diffPng(pre, post, resolve(outDir, `${s}-invariant.png`))
+        results.push({
+          name: `${s} (= pre)`,
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
     }
     if (want('fx-p1-then-off')) {
       const s = 'fx-p1-then-off'
