@@ -48,6 +48,7 @@ import {
 } from './layer_geometry'
 import { materialPipelinesSettled } from './material'
 import { addRows, clamp, hullRows, meet } from './rows'
+import { SkeletonPass } from './skeleton'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 
 interface FrameSlot {
@@ -128,6 +129,28 @@ export class Renderer {
   lastReused = false
   /** CompositorOptions.sceneReuse. */
   reuseScene = true
+  private skeletonPass: SkeletonPass | null = null
+  /** Quads the skeleton view drew last frame (0 when off). */
+  get skeletonQuads(): number {
+    return this.skeletonPass?.count ?? 0
+  }
+  /** The skeleton view (gpu/skeleton.ts): outline every instance quad
+   * over the canvas. Switching it redraws the band. */
+  get skeleton(): boolean {
+    return this.skeletonPass !== null
+  }
+  set skeleton(on: boolean) {
+    if (on === this.skeleton) {
+      return
+    }
+    if (on) {
+      this.skeletonPass = new SkeletonPass(this.shared)
+    } else {
+      this.skeletonPass?.destroy()
+      this.skeletonPass = null
+    }
+    this.planner.invalidate()
+  }
   /** CompositorOptions.skipUnchanged: with canvasFill 'band', draw only
    * band rows not drawn since the content last changed, and skip frames
    * with nothing to draw. */
@@ -930,6 +953,7 @@ export class Renderer {
       this.sceneKey = key
       this.sceneBatches = scene.batches
     }
+    this.skeletonPass?.draw(encoder, canvasView, this.passes, scene)
     this.composite.flush()
     this.backdrop?.flush()
     const readback = timer?.end(encoder)
@@ -962,6 +986,9 @@ export class Renderer {
     const encoder = this.device.createCommandEncoder()
     const canvasView = texture.createView({ format: this.gpu.viewFormat })
     this.runPost(chain, encoder, canvasView, texture, ctx, dpr)
+    if (this.scene) {
+      this.skeletonPass?.draw(encoder, canvasView, this.passes, this.scene)
+    }
     const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
     readback?.()
@@ -1625,6 +1652,7 @@ export class Renderer {
       f.buffer.destroy()
     }
     this.composite.destroy()
+    this.skeletonPass?.destroy()
     this.releaseScene()
     this.releaseKept()
   }

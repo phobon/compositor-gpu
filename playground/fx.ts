@@ -1,6 +1,7 @@
 /// <reference path="./fx.d.ts" />
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import { mountDebugPanel } from '@/debug'
 import {
   createDialKit,
   createDialRoot,
@@ -139,6 +140,9 @@ async function boot(): Promise<void> {
     root: $('stage'),
     fonts: 'auto'
   })
+  if (!vrMode && !navigator.webdriver) {
+    mountDebugPanel(compositor)
+  }
   const fx = createEffects(compositor)
   const b = blur(fx, { enabled: false, radius: 10 })
   const dsp = displace(fx, {

@@ -8,8 +8,9 @@ import dts from 'vite-plugin-dts'
 //   `vite build`  → library build of ./src into ./dist: four entries,
 //                   `compositor-gpu` (dist/compositor-gpu.js),
 //                   `compositor-gpu/fx` (dist/fx.js), `compositor-gpu/react`
-//                   (dist/react.js) and `compositor-gpu/dials`
-//                   (dist/dials.js), sharing chunks
+//                   (dist/react.js), `compositor-gpu/dials`
+//                   (dist/dials.js) and `compositor-gpu/debug`
+//                   (dist/debug.js), sharing chunks
 export default defineConfig(({ command }) => {
   if (command === 'serve') {
     return {
@@ -30,7 +31,8 @@ export default defineConfig(({ command }) => {
           index: resolve(import.meta.dirname, 'src/index.ts'),
           fx: resolve(import.meta.dirname, 'src/fx/index.ts'),
           react: resolve(import.meta.dirname, 'src/react/index.ts'),
-          dials: resolve(import.meta.dirname, 'src/dials/index.ts')
+          dials: resolve(import.meta.dirname, 'src/dials/index.ts'),
+          debug: resolve(import.meta.dirname, 'src/debug/index.ts')
         },
         formats: ['es'],
         fileName: (_format, name) =>

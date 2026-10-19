@@ -2,6 +2,7 @@ import { shadowPad } from '../dom/styles'
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { SD_BOX_WGSL } from '../gpu/sdf'
+import { SkeletonKind, type SkeletonSink } from '../gpu/skeleton'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 
@@ -953,6 +954,24 @@ export class BoxPass implements RenderPass {
 
   warmMaterial(mat: MaterialBinding): void {
     this.pipelines.warm(mat)
+  }
+
+  skeleton(out: SkeletonSink): void {
+    const d = this.boxes.f32
+    for (let i = 0; i < this.count; i++) {
+      const o = i * FLOATS_PER_BOX
+      // xf0, xf1 (tx, ty, w, h); params.w space; sh0.z isShadow.
+      out.quad(
+        d,
+        o,
+        0,
+        0,
+        d[o + 6] ?? 0,
+        d[o + 7] ?? 0,
+        d[o + 23] ?? 0,
+        (d[o + 38] ?? 0) > 0.5 ? SkeletonKind.shadow : SkeletonKind.box
+      )
+    }
   }
 
   destroy(): void {

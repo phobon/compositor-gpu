@@ -163,6 +163,20 @@ baseline and shows each number's change against it, R switches
 scrolls any page exposing `window.__gpu` (`--url`). SwiftShader numbers
 are only meaningful for CPU.
 
+**Debug panel**: `mountDebugPanel(compositor)` (`compositor-gpu/debug`,
+`src/debug/index.ts`) puts a GPU button in a corner (bottom-right by
+default) whose panel toggles `stats` (`profile.hud`), `dials`
+(`setDialsShown`: dials entries always register, panels are built only
+while shown; `?dials=1` is the initial state) and `skeleton`
+(`compositor.skeleton`, `gpu/skeleton.ts`: each record pass reports its
+last upload's instance quads through `RenderPass.skeleton` from the CPU
+copy of its buffer; drawn in its own `skeleton` pass on the canvas after
+the copy / post chain, and on scene-reuse frames; toggling empties the
+fill planner's `valid` rows; vertex hooks, layer transforms and clips
+are not applied; groups dashed at their bounds). Flags persist in
+localStorage and are overridden by `?stats=` / `?dials=` / `?skeleton=`.
+The playground pages mount it unless `?vr` or `navigator.webdriver`.
+
 **Effects harness**: `npm run test:fx` (`test/fx/run.ts`, `-- --update`
 to rewrite goldens, `-- --only <shot>`) loads `playground/fx.html?vr`,
 pins time/elapsed/pointer through `fx.__override`, and captures each
@@ -239,11 +253,12 @@ and any `SlugText` faces that failed to resolve (CORS/404 on an `@font-face`
 unless `--parity-max` is passed.
 
 Vite has two modes (`vite.config.ts`): `serve` roots at `playground/`, `build`
-bundles four ES entries, `src/index.ts` → `dist/compositor-gpu.js`,
+bundles five ES entries, `src/index.ts` → `dist/compositor-gpu.js`,
 `src/fx/index.ts` → `dist/fx.js` (`compositor-gpu/fx`), `src/react/index.ts`
-→ `dist/react.js` (`compositor-gpu/react`: provider and hooks) and
+→ `dist/react.js` (`compositor-gpu/react`: provider and hooks),
 `src/dials/index.ts` → `dist/dials.js` (`compositor-gpu/dials`: DialKit
-panels from effect schemas), with `typegpu`, `opentype.js`, `react` and
+panels from effect schemas) and `src/debug/index.ts` → `dist/debug.js`
+(`compositor-gpu/debug`: the debug panel), with `typegpu`, `opentype.js`, `react` and
 `dialkit` external (the last two optional peers). `src/react` is the only
 code that imports React (biome's React rules apply there only); it loads
 the core and `/fx` by dynamic import, so SSR stays inert. Site-specific

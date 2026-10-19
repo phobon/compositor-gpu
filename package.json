@@ -31,6 +31,10 @@
     "./dials": {
       "types": "./dist/dials/index.d.ts",
       "import": "./dist/dials.js"
+    },
+    "./debug": {
+      "types": "./dist/debug/index.d.ts",
+      "import": "./dist/debug.js"
     }
   },
   "files": [

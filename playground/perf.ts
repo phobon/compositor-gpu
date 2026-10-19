@@ -1,4 +1,5 @@
 /// <reference path="./perf.d.ts" />
+import { mountDebugPanel } from '@/debug'
 import { blur, createEffects } from '@/fx'
 import { createCompositor } from '@/index'
 import { addBallast } from './ballast'
@@ -232,6 +233,9 @@ async function boot(): Promise<void> {
   const blurPass = blur(fx, { enabled: false })
 
   window.__gpu = compositor
+  if (!navigator.webdriver) {
+    mountDebugPanel(compositor)
+  }
   // `?ballast=N`: N rounds of extra fragment work per pixel of the main
   // pass, for the headroom sweep (playground/ballast.ts).
   const ballast = Number(params.get('ballast') ?? 0)

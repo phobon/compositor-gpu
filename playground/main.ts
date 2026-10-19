@@ -1,3 +1,4 @@
+import { mountDebugPanel } from '@/debug'
 import { blur, createEffects, displace } from '@/fx'
 import { createCompositor } from '@/index'
 
@@ -91,6 +92,11 @@ async function boot(): Promise<void> {
     const fx = createEffects(compositor)
     blur(fx, { enabled: false })
     displace(fx, { enabled: false })
+  }
+
+  // Not under the harnesses: the panel would land in section captures.
+  if (!vrMode && !navigator.webdriver) {
+    mountDebugPanel(compositor)
   }
 
   $('s-gpu').textContent = compositor.active ? 'yes' : 'no'

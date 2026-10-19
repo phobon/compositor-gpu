@@ -1,7 +1,10 @@
 // `compositor-gpu/dials`: live tuning panels built from effect schemas,
 // with DialKit (an optional peer dependency, loaded on first use).
-// Nothing happens unless the page URL has `?dials=1` (configureDials
-// changes the parameter).
+// Entries always register; the panels are built only while shown, which
+// starts as the page URL's `?dials=1` (configureDials changes the
+// parameter) and switches at runtime with setDialsShown (the debug
+// panel's toggle). Hiding destroys the panels and leaves the targets at
+// their last values; showing again restores the persisted values.
 //
 // attachDials(panel, folder, entry) adds `entry.schema` as a folder of
 // the floating panel `panel` (folder null: at the panel's top level).
@@ -87,6 +90,8 @@ const config: Required<DialsConfig> = {
 }
 const panels = new Map<string, Panel>()
 let root: { destroy(): void } | null = null
+/** setDialsShown's last value; null follows the URL. */
+let shown: boolean | null = null
 
 export function configureDials(c: DialsConfig): void {
   Object.assign(config, c)
@@ -100,6 +105,33 @@ export function dialsWanted(): boolean {
   )
 }
 
+/** True while the panels are shown (setDialsShown, else the URL). */
+export function dialsShown(): boolean {
+  return shown ?? dialsWanted()
+}
+
+/** Show or hide every panel at runtime. */
+export function setDialsShown(on: boolean): void {
+  if (typeof window === 'undefined' || on === dialsShown()) {
+    shown = on
+    return
+  }
+  shown = on
+  for (const [name, p] of panels) {
+    if (on) {
+      schedule(name, p)
+    } else {
+      clearTimeout(p.timer)
+      p.kit?.destroy()
+      p.kit = null
+    }
+  }
+  if (!on) {
+    root?.destroy()
+    root = null
+  }
+}
+
 /** Add `entry` to `panel` (in `folder`); returns the detach. */
 export function attachDials(
   panel: string,
@@ -107,7 +139,7 @@ export function attachDials(
   entry: DialEntry,
   opts: PanelOptions = {}
 ): () => void {
-  if (!dialsWanted()) {
+  if (typeof window === 'undefined') {
     return () => {}
   }
   let p = panels.get(panel)
@@ -154,13 +186,16 @@ export function attachDials(
 
 function schedule(panel: string, p: Panel): void {
   clearTimeout(p.timer)
+  if (!dialsShown()) {
+    return
+  }
   p.timer = setTimeout(() => build(panel, p), 50)
 }
 
 function build(panel: string, p: Panel): void {
   import('./load')
     .then((dk) => {
-      if (panels.get(panel) !== p) {
+      if (panels.get(panel) !== p || !dialsShown()) {
         return
       }
       root ??= mountRoot(dk)

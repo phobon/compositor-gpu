@@ -1,5 +1,6 @@
 import type { Shared } from '../../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../../gpu/material'
+import { SkeletonKind, type SkeletonSink } from '../../gpu/skeleton'
 import { StorageArray } from '../../gpu/storage'
 import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
@@ -1188,6 +1189,39 @@ export class SlugText implements TextBackend {
 
   warmMaterial(mat: MaterialBinding): void {
     this.pipelines.warm(mat)
+  }
+
+  skeleton(out: SkeletonSink): void {
+    const f = this.glyphs.f32
+    const q = this.quads.f32
+    for (let i = 0; i < this.count; i++) {
+      // Slug: ink box, offset (xy, space), xf at 20..25.
+      const o = i * GLYPH_FLOATS
+      out.quad(
+        f,
+        o + 20,
+        f[o] ?? 0,
+        f[o + 1] ?? 0,
+        f[o + 2] ?? 0,
+        f[o + 3] ?? 0,
+        f[o + 6] ?? 0,
+        SkeletonKind.glyph,
+        f[o + 4] ?? 0,
+        f[o + 5] ?? 0
+      )
+      // Atlas: rect, params.y space, xf at 20..25 (offset applied).
+      const a = i * ATLAS_QUAD_FLOATS
+      out.quad(
+        q,
+        a + 20,
+        q[a] ?? 0,
+        q[a + 1] ?? 0,
+        q[a + 2] ?? 0,
+        q[a + 3] ?? 0,
+        q[a + 13] ?? 0,
+        SkeletonKind.fallback
+      )
+    }
   }
 
   destroy(): void {

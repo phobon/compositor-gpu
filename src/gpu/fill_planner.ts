@@ -184,6 +184,12 @@ export class FillPlanner {
     }
   }
 
+  /** Forget which rows are drawn: the next frame redraws the band (an
+   * overlay over the canvas changed). */
+  invalidate(): void {
+    this.valid = []
+  }
+
   /** Drop the kept texture's state (the renderer released it). */
   release(): void {
     this.pending = []

@@ -1,5 +1,6 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import { SD_BOX_WGSL } from '../gpu/sdf'
+import { SkeletonKind, type SkeletonSink } from '../gpu/skeleton'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
@@ -194,6 +195,23 @@ export class CutoutPass implements RenderPass {
     encoder.setBindGroup(1, this.bindGroup)
     encoder.draw(6, count, 0, first)
     return 1
+  }
+
+  skeleton(out: SkeletonSink): void {
+    const d = this.cuts.f32
+    for (let i = 0; i < this.count; i++) {
+      const o = i * FLOATS_PER_CUT
+      out.quad(
+        d,
+        o,
+        0,
+        0,
+        d[o + 6] ?? 0,
+        d[o + 7] ?? 0,
+        d[o + 16] ?? 0,
+        SkeletonKind.cutout
+      )
+    }
   }
 
   destroy(): void {

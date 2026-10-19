@@ -82,7 +82,17 @@ e.g. vite `resolve.dedupe: ['react']`).
 `compositor-gpu/dials` builds DialKit panels (an optional peer) from
 effect schemas: `attachDials(panel, folder, { schema, targets, onChange,
 actions })`, on with `?dials=1` (`configureDials` sets the parameter,
-position, theme and inline/popover mode).
+position, theme and inline/popover mode) or `setDialsShown(on)` at
+runtime.
+
+`compositor-gpu/debug` mounts a corner panel of debug toggles for a
+compositor (stats HUD, dials, skeleton outlines), persisted in
+localStorage and seeded from `?stats=1` / `?dials=1` / `?skeleton=1`:
+
+```ts
+const { mountDebugPanel } = await import('compositor-gpu/debug')
+mountDebugPanel(compositor, { position: 'bottom-right' })
+```
 
 ## Measuring parity on your site
 

@@ -1154,6 +1154,13 @@ export async function createCompositor(
     set sceneReuse(on: boolean) {
       profileHost.setSceneReuse(on)
     },
+    get skeleton() {
+      return renderer.skeleton
+    },
+    set skeleton(on: boolean) {
+      renderer.skeleton = on
+      scheduler.request()
+    },
     invalidate() {
       if (destroyed || lost) {
         return
@@ -1260,6 +1267,7 @@ function inert(): Compositor & { text: null; scene: null } {
     stop() {},
     ready: Promise.resolve(),
     sceneReuse: false,
+    skeleton: false,
     invalidate() {},
     setSourceHidden() {},
     destroy() {}
