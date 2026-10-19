@@ -1,7 +1,6 @@
 import type { Scene } from '../scene/scene'
 import type { Layer } from '../types'
 import type { MaterialBinding } from './material'
-import type { SkeletonSink } from './skeleton'
 import type { GpuTimer } from './timer'
 
 /** WGSL shared by every pass: the per-frame uniforms + doc->clip transform. */
@@ -106,9 +105,6 @@ export interface RenderPass {
   dropMaterial?(id: number): void
   /** Start compiling `mat`'s pipeline before its records are drawn. */
   warmMaterial?(mat: MaterialBinding): void
-  /** The skeleton view (gpu/skeleton.ts): report each instance of the
-   * last upload as the quad the pass draws. */
-  skeleton?(out: SkeletonSink): void
   destroy(): void
 }
 
@@ -123,4 +119,7 @@ export interface Shared {
   /** GPU pass timing while the profiler runs (gpu/timer.ts); a pass's
    * descriptor spreads `timed(timer, label)`. */
   timer: GpuTimer | null
+  /** The skeleton view (Compositor.skeleton, gpu/skeleton.ts): passes
+   * draw with their pipelines' skeleton twins. */
+  skeleton: boolean
 }

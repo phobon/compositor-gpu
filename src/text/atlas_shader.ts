@@ -1,4 +1,5 @@
 import { FRAME_WGSL } from '../gpu/frame'
+import { SKELETON_WGSL, skeletonFs } from '../gpu/skeleton'
 
 /** Floats per atlas quad: rect(4) + uv(4) + color(4) + params(4) + clip(4)
  * + xf0(4) + xf1(4). */
@@ -17,6 +18,8 @@ export const ATLAS_QUAD_FLOATS = 28
  */
 export const ATLAS_WGSL = /* wgsl */ `
 ${FRAME_WGSL}
+${SKELETON_WGSL}
+${skeletonFs('fallback')}
 
 struct Quad {
   rect   : vec4f,   // x,y,w,h in the glyph's local line-box frame
@@ -46,7 +49,7 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let q = quads[ii];
-  let corner = quad[vi];
+  let corner = quad[skeleton_vi(vi)];
   let lp = q.rect.xy + corner * q.rect.zw;
   let m = q.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + q.xf1.xy;

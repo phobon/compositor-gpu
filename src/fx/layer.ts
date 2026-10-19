@@ -1,5 +1,11 @@
 import { FRAME_WGSL } from '../gpu/frame'
 import type { LayerPlace, RenderGraph } from '../gpu/graph'
+import {
+  quadVerts,
+  SKELETON_WGSL,
+  SkeletonTwin,
+  skeletonFs
+} from '../gpu/skeleton'
 import type { GlyphRun } from '../scene/records'
 import type { GlyphTable } from '../text/slug/rasterizer'
 import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
@@ -261,7 +267,7 @@ fn fx_vs(@builtin(vertex_index) vi : u32,
   var corners = array<vec2f, 6>(
     vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
-  let q = vertex(ii, corners[vi]);
+  let q = vertex(ii, corners[skeleton_vi(vi)]);
   var out : FxOut;
   out.clip = to_clip(q.pos, FX_SPACE);
   out.pos = q.pos;
@@ -404,7 +410,9 @@ function layerSource(
     o.trail ? trailHelpers(1, 10) : '',
     HELPERS_WGSL,
     hooks,
-    ENTRY_WGSL
+    SKELETON_WGSL,
+    ENTRY_WGSL,
+    skeletonFs('layer')
   ].join('\n')
 }
 
@@ -622,7 +630,7 @@ export function createLayer<S extends ParamSchema>(
       operation: 'add'
     }
   }
-  const pipeline = device.createRenderPipeline({
+  const pipeline = new SkeletonTwin(device, {
     label,
     layout: device.createPipelineLayout({
       bindGroupLayouts: [frameLayout, layout]
@@ -901,9 +909,10 @@ export function createLayer<S extends ParamSchema>(
       if (!group) {
         return
       }
-      rp.setPipeline(pipeline)
+      const skeleton = graph.shared.skeleton
+      rp.setPipeline(pipeline.get(skeleton))
       rp.setBindGroup(1, group)
-      rp.draw(6, drawn)
+      rp.draw(quadVerts(skeleton), drawn)
     }
   }
   const removeExtra = graph.addLayer(extra)

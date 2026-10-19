@@ -1,6 +1,11 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
 import { SD_BOX_WGSL } from '../gpu/sdf'
-import { SkeletonKind, type SkeletonSink } from '../gpu/skeleton'
+import {
+  quadVerts,
+  SKELETON_WGSL,
+  SkeletonTwin,
+  skeletonFs
+} from '../gpu/skeleton'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
@@ -9,6 +14,8 @@ const FLOATS_PER_CUT = 24 // 6 * vec4f
 
 const SHADER = /* wgsl */ `
 ${FRAME_WGSL}
+${SKELETON_WGSL}
+${skeletonFs('cutout')}
 
 struct Cut {
   xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
@@ -36,7 +43,7 @@ fn vs(@builtin(vertex_index) vi : u32,
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
   let c = cuts[ii];
   let size = c.xf1.zw;
-  let lp = uv[vi] * size;
+  let lp = uv[skeleton_vi(vi)] * size;
   let m = c.xf0;
   let p = vec2f(m.x * lp.x + m.z * lp.y, m.y * lp.x + m.w * lp.y) + c.xf1.xy;
   var out : VOut;
@@ -88,7 +95,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
  */
 export class CutoutPass implements RenderPass {
   readonly layer = 'cutouts' as const
-  private pipeline: GPURenderPipeline
+  private pipeline: SkeletonTwin
   private group1Layout: GPUBindGroupLayout
   private readonly cuts: StorageArray
   private bindGroup: GPUBindGroup | null = null
@@ -112,7 +119,7 @@ export class CutoutPass implements RenderPass {
       srcFactor: 'zero',
       dstFactor: 'one-minus-src-alpha'
     }
-    this.pipeline = device.createRenderPipeline({
+    this.pipeline = new SkeletonTwin(device, {
       layout: device.createPipelineLayout({
         bindGroupLayouts: [frameLayout, this.group1Layout]
       }),
@@ -191,27 +198,11 @@ export class CutoutPass implements RenderPass {
     if (count === 0 || !this.bindGroup) {
       return 0
     }
-    encoder.setPipeline(this.pipeline)
+    const skeleton = this.shared.skeleton
+    encoder.setPipeline(this.pipeline.get(skeleton))
     encoder.setBindGroup(1, this.bindGroup)
-    encoder.draw(6, count, 0, first)
+    encoder.draw(quadVerts(skeleton), count, 0, first)
     return 1
-  }
-
-  skeleton(out: SkeletonSink): void {
-    const d = this.cuts.f32
-    for (let i = 0; i < this.count; i++) {
-      const o = i * FLOATS_PER_CUT
-      out.quad(
-        d,
-        o,
-        0,
-        0,
-        d[o + 6] ?? 0,
-        d[o + 7] ?? 0,
-        d[o + 16] ?? 0,
-        SkeletonKind.cutout
-      )
-    }
   }
 
   destroy(): void {

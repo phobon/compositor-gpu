@@ -281,10 +281,10 @@ export interface Compositor {
   /** Scene reuse (CompositorOptions.sceneReuse), switchable at runtime
    * for A/B comparisons (the HUD's R key). */
   sceneReuse: boolean
-  /** The skeleton view: every instance quad (boxes, shadows, images,
-   * glyph ink boxes, fallback glyphs, cutouts) outlined over the canvas,
-   * coloured by kind, and opacity groups dashed (gpu/skeleton.ts).
-   * Default false. */
+  /** The skeleton view: every pass draws its geometry as wireframe (each
+   * instance's triangles, after material vertex hooks) instead of
+   * shading it, coloured by part; groups, layer transforms and post
+   * passes still apply (gpu/skeleton.ts). Default false. */
   skeleton: boolean
   /** Hide or show the mirrored root's own paint (replace mode), reversibly. */
   setSourceHidden(hidden: boolean): void

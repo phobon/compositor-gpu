@@ -168,12 +168,15 @@ are only meaningful for CPU.
 default) whose panel toggles `stats` (`profile.hud`), `dials`
 (`setDialsShown`: dials entries always register, panels are built only
 while shown; `?dials=1` is the initial state) and `skeleton`
-(`compositor.skeleton`, `gpu/skeleton.ts`: each record pass reports its
-last upload's instance quads through `RenderPass.skeleton` from the CPU
-copy of its buffer; drawn in its own `skeleton` pass on the canvas after
-the copy / post chain, and on scene-reuse frames; toggling empties the
-fill planner's `valid` rows; vertex hooks, layer transforms and clips
-are not applied; groups dashed at their bounds). Flags persist in
+(`compositor.skeleton` → `Shared.skeleton`, `gpu/skeleton.ts`: the box,
+image, Slug, atlas, cutout and `/fx` Layer pipelines each have a
+`SkeletonTwin` over the same module, `line-list` with the `SKELETON`
+override on and fragment `skeleton_fs`; `skeleton_vi` in the vertex
+shader (inside `mat_corner` for record passes) walks each triangle's
+edges, 12 vertices per grid cell (`quadVerts`), material variants too
+(`PassPipelines`' `wires` set); vertex hooks, groups, layer transforms
+and post passes apply as usual, clips don't; toggling empties the fill
+planner's `valid` rows and the scene-reuse key). Flags persist in
 localStorage and are overridden by `?stats=` / `?dials=` / `?skeleton=`.
 The playground pages mount it unless `?vr` or `navigator.webdriver`.
 

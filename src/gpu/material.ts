@@ -1,5 +1,13 @@
 import { log, reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
+import {
+  quadVerts,
+  SKELETON_WGSL,
+  type SkeletonPart,
+  SkeletonTwin,
+  skeletonDescriptor,
+  skeletonFs
+} from './skeleton'
 
 // Materials (docs/EFFECTS.md "Material", extension point 2): a record pass
 // (boxes, images, glyphs) compiled with an author's vertex/fragment hooks
@@ -50,16 +58,18 @@ fn mat_fragment(m : MatIn) -> vec4f {
 
 /**
  * Corner `vi` of a quad split into `n` × `n` cells (six vertices per
- * cell), in [0,1]². n = 1 is the plain two-triangle quad.
+ * cell; twelve, the triangles' edges, in a skeleton pipeline), in [0,1]².
+ * n = 1 is the plain two-triangle quad.
  */
-export const MAT_GRID_WGSL = /* wgsl */ `
+export const MAT_GRID_WGSL = /* wgsl */ `${SKELETON_WGSL}
 fn mat_corner(vi : u32, n : u32) -> vec2f {
   var quad = array<vec2f, 6>(
     vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
     vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));
-  let cell = vi / 6u;
+  let v = skeleton_vi(vi);
+  let cell = v / 6u;
   let c = vec2f(f32(cell % n), f32(cell / n));
-  return (c + quad[vi % 6u]) / f32(n);
+  return (c + quad[v % 6u]) / f32(n);
 }
 `
 
@@ -328,7 +338,8 @@ const MAT_SUBDIV : u32 = ${subdiv}u;${body}`
 /** A material pipeline chosen for a draw. */
 export interface PassPipeline {
   pipeline: GPURenderPipeline
-  /** Vertices per instance: 6 · n² for a material's n × n grid. */
+  /** Vertices per instance: 6 · n² for a material's n × n grid (12 · n²
+   * in the skeleton view). */
   verts: number
   /** Set while drawing with a material's variant (bind group 2). */
   material: MaterialBinding | null
@@ -339,16 +350,19 @@ export interface PassPipeline {
  * material's variant, built from one shader body. Bind group 0 is the
  * shared Frame uniform, 1 the pass's own `layout`, 2 the material's;
  * blending is premultiplied (a material's blend state for its variant).
+ * With `shared.skeleton` each is drawn by its skeleton twin
+ * (gpu/skeleton.ts).
  */
 export class PassPipelines {
-  readonly default: GPURenderPipeline
+  private readonly default: SkeletonTwin
   private readonly variants: MaterialPipelines
+  private readonly wires: MaterialPipelines
 
   /** `body(material)`: the pass's shader after the header (passShader),
    * with the fragment entry point for a material variant or the
    * default. */
   constructor(
-    shared: Pick<Shared, 'device' | 'format' | 'frameLayout'>,
+    private readonly shared: Shared,
     opts: {
       kind: MaterialKind
       label: string
@@ -357,12 +371,16 @@ export class PassPipelines {
     }
   ) {
     const { device, format, frameLayout } = shared
+    const part: SkeletonPart = opts.kind
     const describe = (
       code: string,
       label: string,
       extra: GPUBindGroupLayout | null
     ): GPURenderPipelineDescriptor => {
-      const module = device.createShaderModule({ label, code })
+      const module = device.createShaderModule({
+        label,
+        code: code + skeletonFs(part)
+      })
       reportShaderErrors(module, label)
       const layouts = [frameLayout, opts.layout]
       if (extra) {
@@ -380,18 +398,24 @@ export class PassPipelines {
         primitive: { topology: 'triangle-list' }
       }
     }
-    this.default = device.createRenderPipeline(
+    this.default = new SkeletonTwin(
+      device,
       describe(
         passShader(MAT_DEFAULT_WGSL, 1, opts.body(false)),
         opts.label,
         null
       )
     )
-    this.variants = new MaterialPipelines(
-      opts.kind,
-      device,
-      (code, n, label, layout, wrap) =>
-        describe(wrap(passShader(code, n, opts.body(true))), label, layout)
+    const variant = (
+      code: string,
+      n: number,
+      label: string,
+      layout: GPUBindGroupLayout,
+      wrap: (wgsl: string) => string
+    ) => describe(wrap(passShader(code, n, opts.body(true))), label, layout)
+    this.variants = new MaterialPipelines(opts.kind, device, variant)
+    this.wires = new MaterialPipelines(opts.kind, device, (...a) =>
+      skeletonDescriptor(variant(...a))
     )
   }
 
@@ -401,15 +425,21 @@ export class PassPipelines {
   pipelineFor(
     material: MaterialBinding | null | undefined
   ): PassPipeline | null {
-    const mp = this.variants.get(material)
-    if (!mp && this.variants.held(material)) {
+    const skeleton = this.shared.skeleton
+    const set = skeleton ? this.wires : this.variants
+    const mp = set.get(material)
+    if (!mp && set.held(material)) {
       return null
     }
     if (mp && material) {
       const n = Math.max(1, Math.floor(material.subdivisions))
-      return { pipeline: mp, verts: 6 * n * n, material }
+      return { pipeline: mp, verts: quadVerts(skeleton, n), material }
     }
-    return { pipeline: this.default, verts: 6, material: null }
+    return {
+      pipeline: this.default.get(skeleton),
+      verts: quadVerts(skeleton),
+      material: null
+    }
   }
 
   /** Set the pipeline (and the material's bind group) for `material`'s
@@ -431,9 +461,14 @@ export class PassPipelines {
 
   drop(id: number): void {
     this.variants.drop(id)
+    this.wires.drop(id)
   }
 
   warm(mat: MaterialBinding): void {
-    this.variants.warm(mat)
+    if (this.shared.skeleton) {
+      this.wires.warm(mat)
+    } else {
+      this.variants.warm(mat)
+    }
   }
 }

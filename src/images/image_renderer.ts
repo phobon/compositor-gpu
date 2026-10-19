@@ -2,7 +2,6 @@ import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
 import { SD_BOX_WGSL } from '../gpu/sdf'
-import { SkeletonKind, type SkeletonSink } from '../gpu/skeleton'
 import { StorageArray } from '../gpu/storage'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
@@ -311,8 +310,6 @@ export class ImagePass implements RenderPass {
       ready: boolean
     }
   >()
-  /** Instances of the last upload (scene.images). */
-  private count = 0
   /** Aligned with scene.images: null (not ready), 'atlas' (shared bind
    * group), or a standalone per-instance bind group. */
   private draws: (GPUBindGroup | null | 'atlas')[] = []
@@ -630,7 +627,6 @@ export class ImagePass implements RenderPass {
     const images = scene.images
     this.draws = []
     this.regions.clear()
-    this.count = images.length
     if (images.length === 0) {
       return
     }
@@ -959,25 +955,6 @@ export class ImagePass implements RenderPass {
 
   warmMaterial(mat: MaterialBinding): void {
     this.pipelines.warm(mat)
-  }
-
-  skeleton(out: SkeletonSink): void {
-    const d = this.instances.f32
-    for (let i = 0; i < this.count; i++) {
-      const o = i * FLOATS_PER_IMAGE
-      // rect, params.y flags, xf0 + xf1 at 24..29.
-      const flags = d[o + 9] ?? 0
-      out.quad(
-        d,
-        o + 24,
-        d[o] ?? 0,
-        d[o + 1] ?? 0,
-        d[o + 2] ?? 0,
-        d[o + 3] ?? 0,
-        (flags & FLAG_VIEWPORT) !== 0 ? 1 : 0,
-        SkeletonKind.image
-      )
-    }
   }
 
   destroy(): void {

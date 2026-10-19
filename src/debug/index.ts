@@ -3,7 +3,7 @@
 //
 //   stats     the profiler HUD (compositor.profile.hud)
 //   dials     the DialKit panels (compositor-gpu/dials, setDialsShown)
-//   skeleton  every instance quad outlined (compositor.skeleton)
+//   skeleton  geometry drawn as wireframe (compositor.skeleton)
 //
 // Each flag starts from localStorage (`storageKey`), overridden by the
 // page URL (`?stats=1`, `?dials=0`, a bare `?skeleton` is on); a toggle
@@ -11,7 +11,7 @@
 // on <html> marked data-gpu-ignore, outside the mirrored root.
 
 import { dialsShown, setDialsShown } from '../dials'
-import { SKELETON_COLORS, SkeletonKind } from '../gpu/skeleton'
+import { SKELETON_COLORS } from '../gpu/skeleton'
 import type { Compositor } from '../types'
 
 export type DebugFlag = 'stats' | 'dials' | 'skeleton'
@@ -34,17 +34,7 @@ export interface DebugPanel {
 const FLAGS: readonly { flag: DebugFlag; label: string; hint: string }[] = [
   { flag: 'stats', label: 'Stats', hint: 'Frame HUD' },
   { flag: 'dials', label: 'Dials', hint: 'Effect params' },
-  { flag: 'skeleton', label: 'Skeleton', hint: 'Mesh outlines' }
-]
-
-const LEGEND: readonly [string, number][] = [
-  ['box', SkeletonKind.box],
-  ['shadow', SkeletonKind.shadow],
-  ['image', SkeletonKind.image],
-  ['glyph', SkeletonKind.glyph],
-  ['fallback', SkeletonKind.fallback],
-  ['cutout', SkeletonKind.cutout],
-  ['group', SkeletonKind.group]
+  { flag: 'skeleton', label: 'Skeleton', hint: 'Wireframe meshes' }
 ]
 
 const CSS = `
@@ -223,13 +213,10 @@ export function mountDebugPanel(
   }
   const legend = document.createElement('div')
   legend.className = 'legend'
-  for (const [name, kind] of LEGEND) {
+  for (const [name, color] of Object.entries(SKELETON_COLORS)) {
     const s = document.createElement('span')
     const swatch = document.createElement('i')
-    swatch.style.borderColor = SKELETON_COLORS[kind] ?? '#fff'
-    if (kind === SkeletonKind.group) {
-      swatch.style.borderStyle = 'dashed'
-    }
+    swatch.style.borderColor = color
     s.append(swatch, name)
     legend.append(s)
   }

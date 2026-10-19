@@ -1,6 +1,6 @@
 import type { Shared } from '../../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../../gpu/material'
-import { SkeletonKind, type SkeletonSink } from '../../gpu/skeleton'
+import { quadVerts, SkeletonTwin } from '../../gpu/skeleton'
 import { StorageArray } from '../../gpu/storage'
 import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
@@ -109,14 +109,12 @@ export class SlugText implements TextBackend {
   // Every glyph writes one instance into each buffer (zero-rect in the one
   // that doesn't draw it), so draw(first, count) is valid for both.
   private readonly atlas = new GlyphAtlas()
-  private atlasPipeline: GPURenderPipeline
+  private atlasPipeline: SkeletonTwin
   private atlasLayout: GPUBindGroupLayout
   /** Atlas pipelines with a material's blend state (the built-in
    * `mix-blend-mode` materials), by material id; built on first use. */
-  private readonly atlasBlended = new Map<number, GPURenderPipeline>()
-  private readonly makeAtlasPipeline: (
-    blend: GPUBlendState
-  ) => GPURenderPipeline
+  private readonly atlasBlended = new Map<number, SkeletonTwin>()
+  private readonly makeAtlasPipeline: (blend: GPUBlendState) => SkeletonTwin
   private readonly atlasSampler: GPUSampler
   private atlasBindGroup: GPUBindGroup | null = null
   private atlasGen = -1
@@ -215,7 +213,7 @@ export class SlugText implements TextBackend {
       bindGroupLayouts: [frameLayout, this.atlasLayout]
     })
     this.makeAtlasPipeline = (blend) =>
-      device.createRenderPipeline({
+      new SkeletonTwin(device, {
         layout: atlasLayout,
         vertex: { module: atlasModule, entryPoint: 'vs' },
         fragment: {
@@ -1126,15 +1124,18 @@ export class SlugText implements TextBackend {
     // A material re-shades the Slug glyphs (and their hard shadows); atlas
     // (fallback) glyphs keep the default pipeline, with the material's
     // blend state (`mix-blend-mode`) when it has one.
-    let atlasPipeline = this.atlasPipeline
+    let atlasTwin = this.atlasPipeline
     if (material?.blend) {
       let p = this.atlasBlended.get(material.id)
       if (!p) {
         p = this.makeAtlasPipeline(material.blend)
         this.atlasBlended.set(material.id, p)
       }
-      atlasPipeline = p
+      atlasTwin = p
     }
+    const skeleton = this.shared.skeleton
+    const atlasPipeline = atlasTwin.get(skeleton)
+    const quad = quadVerts(skeleton)
     const chosen = this.pipelines.pipelineFor(material)
     if (!chosen) {
       return 0
@@ -1157,7 +1158,7 @@ export class SlugText implements TextBackend {
       if (atlas) {
         encoder.setPipeline(atlasPipeline)
         encoder.setBindGroup(1, atlas)
-        encoder.draw(6, s1 - s0, 0, s0)
+        encoder.draw(quad, s1 - s0, 0, s0)
         draws++
       }
       if (slug) {
@@ -1176,7 +1177,7 @@ export class SlugText implements TextBackend {
     if (atlas) {
       encoder.setPipeline(atlasPipeline)
       encoder.setBindGroup(1, atlas)
-      encoder.draw(6, count, 0, first)
+      encoder.draw(quad, count, 0, first)
       draws++
     }
     return draws
@@ -1189,39 +1190,6 @@ export class SlugText implements TextBackend {
 
   warmMaterial(mat: MaterialBinding): void {
     this.pipelines.warm(mat)
-  }
-
-  skeleton(out: SkeletonSink): void {
-    const f = this.glyphs.f32
-    const q = this.quads.f32
-    for (let i = 0; i < this.count; i++) {
-      // Slug: ink box, offset (xy, space), xf at 20..25.
-      const o = i * GLYPH_FLOATS
-      out.quad(
-        f,
-        o + 20,
-        f[o] ?? 0,
-        f[o + 1] ?? 0,
-        f[o + 2] ?? 0,
-        f[o + 3] ?? 0,
-        f[o + 6] ?? 0,
-        SkeletonKind.glyph,
-        f[o + 4] ?? 0,
-        f[o + 5] ?? 0
-      )
-      // Atlas: rect, params.y space, xf at 20..25 (offset applied).
-      const a = i * ATLAS_QUAD_FLOATS
-      out.quad(
-        q,
-        a + 20,
-        q[a] ?? 0,
-        q[a + 1] ?? 0,
-        q[a + 2] ?? 0,
-        q[a + 3] ?? 0,
-        q[a + 13] ?? 0,
-        SkeletonKind.fallback
-      )
-    }
   }
 
   destroy(): void {
