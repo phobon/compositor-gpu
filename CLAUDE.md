@@ -585,7 +585,8 @@ Conventions each pass must follow:
   default 300×150; `images/svgRaster.ts`). Plain `<img>` sources go
   through `createImageBitmap` because `naturalWidth` is density-corrected for
   `srcset` images while the decoded bitmap is not. They are decoded from a
-  Blob re-fetched from the HTTP cache (`images/decode.ts`):
+  Blob re-fetched with the normal cache rules (`images/decode.ts`; never
+  `force-cache`, which served a replaced cross-origin image's old bytes):
   `createImageBitmap(img)` decodes synchronously on the main thread
   (`img.decode()` first doesn't help), the Blob path off it; sources fetch
   can't read fall back to the element, except a cross-origin `<img>`

@@ -3,7 +3,11 @@
 // for its six project webps; a 2400px webp ~250 ms headless), and img.decode()
 // first doesn't change that. createImageBitmap(blob) decodes off the main
 // thread, so the source is re-read from the HTTP cache (the <img> already
-// loaded it) and decoded from the Blob. Sources fetch can't read
+// loaded it) and decoded from the Blob. The fetch uses the normal cache
+// rules, not 'force-cache': a cross-origin source with CORS is cached apart
+// from the <img>'s own no-cors request (Vary: Origin), so 'force-cache'
+// kept drawing a replaced image's old bytes while the page showed the new
+// ones. Sources fetch can't read
 // (a failed request) take the element path, except a cross-origin <img>
 // loaded without CORS: the element is tainted too, so neither path can
 // upload it (OpaqueImageError).
@@ -18,7 +22,6 @@ export interface Decoded {
 
 async function fromBlob(url: string, img: HTMLImageElement): Promise<Decoded> {
   const res = await fetch(url, {
-    cache: 'force-cache',
     credentials:
       img.crossOrigin === 'use-credentials' ? 'include' : 'same-origin'
   })
