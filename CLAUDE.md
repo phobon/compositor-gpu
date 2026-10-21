@@ -684,7 +684,8 @@ Conventions each pass must follow:
   hole: the page paints it over the canvas anyway, and a hole for a fixed
   element trails it while scrolling (placed at frame time, the canvas
   scrolls with the page). Only when no ancestor of the root makes a
-  stacking context (`rootInRootContext`).
+  real stacking context (`rootInRootContext`; a positioned z-auto `body`
+  doesn't count).
 - **Outlines** (`readOutline` in `dom/styles.ts`): a border-only BoxRecord
   grown by `outline-offset + outline-width` in local space, radii `r + e`
   where r > 0, appended after the element's kids (over its content, under

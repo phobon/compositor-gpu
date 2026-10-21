@@ -1451,10 +1451,12 @@ function trapsFixed(s: CSSStyleDeclaration, transformable: boolean): boolean {
 /** Whether any ancestor of `root` traps fixed descendants. */
 function ancestorsMakeContext(root: Element): boolean {
   const html = root.ownerDocument.documentElement
-  // The root itself too: the reader never treats it as a context.
+  // The root itself too: the reader never treats it as a context. Real
+  // contexts only: a positioned z-auto ancestor (a common `body` style)
+  // doesn't nest its descendants' z-indices.
   for (let p: Element | null = root; p && p !== html; p = p.parentElement) {
     const s = getComputedStyle(p)
-    if (createsStackingContext(s, isTransformable(p, s.display))) {
+    if (createsRealStackingContext(s, isTransformable(p, s.display))) {
       return true
     }
   }
