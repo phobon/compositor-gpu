@@ -61,7 +61,7 @@
   },
   "dependencies": {
     "opentype.js": "^2.0.0",
-    "typegpu": "^0.12.7"
+    "typegpu": "^0.12.8"
   },
   "peerDependencies": {
     "dialkit": ">=2",
@@ -86,13 +86,13 @@
     "dejavu-fonts-ttf": "^2.37.3",
     "dialkit": "^2.0.2",
     "pixelmatch": "^8.0.0",
-    "playwright": "^1.64.0",
+    "playwright": "^1.64.1",
     "pngjs": "^7.0.0",
-    "react": "^19.3.0",
+    "react": "^19.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "unplugin-typegpu": "0.12.5",
-    "vite": "^8.3.3",
+    "unplugin-typegpu": "0.12.6",
+    "vite": "^8.3.4",
     "vite-plugin-dts": "^5.1.2"
   }
 }

@@ -110,6 +110,10 @@ run with `--bundle-url`, which skips injection and expects `window.__site` to
 already hold your compositor.
 
 ## Notes
+- Cross-origin images need CORS headers (`Access-Control-Allow-Origin`) to
+  be drawn on the GPU. An `<img>` without them is left to the page: the
+  compositor marks it `data-gpu-ignore="cross-origin"` and cuts a hole for
+  it, and logs a warning. Background `url()`s without them are not drawn.
 - Dynamic `import()` keeps TypeGPU/opentype out of the SSR bundle and off the
   critical path.
 - WebGPU-absent browsers fall through to `passthrough` — the normal page

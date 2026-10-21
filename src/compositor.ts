@@ -121,10 +121,14 @@ export async function createCompositor(
     // closes over those bindings lazily — `onReady` only fires once a
     // `createImageBitmap()` resolves, well after both exist (see the
     // `sync`/`reader` comment below for the same pattern).
-    imagePass = new ImagePass(renderer.shared, () => {
-      scene.markDirty('images')
-      scheduler.request()
-    })
+    imagePass = new ImagePass(
+      renderer.shared,
+      () => {
+        scene.markDirty('images')
+        scheduler.request()
+      },
+      (img) => markOpaque(img)
+    )
     renderer.addPass(imagePass)
   }
   let text: SlugText | null = null
@@ -850,6 +854,35 @@ export async function createCompositor(
   // (graph.hideSource) wait for the handoff too. `handoffTimeout` caps the
   // wait.
   let handoffAt: number | null = null
+  /** <img>s ImagePass can't upload (cross-origin without CORS), with the
+   * source that failed: marked ignored so the page paints them through a
+   * hole, until they load another source. */
+  const opaqueImgs = new Map<HTMLImageElement, string>()
+  const imgSrc = (img: HTMLImageElement): string => img.currentSrc || img.src
+  const onOpaqueLoad = (e: Event): void => {
+    const img = e.currentTarget as HTMLImageElement
+    if (imgSrc(img) !== opaqueImgs.get(img)) {
+      unmarkOpaque(img)
+    }
+  }
+  const markOpaque = (img: HTMLImageElement): void => {
+    if (destroyed || img.hasAttribute(IGNORE_ATTR) || !root.contains(img)) {
+      return
+    }
+    opaqueImgs.set(img, imgSrc(img))
+    img.setAttribute(IGNORE_ATTR, OPAQUE_IGNORE)
+    img.addEventListener('load', onOpaqueLoad)
+    log.warn(
+      `${imgSrc(img)} is cross-origin without CORS headers: the page paints it`
+    )
+  }
+  const unmarkOpaque = (img: HTMLImageElement): void => {
+    img.removeEventListener('load', onOpaqueLoad)
+    opaqueImgs.delete(img)
+    if (img.getAttribute(IGNORE_ATTR) === OPAQUE_IGNORE) {
+      img.removeAttribute(IGNORE_ATTR)
+    }
+  }
   /** An `<img>` in the viewport that hasn't finished loading: the reader
    * skips it until its load event, so ImagePass doesn't count it yet. */
   const mirrorComplete = (): boolean =>
@@ -1177,6 +1210,9 @@ export async function createCompositor(
         clearTimeout(holdTimer)
       }
       stop()
+      for (const img of [...opaqueImgs.keys()]) {
+        unmarkOpaque(img)
+      }
       profiler.destroy()
       reader.destroy()
       renderer.destroy()
@@ -1185,6 +1221,10 @@ export async function createCompositor(
     }
   }
 }
+
+/** The `data-gpu-ignore` value on <img>s the compositor left to the page
+ * (cross-origin without CORS). */
+const OPAQUE_IGNORE = 'cross-origin'
 
 /** A full read's dirty flags and the last mutation's target. */
 function fullReadCause(flags: number, last: string): string {

@@ -588,7 +588,13 @@ Conventions each pass must follow:
   Blob re-fetched from the HTTP cache (`images/decode.ts`):
   `createImageBitmap(img)` decodes synchronously on the main thread
   (`img.decode()` first doesn't help), the Blob path off it; sources fetch
-  can't read fall back to the element. Borders are per side
+  can't read fall back to the element, except a cross-origin `<img>`
+  without a `crossorigin` attribute, which is tainted either way
+  (`OpaqueImageError`): the compositor sets `data-gpu-ignore="cross-origin"`
+  on it, so it becomes a cutout the page paints through (and stays painted
+  in replace mode), and removes the attribute when it loads another source
+  or on `destroy()`. Cross-origin background `url()`s without CORS are
+  logged and not drawn. Borders are per side
   (`border.widths`/`colors`, mitred in the shader).
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch

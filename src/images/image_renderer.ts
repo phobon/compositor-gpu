@@ -7,7 +7,7 @@ import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { log } from '../util/log'
-import { decodeImage } from './decode'
+import { decodeImage, OpaqueImageError } from './decode'
 import {
   type AtlasRect,
   type AtlasSource,
@@ -323,9 +323,11 @@ export class ImagePass implements RenderPass {
   get pending(): number {
     return this.pendingBitmaps.size
   }
-  /** Source keys whose `createImageBitmap()` rejected (tainted/cross-origin)
-   * — logged once, never retried. */
+  /** Source keys whose decode or upload failed: logged once, never
+   * retried. */
   private failedBitmaps = new Set<string>()
+  /** The failed keys that were cross-origin without CORS. */
+  private opaqueBitmaps = new Set<string>()
 
   private readonly atlas: ImageAtlas
   private atlasBindGroup: GPUBindGroup | null = null
@@ -338,7 +340,10 @@ export class ImagePass implements RenderPass {
 
   constructor(
     private readonly shared: Shared,
-    private readonly onReady: () => void
+    private readonly onReady: () => void,
+    /** A connected <img> whose source can't be uploaded (cross-origin
+     * without CORS): the compositor leaves it to the page. */
+    private readonly onOpaque: (img: HTMLImageElement) => void = () => {}
   ) {
     this.atlas = new ImageAtlas(shared.device)
     this.mips = new MipGenerator(shared.device)
@@ -474,7 +479,16 @@ export class ImagePass implements RenderPass {
       .catch((err) => {
         this.pendingBitmaps.delete(key)
         this.failedBitmaps.add(key)
-        log.warn(`ImagePass: createImageBitmap failed for ${key}`, err)
+        if (!(err instanceof OpaqueImageError)) {
+          log.warn(`ImagePass: couldn't upload ${key}`, err)
+          return
+        }
+        this.opaqueBitmaps.add(key)
+        if (img.isConnected) {
+          this.onOpaque(img)
+        } else {
+          log.warn(`ImagePass: ${key} is cross-origin without CORS: not drawn`)
+        }
       })
   }
 
@@ -704,6 +718,9 @@ export class ImagePass implements RenderPass {
         const img = rec.source
         const key = srcKey(img)
         if (this.failedBitmaps.has(key)) {
+          if (this.opaqueBitmaps.has(key) && img.isConnected) {
+            this.onOpaque(img)
+          }
           d.fill(0, o, o + FLOATS_PER_IMAGE)
           this.draws.push(null)
           continue
