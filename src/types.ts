@@ -168,6 +168,11 @@ export interface CompositorOptions {
    * `Compositor.ready`) before replace mode hides the page's paint anyway.
    * Default 1500. */
   handoffTimeout?: number
+  /** ms over which an image fades in when its pixels arrive after the
+   * canvas is shown (decoded `<img>` and background `url()` sources).
+   * Default 0: drawn at once. Off while the viewer prefers reduced
+   * motion. */
+  imageFadeIn?: number
   /** z-index of the canvas (default: 2147483646, above everything). Site
    * chrome that is `position: fixed` and `data-gpu-ignore`d is better put
    * ABOVE the canvas than shown through a hole: the canvas scrolls with

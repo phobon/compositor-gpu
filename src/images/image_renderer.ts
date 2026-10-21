@@ -14,6 +14,7 @@ import {
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './image_atlas'
+import { ImageFades } from './image_fade'
 import { to8Bit } from './png_depth'
 import {
   concreteSize,
@@ -328,6 +329,9 @@ export class ImagePass implements RenderPass {
   private failedBitmaps = new Set<string>()
   /** The failed keys that were cross-origin without CORS. */
   private opaqueBitmaps = new Set<string>()
+  /** Fade-in of decoded images (the compositor sets its duration once the
+   * canvas is shown). */
+  readonly fades = new ImageFades()
 
   private readonly atlas: ImageAtlas
   private atlasBindGroup: GPUBindGroup | null = null
@@ -474,6 +478,7 @@ export class ImagePass implements RenderPass {
           }
         }
         bitmap.close()
+        this.fades.arm(key)
         this.onReady()
       })
       .catch((err) => {
@@ -646,6 +651,7 @@ export class ImagePass implements RenderPass {
     }
     this.instances.ensure(images.length)
     const d = this.instances.f32
+    const now = performance.now()
     for (let i = 0; i < images.length; i++) {
       const rec = images[i]
       const o = i * FLOATS_PER_IMAGE
@@ -671,6 +677,7 @@ export class ImagePass implements RenderPass {
       let fitW: number | null = null
       let fitH: number | null = null
       let atlasKey: string | undefined
+      let fadeKey: string | undefined
       let spot: AtlasRect | null = null
       let cached: Cached | null = null
       if (
@@ -727,6 +734,7 @@ export class ImagePass implements RenderPass {
         }
         const atlasRect = this.atlas.get(key)
         const texCached = this.cache.get(img)
+        fadeKey = key
         if (atlasRect) {
           spot = atlasRect
           nw = atlasRect.w
@@ -793,7 +801,7 @@ export class ImagePass implements RenderPass {
       d[o + 5] = f.uv.v0
       d[o + 6] = f.uv.u1
       d[o + 7] = f.uv.v1
-      d[o + 8] = rec.opacity
+      d[o + 8] = rec.opacity * this.fades.alpha(fadeKey, now)
       // Flags in the low byte; the clip shape index above it.
       const vflag =
         (rec.space === 'viewport' ? FLAG_VIEWPORT : 0) |

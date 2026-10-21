@@ -409,7 +409,7 @@ export async function createCompositor(
     }
     // A live <video>/<canvas> changes without a DOM mutation: re-upload just the
     // image layer (which re-copies its texture) and keep the loop running.
-    if (scene.hasDynamic) {
+    if (scene.hasDynamic || imagePass?.fades.active) {
       scene.markDirty('images')
     }
     options.onFrame?.(ctx)
@@ -448,6 +448,7 @@ export async function createCompositor(
           // frame's read: nothing to re-read (the reader uses HIDDEN_ATTR).
           sync.discardPending()
         }
+        startImageFades()
         resolveReady()
       } else {
         // Wake again to check (uploads and compiles also request frames).
@@ -460,6 +461,7 @@ export async function createCompositor(
     continued =
       animating ||
       scene.hasDynamic ||
+      (imagePass?.fades.active ?? false) ||
       cssAnimating ||
       isScrolling() ||
       hooksAlive() ||
@@ -854,6 +856,27 @@ export async function createCompositor(
   // (graph.hideSource) wait for the handoff too. `handoffTimeout` caps the
   // wait.
   let handoffAt: number | null = null
+  const reducedMotion =
+    typeof matchMedia === 'function'
+      ? matchMedia('(prefers-reduced-motion: reduce)')
+      : null
+  let fadesStarted = false
+  const setImageFade = (): void => {
+    if (imagePass) {
+      imagePass.fades.duration = reducedMotion?.matches
+        ? 0
+        : (options.imageFadeIn ?? 0)
+    }
+  }
+  /** After the handoff: images arriving from now on fade in. */
+  const startImageFades = (): void => {
+    if (!options.imageFadeIn || !imagePass || fadesStarted) {
+      return
+    }
+    fadesStarted = true
+    setImageFade()
+    reducedMotion?.addEventListener('change', setImageFade)
+  }
   /** <img>s ImagePass can't upload (cross-origin without CORS), with the
    * source that failed: marked ignored so the page paints them through a
    * hole, until they load another source. */
@@ -1210,6 +1233,7 @@ export async function createCompositor(
         clearTimeout(holdTimer)
       }
       stop()
+      reducedMotion?.removeEventListener('change', setImageFade)
       for (const img of [...opaqueImgs.keys()]) {
         unmarkOpaque(img)
       }

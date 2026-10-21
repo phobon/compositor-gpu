@@ -594,7 +594,11 @@ Conventions each pass must follow:
   on it, so it becomes a cutout the page paints through (and stays painted
   in replace mode), and removes the attribute when it loads another source
   or on `destroy()`. Cross-origin background `url()`s without CORS are
-  logged and not drawn. Borders are per side
+  logged and not drawn. With `imageFadeIn` (ms, default 0) a decoded
+  source that arrives after the handoff fades in from its first upload
+  (`images/image_fade.ts`, scaling the instance opacity; the image layer
+  is dirtied and the loop kept running while one is active); off under
+  `prefers-reduced-motion: reduce`. Borders are per side
   (`border.widths`/`colors`, mitred in the shader).
 - **Opacity groups.** A context with `opacity < 1` is an `OpacityGroup`
   (paint-order range + alpha + doc-space bounds, `scene.groups`). The batch

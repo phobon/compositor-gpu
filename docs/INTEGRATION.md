@@ -114,6 +114,8 @@ already hold your compositor.
   be drawn on the GPU. An `<img>` without them is left to the page: the
   compositor marks it `data-gpu-ignore="cross-origin"` and cuts a hole for
   it, and logs a warning. Background `url()`s without them are not drawn.
+- `imageFadeIn: 250` (ms) fades images in when they arrive after the page
+  is shown (after a route change, lazy loading) instead of popping in.
 - Dynamic `import()` keeps TypeGPU/opentype out of the SSR bundle and off the
   critical path.
 - WebGPU-absent browsers fall through to `passthrough` — the normal page
