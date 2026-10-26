@@ -16,6 +16,7 @@ export const SKELETON_COLORS = {
   glyph: '#34d399',
   fallback: '#f472b6',
   cutout: '#ef4444',
+  path: '#fb923c',
   layer: '#a78bfa'
 } as const
 
@@ -82,15 +83,21 @@ export function skeletonDescriptor(
   }
 }
 
-/** A pipeline and its skeleton twin, built on first use. */
+/** A pipeline and its skeleton twin, each built on first use: a pass whose
+ * kind of record never appears on the page never compiles its pipeline. */
 export class SkeletonTwin {
+  private main: GPURenderPipeline | null = null
   private twin: GPURenderPipeline | null = null
 
   constructor(
     private readonly device: GPUDevice,
-    private readonly desc: GPURenderPipelineDescriptor,
-    readonly pipeline: GPURenderPipeline = device.createRenderPipeline(desc)
+    private readonly desc: GPURenderPipelineDescriptor
   ) {}
+
+  get pipeline(): GPURenderPipeline {
+    this.main ??= this.device.createRenderPipeline(this.desc)
+    return this.main
+  }
 
   get(skeleton: boolean): GPURenderPipeline {
     if (!skeleton) {

@@ -1,6 +1,7 @@
 /// <reference path="./transition.d.ts" />
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import './nav'
 import { createEffects, lens, radialReveal } from '@/fx'
 import { createCompositor } from '@/index'
 import { estimateRefresh, summarize } from '@/profile/profiler'

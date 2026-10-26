@@ -1,6 +1,7 @@
 /// <reference path="./gallery.d.ts" />
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import './nav'
 import { createEffects, gallery, radialReveal, vignette } from '@/fx'
 import { createCompositor } from '@/index'
 

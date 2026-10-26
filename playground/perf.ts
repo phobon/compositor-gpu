@@ -1,4 +1,5 @@
 /// <reference path="./perf.d.ts" />
+import './nav'
 import { mountDebugPanel } from '@/debug'
 import { blur, createEffects } from '@/fx'
 import { createCompositor } from '@/index'

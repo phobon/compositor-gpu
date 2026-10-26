@@ -17,10 +17,19 @@ import type {
   CutoutRecord,
   GlyphRun,
   ImageRecord,
+  PathRecord,
   Rect,
   SceneRecord
 } from './records'
 import type { OpacityGroup } from './stacking'
+
+/** Records a refit can move in place (all but backdrops). */
+export type MovableRecord =
+  | BoxRecord
+  | ImageRecord
+  | CutoutRecord
+  | GlyphRun
+  | PathRecord
 
 /** Index of the record with paint index `z` in `list` (sorted by z), or
  * -1. */
@@ -58,6 +67,8 @@ export class Scene {
   runs: GlyphRun[] = []
   /** `data-gpu-ignore` holes (see CutoutRecord). */
   cutouts: CutoutRecord[] = []
+  /** Shapes of vector-drawn inline svgs (see PathRecord). */
+  paths: PathRecord[] = []
   /** backdrop-filter elements, by z (drawn through batches of kind
    * 'backdrop', not a layer). */
   backdrops: BackdropRecord[] = []
@@ -74,14 +85,20 @@ export class Scene {
   private built: BatchState = emptyBatchState()
   /** Records moved in place since `_batches` was built (refit()), oldest
    * first: the culler updates their bounds (`gpu/cull.ts`). */
-  readonly moved: (BoxRecord | ImageRecord | CutoutRecord | GlyphRun)[] = []
+  readonly moved: MovableRecord[] = []
   /** Lists kept by refit() instead of rebuilt (stats). */
   refits = 0
   /** Try refit() before rebuilding batches for moved records. */
   refitEnabled = true
 
   /** Layers whose instance buffers need re-upload since they were last drawn. */
-  private dirtyLayers = new Set<Layer>(['boxes', 'images', 'text', 'cutouts'])
+  private dirtyLayers = new Set<Layer>([
+    'boxes',
+    'images',
+    'text',
+    'cutouts',
+    'paths'
+  ])
   /** True when any image source is dynamic (drives a continuous render). */
   hasDynamic = false
 
@@ -125,6 +142,7 @@ export class Scene {
     this.images = []
     this.runs = []
     this.cutouts = []
+    this.paths = []
     this.backdrops = []
     this.groups = []
     this.clipShapes = []
@@ -146,6 +164,7 @@ export class Scene {
     this.dirtyLayers.add('images')
     this.dirtyLayers.add('text')
     this.dirtyLayers.add('cutouts')
+    this.dirtyLayers.add('paths')
   }
   isDirty(layer: Layer): boolean {
     return this.dirtyLayers.has(layer)
@@ -181,7 +200,9 @@ export class Scene {
             ? this.runs
             : r.kind === 'cutout'
               ? this.cutouts
-              : null
+              : r.kind === 'path'
+                ? this.paths
+                : null
     const at: [({ z: number } | undefined)[], number][] = []
     for (const [a] of pairs) {
       const list = listOf(a)
@@ -206,7 +227,9 @@ export class Scene {
             ? 'images'
             : b.kind === 'cutout'
               ? 'cutouts'
-              : 'boxes'
+              : b.kind === 'path'
+                ? 'paths'
+                : 'boxes'
         )
       }
       if (b.kind === 'image' && b.dynamic) {
@@ -248,6 +271,10 @@ export class Scene {
         this.cutouts.push(record)
         this.markDirty('cutouts')
         break
+      case 'path':
+        this.paths.push(record)
+        this.markDirty('paths')
+        break
       case 'backdrop':
         this.backdrops.push(record)
         break
@@ -265,6 +292,7 @@ export class Scene {
     this.images.sort(byZ)
     this.runs.sort(byZ)
     this.cutouts.sort(byZ)
+    this.paths.sort(byZ)
     this.backdrops.sort(byZ)
     this.buildBatchList()
   }
@@ -288,7 +316,7 @@ export class Scene {
    */
   refit(records: readonly SceneRecord[]): boolean {
     const moved: MovedRecord[] = []
-    const kept: (BoxRecord | ImageRecord | CutoutRecord | GlyphRun)[] = []
+    const kept: MovableRecord[] = []
     let ok = this.refitEnabled && this.built.accums.length > 0
     for (const r of records) {
       if (!ok) {
@@ -311,7 +339,9 @@ export class Scene {
               ? 'images'
               : r.kind === 'cutout'
                 ? 'cutouts'
-                : 'text',
+                : r.kind === 'path'
+                  ? 'paths'
+                  : 'text',
         z: r.z,
         instance,
         rects: footprints(r),
@@ -349,7 +379,9 @@ export class Scene {
           ? this.images
           : r.kind === 'cutout'
             ? this.cutouts
-            : null
+            : r.kind === 'path'
+              ? this.paths
+              : null
     return list ? indexByZ(list, r.z) : -1
   }
 
@@ -368,7 +400,8 @@ export class Scene {
       this.groups,
       this.anchors?.() ?? [],
       this.backdrops,
-      this.built
+      this.built,
+      this.paths
     )
     this.lastBatchesMs = performance.now() - t0
   }

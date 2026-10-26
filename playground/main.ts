@@ -1,6 +1,21 @@
+import './nav'
 import { mountDebugPanel } from '@/debug'
 import { blur, createEffects, displace } from '@/fx'
 import { createCompositor } from '@/index'
+
+// `?nogpu`: hide WebGPU, to check the inert path (the renderer chunk and
+// opentype.js are never fetched). `?unusedfont`: declare a face nothing
+// uses, which the compositor must not fetch.
+const params = new URLSearchParams(location.search)
+if (params.has('nogpu')) {
+  Object.defineProperty(navigator, 'gpu', { value: undefined })
+}
+if (params.has('unusedfont')) {
+  const style = document.createElement('style')
+  style.textContent =
+    "@font-face { font-family: 'Unused Play'; src: url('/inter-700.ttf'); }"
+  document.head.append(style)
+}
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement
 const logEl = $('log')
@@ -56,7 +71,7 @@ async function boot(): Promise<void> {
 
   const compositor = await createCompositor({
     root: stage,
-    layers: ['boxes', 'images', 'text'],
+    layers: ['boxes', 'images', 'text', 'paths'],
     fonts: 'auto',
     onGlyph: (g, ctx) => {
       g.offset.y = state.animate

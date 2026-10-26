@@ -1,4 +1,4 @@
-import * as opentype from 'opentype.js'
+import type * as opentype from 'opentype.js'
 import { installGvarFix } from './gvar_fix'
 
 /** A quadratic Bézier segment in em space (unitsPerEm normalised to 0..1). */
@@ -140,10 +140,40 @@ function readLigatures(font: opentype.Font): Map<number, Ligature[]> {
   return out
 }
 
-/** Parse a font file once. Cheap to keep; instances share its tables. */
+type OpenType = typeof opentype
+
+let parser: OpenType | null = null
+let parserLoad: Promise<OpenType> | null = null
+
+/**
+ * Load opentype.js once, by dynamic import: a page that never parses a
+ * font (no WebGPU, no text layer, only baked fonts later) never fetches
+ * it. Resolves to the module with the gvar fix installed.
+ */
+export function loadParser(): Promise<OpenType> {
+  parserLoad ??= import('opentype.js').then((m) => {
+    // The ESM build has `parse` on the namespace; the CJS build (node,
+    // tsx) hangs it off `default`.
+    const mod = (
+      'parse' in m ? m : (m as unknown as { default: OpenType }).default
+    ) as OpenType
+    installGvarFix(m)
+    parser = mod
+    return mod
+  })
+  return parserLoad
+}
+
+/** True once loadParser() has resolved: loadFontFile can run. */
+export const parserReady = (): boolean => parser !== null
+
+/** Parse a font file once. Cheap to keep; instances share its tables.
+ * Call after loadParser() has resolved. */
 export function loadFontFile(buffer: ArrayBuffer): FontHandle {
-  installGvarFix()
-  const font = opentype.parse(buffer)
+  if (!parser) {
+    throw new Error('opentype.js not loaded: await loadParser() first')
+  }
+  const font = parser.parse(buffer)
   const upm = font.unitsPerEm || 1000
   const axes = fvarAxes(font)
   const range = (tag: string) => {

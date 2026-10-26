@@ -194,6 +194,15 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
+/** The descriptor a face registers under (as `ResolvedFont.descriptor`). */
+export function describeFace(face: FontFace): ResolvedFont['descriptor'] {
+  return {
+    family: face.family,
+    weight: numWeight(face.weight),
+    italic: isItalic(face.style)
+  }
+}
+
 /** `resolveFontBytes` result: bytes resolved plus faces that couldn't be —
  * no matching @font-face src, or its url() didn't fetch. */
 export interface ResolveResult {

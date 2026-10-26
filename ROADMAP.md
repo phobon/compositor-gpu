@@ -204,6 +204,78 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       into `rgba8unorm`). Untested on hardware. Fix candidates: detect
       via the IHDR bit depth when fetching, or redraw through a 2D canvas.
 
+- [ ] M5 — morph (planned 2026-10-26, spec `docs/EFFECTS.md` "Morph";
+      spike `playground/spike_morph.*`, record
+      `docs/rd/experiments/2026-10-26-segment-morph.md`: 16 segments
+      per string x 6 strings + `wave` at +0.46-0.66 ms gpu total p95
+      over the running loop, M1 Pro dpr 2):
+  - [x] M5a lazy loading (built and checked 2026-10-26, Chrome on the
+        M1 Pro: `?nogpu` fetches no renderer or opentype.js, `?unusedfont`
+        leaves the unused face unfetched; the entry also asks for an
+        adapter, so a blocklisted GPU stays inert without the chunk):
+        the entry (`src/create.ts`) returns the inert compositor without
+        WebGPU and otherwise loads the renderer by `import()` (entry 0.9 kB
+        + 25 kB shared; renderer chunk 509 kB unminified, the only
+        importer of typegpu and opentype.js); opentype.js by `import()`
+        (`loadParser`, started before device init; `loadFontBuffer`
+        queues until it lands, `onFace` re-reads); `fonts: 'auto'`
+        prepares only faces the browser has loaded or is loading, then
+        each `loadingdone` (unused `@font-face` rules are never fetched);
+        record passes compile their default pipeline on first draw
+        (`SkeletonTwin`; the other core pipelines already did). Not done:
+        presets as chunks (bundlers tree-shake unused ones; used ones are
+        small), `createRenderPipelineAsync` for core passes (Chrome
+        compiles off the JS thread already, and the handoff waits for
+        the first draw), `formatReport` out of the shared profiler chunk
+        (21 kB)
+  - [x] M5b path pass (built 2026-10-26; checked headless under
+        SwiftShader at dpr 1 and 3 against the browser's own svg paint:
+        only edge anti-aliasing differs; a `d` / `fill` edit patches in
+        place): an inline svg root with `data-gpu-vector` or
+        `data-gpu-morph` becomes one `PathRecord` per shape
+        (`dom/svg_paths.ts`: path / rect / circle / ellipse / line /
+        polyline / polygon / g / a / in-document `<use>`, flattened to
+        lines within 0.2 device px; solid fill and stroke, fill-rule,
+        caps, joins, miter limit, opacities; anything else, or a blend
+        mode, draws it rasterised as before with a warning naming the
+        feature). `paths/path_pass.ts` (layer `'paths'`, on by default):
+        fill by winding with anti-aliasing from the nearest edge that
+        separates inside from outside (`path_cross_delta`: an outline
+        crossing itself shows no seams), stroke as a union of butt boxes,
+        caps and join pieces (inner join corner moved inside the turn,
+        gentle joints overlapping by about a pixel: no seams at joins);
+        records over 256 edges get row bands (a morphing one over 256 is
+        rasterised). Shared WGSL in `paths/path_wgsl.ts` for the morph
+        engine. Playground section `vector` (new goldens). Not done:
+        SVG-to-SVG morph interpolation (M5d, with the engine)
+  - [ ] Path pass follow-ups: re-flatten when a layer transform scales an
+        svg up (flattened for its read-time scale); gradients, dashes,
+        clip-path, symbol / nested svg; materials on path records
+  - [ ] M5c `wave` preset: ring from a centre, `speed` / `life` /
+        `decay`, `bulge`, `width`, `zoom`, `split`, `fringe`; skips
+        pixels off the ring
+  - [ ] M5d `fx.morph`: `data-gpu-morph` keys; `capture()` /
+        `settled()` / `progress` / `play()` / `end()`; ghost records in
+        viewport space with Slug band and atlas pins
+        (`docs/rd/experiments/2026-10-26-morph-ghosts.md`); per-record
+        interpolation and structural descendant pairing; LCS diff for
+        text, changed glyphs as segment outline morphs (cut from the font
+        outline); `pose` hook and presets (assemble, scatter); reduced
+        motion cross-fades; shots with progress 0 / 1 equal to each
+        state exactly
+  - [ ] M5e runtime JFA distance fields (`sdf` binding)
+  - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
+        (full cmap, contour data, licence warning), SVG paths,
+        effect-input images (KTX2 / PNG), SDF masks
+  - [ ] Catch exceptions from `/fx` hooks (`update`, `beforeFrame`): one
+        throw stops the compositor's frame loop (hit by the spike)
+- [ ] Framework extraction (later; not for the progressive-enhancement
+      build): font parsing and path work in a worker; range-split baked
+      fonts; KTX2 for page images; a global velocity buffer for motion
+      blur; a Vite plugin for the bake CLI; glyph outline morphs between
+      whole glyphs; variable-font deltas and weight morphs; automatic
+      morphs on keyed mutations; simulated (compute) morphs
+
 **Toolchain.** Deps were bumped (opentype.js 2, typegpu 0.12, TS 7 via the
 TS6 shim, vite 8, biome 2.5, playwright 1.63); tsconfig/biome/vite configs are
 migrated. `pnpm install` on macOS leaves no linux binaries, so checks can't run

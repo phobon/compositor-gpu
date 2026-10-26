@@ -7,15 +7,17 @@ import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
 import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlas_shader'
-import { resolveFontBytes } from '../font_source'
+import { describeFace, resolveFontBytes } from '../font_source'
 import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
 import type { TextBackend } from '../text_rasterizer'
 import {
   type FontHandle,
   type GlyphBands,
   loadFontFile,
+  loadParser,
   makeInstance,
-  type ParsedFont
+  type ParsedFont,
+  parserReady
 } from './font'
 import { slugBody } from './shaders'
 
@@ -140,6 +142,18 @@ export class SlugText implements TextBackend {
 
   private faces: FaceEntry[] = []
   private loadedKeys = new Set<string>()
+  /** Face keys prepare() is fetching. */
+  private preparing = new Set<string>()
+  /** Buffers handed to loadFontBuffer before opentype.js had loaded. */
+  private queued = 0
+  /** Called when a face is registered after a deferred parse (the
+   * compositor re-reads styles then). */
+  onFace: (() => void) | null = null
+
+  /** Fonts handed to loadFontBuffer still waiting for the parser. */
+  get facesPending(): boolean {
+    return this.queued > 0
+  }
   private resolveCache = new Map<string, FaceEntry | null>()
   // Variable fonts are kept as sources and instanced to exact weights on
   // demand, so one file backs every weight the page uses.
@@ -249,7 +263,32 @@ export class SlugText implements TextBackend {
       log.info('SlugText.prepare: no fonts provided')
       return
     }
-    const { resolved, failed } = await resolveFontBytes(faces)
+    // Faces registered or being fetched (a face reported again on
+    // loadingdone) aren't fetched twice.
+    const keys = new Set<string>()
+    const todo = faces.filter((f) => {
+      const key = faceKey(describeFace(f))
+      if (this.loadedKeys.has(key) || this.preparing.has(key)) {
+        return false
+      }
+      keys.add(key)
+      return true
+    })
+    if (todo.length === 0) {
+      return
+    }
+    for (const key of keys) {
+      this.preparing.add(key)
+    }
+    let result: Awaited<ReturnType<typeof resolveFontBytes>>
+    try {
+      ;[result] = await Promise.all([resolveFontBytes(todo), loadParser()])
+    } finally {
+      for (const key of keys) {
+        this.preparing.delete(key)
+      }
+    }
+    const { resolved, failed } = result
     for (const label of failed) {
       if (!this.failedFaces.includes(label)) {
         this.failedFaces.push(label)
@@ -284,8 +323,26 @@ export class SlugText implements TextBackend {
   /**
    * Parse a font and register it as a resolvable face. Glyph outlines are NOT
    * uploaded here — they load on demand at draw time (see ensureResident).
+   * Before opentype.js has loaded (a dynamic import) the face registers
+   * once it has, then `onFace` runs.
    */
   loadFontBuffer(buffer: ArrayBuffer, descriptor: FontDescriptor = {}): void {
+    if (!parserReady()) {
+      // opentype.js loads by dynamic import: register once it has.
+      this.queued++
+      void loadParser()
+        .then(() => {
+          this.loadFontBuffer(buffer, descriptor)
+          this.onFace?.()
+        })
+        .catch((err: unknown) => {
+          log.error('SlugText: could not load opentype.js', err)
+        })
+        .finally(() => {
+          this.queued--
+        })
+      return
+    }
     const handle = loadFontFile(buffer)
     const family = (descriptor.family ?? '').toLowerCase()
     const italic = descriptor.italic ?? false

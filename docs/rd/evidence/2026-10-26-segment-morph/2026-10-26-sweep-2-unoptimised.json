@@ -1,0 +1,16 @@
+{
+  "page": "spike_morph.html?rows=6&size=96",
+  "machine": "M1 Pro, headed Chrome, dpr 2",
+  "spike": "outline morph, per-pixel outline arrays (2 x 64 points), square quads at max radius, pieces drawn at rest, wave pass on every pixel",
+  "note": "'plain page' recorded 0 frames: a still page skips frames, so no baseline in this run",
+  "rows": [
+    { "label": "plain page", "frames": 0, "dropped": 0, "late": 0, "gpuP50": null, "gpuP95": null, "cpuP95": 0 },
+    { "label": "morph, pieces 8", "frames": 339, "dropped": 58, "late": 58, "gpuP50": 7.34, "gpuP95": 9.83, "cpuP95": 0.7 },
+    { "label": "morph, pieces 16", "frames": 351, "dropped": 10, "late": 10, "gpuP50": 6.357, "gpuP95": 8.651, "cpuP95": 0.8 },
+    { "label": "morph, pieces 32", "frames": 384, "dropped": 12, "late": 10, "gpuP50": 6.423, "gpuP95": 7.995, "cpuP95": 0.6 },
+    { "label": "morph 16 + post, taps 1", "frames": 333, "dropped": 59, "late": 59, "gpuP50": 7.274, "gpuP95": 9.503, "cpuP95": 0.8 },
+    { "label": "morph 16 + post, taps 4", "frames": 313, "dropped": 84, "late": 84, "gpuP50": 7.799, "gpuP95": 10.158, "cpuP95": 0.7 },
+    { "label": "morph 16 + post, taps 8", "frames": 284, "dropped": 114, "late": 112, "gpuP50": 8.651, "gpuP95": 10.879, "cpuP95": 0.8 },
+    { "label": "morph 16 + post, taps 16", "frames": 246, "dropped": 152, "late": 149, "gpuP50": 10.486, "gpuP95": 12.714, "cpuP95": 0.7 }
+  ]
+}

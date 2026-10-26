@@ -228,6 +228,10 @@ only these:
   `fx.motion`; composition of transforms and motions per element; a
   `schema` on every params object; one counted runtime per compositor
   (`release()`); no DOM fallback; GSAP and Motion recipes.
+- **M5 — morph** (planned 2026-10-26, see Morph below). `fx.morph`
+  between DOM states with keyed pairs; segment outline morphs for text;
+  a path pass for SVG and segments; the `wave` post preset; lazy
+  loading; runtime JFA distance fields; an optional bake CLI.
 
 ## Authoring (M4)
 
@@ -269,6 +273,118 @@ config.
 - **One runtime per compositor.** `createEffects(compositor)` returns
   the same runtime to every caller and counts them; `release()` drops
   one, the last destroys it. (`/duo`'s `fxRuntime.js` did this by hand.)
+
+## Morph (M5, planned)
+
+Settled with Ben on 2026-10-26 from two reference recordings (glyph
+segments that re-form as the next string under a ring-shaped bulge;
+layout and page morphs; stroked polygons morphing across vertex counts)
+and a spike (`playground/spike_morph.*`,
+`docs/rd/experiments/2026-10-26-segment-morph.md`). Numbered decisions
+are the planning questions (Q1-Q22); where the spike changed one, the
+change is noted.
+
+- **States (Q1).** A morph runs between two DOM states the browser laid
+  out: a route swap, a class toggle, a text change. No layout is
+  computed here. Asset-to-asset morphs (a string into a string, an SVG
+  path into a path) are content inside a paired element.
+- **Pairing (Q3).** `data-gpu-morph="key"`, unique per state, read during
+  the reader's walk. Unkeyed content stays in the held viewport snapshot
+  (as `fx.transition`), drawn with the keyed elements left out.
+- **Trigger and timing (Q4).** `fx.morph(opts)` returns a handle:
+  `capture()` (copy the keyed records, take the snapshot if unkeyed
+  content will change) -> the page swaps the DOM -> `settled()` (the
+  incoming mirror complete) -> the page tweens `progress` (GSAP, Motion)
+  or calls `play(ms, ease)` -> `end()`. Nothing morphs without a call.
+- **Ghosts (Q2, Q17).** `capture()` copies each keyed element's records
+  (boxes, glyph runs, image regions) as plain data, frozen in viewport
+  space, and pins what they reference: Slug bands are exempt from the
+  LRU and atlas entries from eviction until `end()`. A pair whose
+  incoming end lies more than a viewport outside the canvas region at
+  `settled()` is split into an exit and an entry.
+- **Granularity (Q5).** A pair interpolates per record: rect, xform,
+  radii, colours, border widths, shadows. Images move and cross-fade
+  when `currentSrc` differs. Descendants pair in `walkRecords` order when
+  both subtrees have the same shape, otherwise fade out and in inside
+  the interpolated box. Nested keys pair independently.
+- **Text changes (Q6, changed by the spike).** Graphemes kept in order
+  (an LCS diff) move to their new positions. Changed glyphs are cut into
+  segments that morph into the new string's segments: each glyph is cut
+  into compact segments across its strokes (centroids of its ink;
+  straight cuts between them), a string gets a set number shared by ink
+  area, the two strings' segments are paired by least total travel
+  (Hungarian), and each pair's outlines, resampled to M points with the
+  start aligned, are interpolated point to point while the pair travels
+  along an arc and turns between the segments' principal axes. At
+  progress 0 and 1 each segment draws its glyph's own chunk through
+  Slug, so the rest states are the mirrored text exactly. The spike's
+  first idea, shards that fly out and in (Q7: shared Voronoi shard
+  meshes), read as a cross-fade and is dropped; so is the material
+  `mesh`.
+- **Segment outlines.** Cut from the font outline (opentype.js at
+  runtime, or the bake CLI's contour data), not from a raster as the
+  spike did. A hole wholly inside one segment is dropped while it flies.
+- **Path pass (Q8).** A core layer for opt-in SVGs (keyed or baked) and
+  for segment outlines: shapes as segments in a storage buffer, filled
+  by brute-force nonzero winding (no bands, so the outline can change
+  every frame) with anti-aliasing from the exact edge distance, stroked
+  by analytic distance. An SVG morph resamples both paths to one count
+  and picks the start and direction that move the points least. Points
+  are read edge by edge, never gathered into per-fragment arrays (the
+  spike's first cut spilled and cost about 5 ms). Other inline SVGs stay
+  rasterised.
+- **Choreography (Q10).** A pure WGSL hook `pose(piece, t)` (offset,
+  rotation, scale, opacity) with presets; the engine evaluates it per
+  frame, so the pose is a function of progress, not simulated state.
+- **Shader-driven text animation (Q11).** In-place text animation uses
+  the same segments and `pose`: an assemble or scatter reveal is a morph
+  from or to nothing. Materials keep `subdivisions` for bending.
+- **Post (Q9, changed by the spike).** The reference's blur and fringe
+  are a frame-wide effect, separate from the morph: preset `wave`, a
+  fullscreen pass on its own clock, started with each morph. A bulge at
+  the text's centre becomes a ring that expands at `speed` px/s and
+  fades (`decay`, `life`), magnifying what it passes (`bulge`, `width`)
+  with a zoom blur (`zoom`), a radial split (`split`) and a fixed-width
+  red/blue fringe (`fringe`). Pixels off the ring copy through; taps
+  scale with the ring's strength. Per-piece analytic blur is dropped; a
+  global velocity buffer stays on the ROADMAP.
+- **Reduced motion (Q19).** Pairs and segments cross-fade in place
+  (opacity only, no pose); `play()` runs a 150 ms fade; `wave` is off.
+- **Packaging (Q18).** `fx.morph` and `wave` live in `/fx`, loaded on
+  first use. Core gains generic seams only: ghost records (one or two
+  `RenderGraph` members, per ADR 0001), pins in Slug and the atlas, the
+  path pass, JFA.
+- **Lazy loading (Q12, Q13).** opentype.js, the morph engine, the path
+  pass and presets load as dynamic chunks on first use; each core pass
+  builds its pipeline with `createRenderPipelineAsync` when its first
+  record appears; fonts are fetched and parsed per face on first use.
+  Worker parsing and range-split baked fonts wait for the framework
+  extraction.
+- **Distance fields (Q16).** A runtime jump-flood pass builds a distance
+  field from any target's rendered coverage on demand (`sdf` binding for
+  passes, materials and layers). The bake CLI also bakes SDFs of static
+  mask images.
+- **Bake CLI (Q13-Q15).** `compositor-gpu bake` (a node bin, dev-only
+  dependencies) writes a manifest and binary files; pages opt in with
+  `assets: '/gpu/manifest.json'` and fall back to the runtime path for
+  anything missing. Fonts: one file per (family, weight, style) instance
+  listed, variable fonts instanced at bake time, full cmap within the
+  face's unicode-range, with contour data for segment cutting; the CLI
+  warns that some font licences forbid conversion. SVGs: paths. Images:
+  effect inputs only (displacement and normal maps, noise, masks, LUTs)
+  as mipmapped KTX2 or PNG; page images keep the runtime path, since a
+  baked copy would be a second download. A Vite plugin wrapping the CLI
+  comes later.
+- **Budget (Q20).** M1 Pro, headed, dpr 2, 120 Hz: 0 dropped frames over
+  20 morphs; gpu total p95 at most 1.5 ms above the same page with the
+  loop running and nothing drawn; `capture()` p95 at most 12 ms;
+  compositor CPU p95 at most 2 ms per morph frame. The spike measured
+  +0.07-0.20 ms (morph, 8-32 segments per string, 6 strings) and
+  +0.46-0.66 ms (with `wave`) at p95. An active extra layer turns scene
+  reuse off, so the running loop itself costs about 1.9 ms p50 at dpr 2.
+- **Order.** M5a lazy loading; M5b path pass (SVG fill and stroke,
+  segment outlines); M5c `wave`; M5d morph engine (ghosts, pairing, text
+  segments, pose presets, reduced motion); M5e JFA; M5f bake CLI.
 
 ## Deviations (M1 implementation)
 

@@ -1,6 +1,7 @@
 /// <reference path="./fx.d.ts" />
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import './nav'
 import { mountDebugPanel } from '@/debug'
 import {
   createDialKit,

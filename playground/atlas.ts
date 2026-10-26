@@ -1,5 +1,6 @@
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import './nav'
 import { type AtlasRect, ImageAtlas } from '@/images/image_atlas'
 
 // ImageAtlas checks for test/atlas/run.ts: growth keeps pixels, a full

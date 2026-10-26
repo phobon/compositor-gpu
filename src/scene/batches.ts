@@ -5,6 +5,7 @@ import type {
   CutoutRecord,
   GlyphRun,
   ImageRecord,
+  PathRecord,
   Rect
 } from './records'
 import { type OpacityGroup, padGlyphRect, textShadowPad } from './stacking'
@@ -298,7 +299,7 @@ export function unionRect(rects: Rect[]): Rect {
 }
 
 /**
- * Merge the four z-sorted layers into cross-layer draw batches, minimising
+ * Merge the z-sorted layers into cross-layer draw batches, minimising
  * draw calls while keeping paint order correct.
  *
  * Cutouts are their own layer: a cutout batch erases what earlier
@@ -331,9 +332,26 @@ export function buildBatches(
   anchors: readonly Anchor[] = [],
   backdrops: readonly BackdropRecord[] = [],
   /** Receives what was built, for refitBatches. */
-  keep?: BatchState
+  keep?: BatchState,
+  paths: readonly PathRecord[] = []
 ): DrawBatch[] {
   const entries: Entry[] = []
+  for (let i = 0; i < paths.length; i++) {
+    const p = paths[i]
+    if (!p) {
+      continue
+    }
+    entries.push({
+      layer: 'paths',
+      material: 0,
+      z: p.z,
+      first: i,
+      count: 1,
+      rect: p.rect,
+      rects: [p.rect],
+      space: spaceBit(p)
+    })
+  }
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]
     if (!b) {
@@ -541,9 +559,10 @@ export interface MovedRecord {
   viewport: boolean
 }
 
-/** The batching footprints of a box, image, cutout or text record. */
+/** The batching footprints of a box, image, cutout, path or text
+ * record. */
 export function footprints(
-  r: BoxRecord | ImageRecord | CutoutRecord | GlyphRun
+  r: BoxRecord | ImageRecord | CutoutRecord | GlyphRun | PathRecord
 ): Rect[] {
   if (r.kind === 'text') {
     return runFootprints(r)

@@ -11,7 +11,7 @@ export interface FontDescriptor {
   italic?: boolean
 }
 
-export type Layer = 'boxes' | 'images' | 'text' | 'cutouts'
+export type Layer = 'boxes' | 'images' | 'text' | 'cutouts' | 'paths'
 export type Mode = 'overlay' | 'replace'
 export type Fallback = 'passthrough' | 'throw'
 
@@ -82,8 +82,11 @@ export interface CompositorOptions {
   /** In 'replace' mode, hide the source's own painting (keeps hit-testing). */
   hideSource?: boolean
   /** Faces whose bytes the Slug text backend fetches: 'auto' (default)
-   * reads document.fonts; an explicit list resolves just those. Runs whose
-   * family has no resolved face are drawn by the Canvas 2D fallback atlas. */
+   * takes the faces in document.fonts the browser has loaded or is
+   * loading, then each face it loads later (unused @font-face rules are
+   * never fetched); an explicit list resolves just those, at start. Runs
+   * whose family has no resolved face are drawn by the Canvas 2D fallback
+   * atlas. */
   fonts?: 'auto' | FontFace[]
   /** What to do when WebGPU is unavailable. Default 'passthrough'. */
   fallback?: Fallback
@@ -195,6 +198,8 @@ export interface CompositorStats {
   glyphs: number
   /** Cutout records (`data-gpu-ignore` holes) in the scene. */
   cutouts: number
+  /** Path records (shapes of vector-drawn inline svgs) in the scene. */
+  paths: number
   /** Glyphs drawn via the Canvas 2D fallback atlas in the last text upload. */
   fallback: number
   /** Up to 12 distinct fallback graphemes: `"text" family weight reason`

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu morph spike</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter Play', system-ui, sans-serif;
+        background: #fff;
+        color: #0b0b0c;
+      }
+      main {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 64px;
+      }
+      .stage {
+        display: grid;
+        font-size: var(--size, 200px);
+        font-weight: 500;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      .stage > span { grid-area: 1 / 1; }
+      .stage sup { font-size: 0.45em; vertical-align: 0.9em; }
+      #panel {
+        position: fixed; top: 12px; right: 12px; z-index: 2147483647;
+        font: 12px/1.5 system-ui; background: #fff; padding: 8px 10px;
+        border-radius: 8px; box-shadow: 0 2px 10px #0002; width: 220px;
+      }
+      #panel label { display: flex; justify-content: space-between; gap: 8px; }
+      #panel input[type=range] { width: 110px; }
+    </style>
+  </head>
+  <body>
+    <main id="rows"></main>
+    <div id="panel" data-gpu-ignore></div>
+    <script type="module" src="./spike_morph.ts"></script>
+  </body>
+</html>

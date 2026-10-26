@@ -1,6 +1,6 @@
 import './util/env'
 
-export { createCompositor } from './compositor'
+export { createCompositor } from './create'
 export { FRAME_BYTES, FRAME_WGSL, type Shared } from './gpu/frame'
 export type {
   DeviceRect,
@@ -32,7 +32,7 @@ export type {
   RGBA,
   SceneRecord
 } from './scene/records'
-export { SlugText } from './text/slug/rasterizer'
+export type { SlugText } from './text/slug/rasterizer'
 export type { TextBackend } from './text/text_rasterizer'
 export type {
   Compositor,

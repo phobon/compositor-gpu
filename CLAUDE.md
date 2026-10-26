@@ -264,7 +264,13 @@ panels from effect schemas) and `src/debug/index.ts` → `dist/debug.js`
 (`compositor-gpu/debug`: the debug panel), with `typegpu`, `opentype.js`, `react` and
 `dialkit` external (the last two optional peers). `src/react` is the only
 code that imports React (biome's React rules apply there only); it loads
-the core and `/fx` by dynamic import, so SSR stays inert. Site-specific
+the core and `/fx` by dynamic import, so SSR stays inert. The core entry
+itself is small: `createCompositor` (`src/create.ts`) returns the inert
+compositor when `navigator.gpu` is missing and otherwise loads
+`compositor.ts` by `import()`, a separate chunk and the only one that
+imports typegpu; opentype.js is a further `import()` (`loadParser` in
+`text/slug/font.ts`). Keep value imports of the renderer out of
+`src/index.ts` (`SlugText` is exported as a type). Site-specific
 choreography (reveals, scrubs, transitions) stays in the sites: GSAP on
 bonobolabs.com, Motion on phobon.io. `@/*` aliases `src/*` in both
 tsconfig and vite.
@@ -574,6 +580,16 @@ Conventions each pass must follow:
   happen runs again). Standalone textures not drawn for 10 s are destroyed
   (`TEXTURE_IDLE_MS`). `npm run test:atlas` checks the atlas in a page
   (`playground/atlas.html`).
+- **Vector svgs (paths).** An inline svg root with `data-gpu-vector` or
+  `data-gpu-morph` becomes one `PathRecord` per painted shape
+  (`dom/svg_paths.ts`): its outline flattened to line segments (0.2
+  device px) in path space (the svg's viewport via `getCTM`), solid
+  fill / stroke only; anything else returns null and the svg is
+  rasterised as below. `paths/path_pass.ts` (layer `'paths'`) fills by
+  winding and strokes by distance (`paths/path_wgsl.ts`, shared with
+  the morph engine); records over 256 edges get row bands. Path
+  records take no materials (`tagBlend` skips them; a blended svg is
+  rasterised).
 - **Inline SVG and SVG images.** An inline `<svg>` root becomes one
   ImageRecord (`dom/svg.ts`: cloned, computed `color`/`fill`/`stroke` baked
   in, serialised to a `data:` URL, cached by FNV-1a hash of markup+size); its
@@ -766,9 +782,13 @@ provenance. Pipeline:
    a full re-read then). `stats().fallback` counts atlas glyphs per frame.
 
 `textRasterizer.ts` is the seam: any backend (e.g. MSDF) can implement
-`TextBackend`. Fonts are supplied as bytes via `compositor.text.loadFontBuffer()`
-— `prepare(FontFace[])` is still a stub, because `FontFace` doesn't expose its
-parsed bytes.
+`TextBackend`. `FontFace` doesn't expose its bytes, so `prepare(FontFace[])`
+matches each face to an `@font-face` rule and fetches its `url()`
+(`text/font_source.ts`); with `fonts: 'auto'` the compositor prepares the
+faces the browser has loaded or is loading, then each face on
+`loadingdone`, so unused faces are never fetched. Bytes can also be handed
+over with `compositor.text.loadFontBuffer()` (queued until opentype.js has
+loaded; `onFace` then re-reads).
 
 ## Constraints that shape the code
 

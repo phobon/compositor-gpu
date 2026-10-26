@@ -7,6 +7,7 @@ import type {
   Glyph,
   GlyphRun,
   ImageRecord,
+  PathRecord,
   Rect,
   Space
 } from '../scene/records'
@@ -53,6 +54,7 @@ import {
   recordRadii
 } from './styles'
 import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
+import { readSvgPaths, wantsVector } from './svg_paths'
 import {
   contentHeight,
   FAST_TEXT_READ,
@@ -109,7 +111,12 @@ const RECT_EPSILON = 0.01
  * it below 1 (SceneReader.holds). */
 const OPACITY_HOLD_MS = 1000
 
-type OwnRecord = BoxRecord | ImageRecord | CutoutRecord | BackdropRecord
+type OwnRecord =
+  | BoxRecord
+  | ImageRecord
+  | CutoutRecord
+  | BackdropRecord
+  | PathRecord
 
 const NO_RECORDS: readonly OwnRecord[] = []
 
@@ -204,7 +211,7 @@ function tagBlend(node: ElNode, id: number): void {
     r.material ??= id
   }
   for (const r of node.own) {
-    if (r.kind !== 'cutout' && r.kind !== 'backdrop') {
+    if (r.kind !== 'cutout' && r.kind !== 'backdrop' && r.kind !== 'path') {
       tag(r)
     }
   }
@@ -233,7 +240,7 @@ function untagBlend(node: ElNode, id: number): void {
     }
   }
   for (const r of node.own) {
-    if (r.kind !== 'cutout' && r.kind !== 'backdrop') {
+    if (r.kind !== 'cutout' && r.kind !== 'backdrop' && r.kind !== 'path') {
       untag(r)
     }
   }
@@ -268,7 +275,7 @@ function blendsAsGroup(node: ElNode): boolean {
   const all: Rect[] = []
   const visit = (n: ElNode): void => {
     for (const r of n.own) {
-      if (r.kind === 'box' || r.kind === 'image') {
+      if (r.kind === 'box' || r.kind === 'image' || r.kind === 'path') {
         solid.push(r.rect)
         all.push(r.rect)
       }
@@ -953,7 +960,22 @@ export class SceneReader {
     ) {
       replaced = readImageRecord(el, s, rect, scene.allocId(), clip, place)
     }
-    if (layers.has('images') && svgRoot) {
+    // An svg root opted in to vectors paints as path records (one per
+    // shape); under a blend mode, or with anything the path pass can't
+    // draw, it is rasterised as before.
+    let vector: PathRecord[] | null = null
+    if (
+      layers.has('paths') &&
+      svgRoot &&
+      wantsVector(el) &&
+      blendMaterialId(s.mixBlendMode) === undefined &&
+      (parent?.blendGroup || parent?.blend === undefined)
+    ) {
+      vector = readSvgPaths(el as SVGSVGElement, s, place, clip, () =>
+        scene.allocId()
+      )
+    }
+    if (!vector && layers.has('images') && svgRoot) {
       replaced = readSvgRecord(
         el as SVGSVGElement,
         s,
@@ -978,6 +1000,9 @@ export class SceneReader {
     // A replaced element's content paints over its inset shadows.
     if (replaced) {
       own = own.length ? [...own, replaced] : [replaced]
+    }
+    if (vector?.length) {
+      own = own.length ? [...own, ...vector] : vector
     }
 
     // backdrop-filter: the filtered backdrop paints first, under the

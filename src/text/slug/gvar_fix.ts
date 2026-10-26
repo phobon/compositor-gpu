@@ -1,5 +1,3 @@
-import * as opentype from 'opentype.js'
-
 // opentype.js 2.0 reads a packed point-number count of 0 as "no points"
 // where the gvar spec means "all points of the glyph" (OpenType, gvar,
 // "Packed point numbers"). A tuple that carries private point numbers with
@@ -62,8 +60,9 @@ function allPointsLazy(glyph: { path: unknown; points: unknown[] }): number[] {
   })
 }
 
-/** Idempotent; runs once per opentype.js module instance. */
-export function installGvarFix(): void {
+/** Idempotent; runs once per opentype.js module instance (`opentype`:
+ * the module namespace as imported). */
+export function installGvarFix(opentype: unknown): void {
   // ESM build exposes `_parse` as a named export; the CJS build (node, tsx)
   // hangs the same object off `default`.
   type Mod = {

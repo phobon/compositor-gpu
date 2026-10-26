@@ -144,6 +144,7 @@ function bounds(
       boxes: of(scene.boxes, (b) => b.batchRect ?? b.rect),
       images: of(scene.images),
       cutouts: of(scene.cutouts),
+      paths: of(scene.paths),
       text: { b: text, index: null }
     }
   }
@@ -228,7 +229,9 @@ function updateBounds(
           ? 'images'
           : r.kind === 'cutout'
             ? 'cutouts'
-            : 'text'
+            : r.kind === 'path'
+              ? 'paths'
+              : 'text'
     const layer = all.layers[name]
     if (!layer) {
       continue
@@ -252,7 +255,9 @@ function updateBounds(
           ? scene.boxes
           : r.kind === 'image'
             ? scene.images
-            : scene.cutouts
+            : r.kind === 'path'
+              ? scene.paths
+              : scene.cutouts
       first = byZ(list, r.z)
       count = 1
       if (first < 0) {

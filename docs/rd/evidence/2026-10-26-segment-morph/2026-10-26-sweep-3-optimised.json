@@ -1,0 +1,16 @@
+{
+  "page": "spike_morph.html?rows=6&size=96",
+  "machine": "M1 Pro, headed Chrome, dpr 2",
+  "spike": "outline morph read edge by edge (2x2 map per side), tight quads, pieces only while a morph runs, wave pass skips pixels off the ring and scales taps by ring strength",
+  "note": "GPU timestamps appear quantised to ~0.1 ms (identical p50s)",
+  "rows": [
+    { "label": "loop, nothing drawn", "frames": 360, "dropped": 0, "late": 0, "gpuP50": 1.901, "gpuP95": 4.194, "cpuP95": 0.6 },
+    { "label": "morph, pieces 8", "frames": 360, "dropped": 0, "late": 0, "gpuP50": 2.294, "gpuP95": 4.26, "cpuP95": 0.5 },
+    { "label": "morph, pieces 16", "frames": 384, "dropped": 0, "late": 0, "gpuP50": 2.097, "gpuP95": 4.391, "cpuP95": 0.6 },
+    { "label": "morph, pieces 32", "frames": 361, "dropped": 3, "late": 3, "gpuP50": 2.163, "gpuP95": 4.26, "cpuP95": 0.5 },
+    { "label": "morph 16 + post, taps 1", "frames": 375, "dropped": 1, "late": 1, "gpuP50": 2.884, "gpuP95": 4.653, "cpuP95": 0.8 },
+    { "label": "morph 16 + post, taps 4", "frames": 394, "dropped": 0, "late": 0, "gpuP50": 2.884, "gpuP95": 4.85, "cpuP95": 0.7 },
+    { "label": "morph 16 + post, taps 8", "frames": 393, "dropped": 0, "late": 0, "gpuP50": 2.884, "gpuP95": 4.784, "cpuP95": 0.7 },
+    { "label": "morph 16 + post, taps 16", "frames": 360, "dropped": 0, "late": 0, "gpuP50": 3.08, "gpuP95": 4.719, "cpuP95": 0.8 }
+  ]
+}

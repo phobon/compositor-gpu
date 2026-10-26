@@ -383,9 +383,57 @@ export interface BackdropRecord {
   filter: GroupFilter
 }
 
+/** stroke-linecap: 0 butt, 1 round, 2 square. */
+export type LineCap = 0 | 1 | 2
+/** stroke-linejoin: 0 miter, 1 round, 2 bevel. */
+export type LineJoin = 0 | 1 | 2
+
+/**
+ * One painted shape of an inline svg drawn as vectors (`data-gpu-vector`
+ * or `data-gpu-morph` on the svg root; dom/svg_paths.ts): its outline
+ * flattened to line segments in path space (the svg's viewport, CSS px
+ * from its content box), filled by winding and stroked by distance in
+ * the path pass (paths/path_pass.ts). Paint order is the svg's document
+ * order, one record per shape (fill under stroke).
+ */
+export interface PathRecord {
+  kind: 'path'
+  id: number
+  /** Never set: paths take no materials (they're here for the shared
+   * record code). */
+  material?: number
+  z: number
+  /** AABB of the painted extent (stroke and miters included), in the
+   * record's space. */
+  rect: Rect
+  /** Maps path space to the record's space. */
+  xform: Affine
+  /** The svg root's untransformed size. */
+  local: LocalSize
+  space?: Space
+  clip?: Rect | null
+  /** Flattened subpath points, x y pairs, path space. */
+  points: Float32Array
+  /** Per subpath: first point, point count, closed (1) or open (0). */
+  contours: Uint32Array
+  /** Bounds of `points`, path space: min x, min y, max x, max y. */
+  bounds: [number, number, number, number]
+  /** Fill colour with the shape's opacities applied; null: no fill. */
+  fill: RGBA | null
+  evenOdd: boolean
+  /** Stroke colour with the shape's opacities applied; null: none. */
+  stroke: RGBA | null
+  /** Path space px. */
+  strokeWidth: number
+  cap: LineCap
+  join: LineJoin
+  miterLimit: number
+}
+
 export type SceneRecord =
   | BoxRecord
   | ImageRecord
   | GlyphRun
   | CutoutRecord
   | BackdropRecord
+  | PathRecord

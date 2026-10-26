@@ -435,7 +435,12 @@ export class Renderer {
     const add = (r: Rect, pad: number): void => {
       rows = addRows(rows, r.y - pad, r.y + r.height + pad)
     }
-    for (const list of [scene.boxes, scene.images, scene.cutouts]) {
+    for (const list of [
+      scene.boxes,
+      scene.images,
+      scene.cutouts,
+      scene.paths
+    ]) {
       for (const r of list) {
         if (r.space === 'viewport') {
           add(r.rect, 2)

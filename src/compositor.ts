@@ -12,6 +12,7 @@ import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
 import { blendMaterials } from './gpu/blend'
 import { initGpu } from './gpu/device'
+import { inert } from './compositor_inert'
 import type {
   FrameHook,
   LayerPlace,
@@ -21,6 +22,7 @@ import type {
 import { materialPipelinesPending } from './gpu/material'
 import { Renderer } from './gpu/renderer'
 import { ImagePass } from './images/image_renderer'
+import { PathPass } from './paths/path_pass'
 import {
   type Profile,
   type ProfileHost,
@@ -30,6 +32,7 @@ import {
 import type { Anchor } from './scene/batches'
 import type { GlyphRun } from './scene/records'
 import { Scene } from './scene/scene'
+import { loadParser } from './text/slug/font'
 import { SlugText } from './text/slug/rasterizer'
 import type {
   Compositor,
@@ -52,7 +55,9 @@ export async function createCompositor(
   options: CompositorOptions = {}
 ): Promise<Compositor & { text: SlugText | null; scene: Scene | null }> {
   const root = options.root ?? document.body
-  const layers = new Set<Layer>(options.layers ?? ['boxes', 'images', 'text'])
+  const layers = new Set<Layer>(
+    options.layers ?? ['boxes', 'images', 'text', 'paths']
+  )
   // Holes for data-gpu-ignore elements go with any painted layer, unless
   // opted out.
   if (layers.size > 0 && options.cutouts !== false) {
@@ -88,6 +93,12 @@ export async function createCompositor(
   // paint via opacity, and the canvas must never be a descendant of it.
   document.documentElement.appendChild(canvas)
 
+  // The font parser (a dynamic import) downloads while the device starts.
+  if (layers.has('text')) {
+    loadParser().catch((err: unknown) => {
+      log.error('could not load opentype.js', err)
+    })
+  }
   const gpu = await initGpu(canvas)
   if (!gpu) {
     canvas.remove()
@@ -132,11 +143,14 @@ export async function createCompositor(
     renderer.addPass(imagePass)
   }
   let text: SlugText | null = null
-  /** No font bytes still being fetched for the text pass. */
-  let fontsReady = true
+  /** Font preparations (fetch + parse) still running for the text pass. */
+  let fontsPending = 0
   if (layers.has('text')) {
     text = new SlugText(renderer.shared)
     renderer.addPass(text)
+  }
+  if (layers.has('paths')) {
+    renderer.addPass(new PathPass(renderer.shared))
   }
   if (layers.has('cutouts')) {
     renderer.addPass(new CutoutPass(renderer.shared))
@@ -793,23 +807,44 @@ export async function createCompositor(
   }
   const sync = new DomSync(root, () => scheduler.request())
 
+  // Faces reach the text pass as the page uses them. 'auto' (the
+  // default) takes the document's faces the browser has loaded or is
+  // loading (an unused @font-face stays 'unloaded' and is never
+  // fetched), then each face the browser loads later; an explicit list
+  // resolves just those, at start. Either way the bytes are fetched at
+  // runtime, then a re-read re-uploads the glyphs.
+  const prepareFaces = (faces: FontFace[]): void => {
+    if (!text || faces.length === 0) {
+      return
+    }
+    fontsPending++
+    void text
+      .prepare(faces)
+      .then(() => {
+        pendingReadFlags |= Dirty.STYLE
+      })
+      .finally(() => {
+        fontsPending--
+        scheduler.request()
+      })
+  }
+  const fontsAuto = (options.fonts ?? 'auto') === 'auto'
+  const onFontsLoaded = (e: Event): void => {
+    prepareFaces([...(e as FontFaceSetLoadEvent).fontfaces])
+  }
   if (text) {
-    // 'auto' (the default) discovers the document's registered faces; an
-    // explicit list resolves just those. Either way the bytes are fetched
-    // at runtime, then a re-read re-uploads the glyphs.
+    text.onFace = () => {
+      pendingReadFlags |= Dirty.STYLE
+      scheduler.request()
+    }
     const fonts = options.fonts ?? 'auto'
-    const faces = fonts === 'auto' ? Array.from(document.fonts) : fonts
-    if (faces.length > 0) {
-      fontsReady = false
-      void text
-        .prepare(faces)
-        .then(() => {
-          pendingReadFlags |= Dirty.STYLE
-        })
-        .finally(() => {
-          fontsReady = true
-          scheduler.request()
-        })
+    prepareFaces(
+      fonts === 'auto'
+        ? Array.from(document.fonts).filter((f) => f.status !== 'unloaded')
+        : fonts
+    )
+    if (fontsAuto) {
+      document.fonts.addEventListener('loadingdone', onFontsLoaded)
     }
   }
   const onResize = (): void => {
@@ -909,7 +944,8 @@ export async function createCompositor(
   /** An `<img>` in the viewport that hasn't finished loading: the reader
    * skips it until its load event, so ImagePass doesn't count it yet. */
   const mirrorComplete = (): boolean =>
-    fontsReady &&
+    fontsPending === 0 &&
+    !text?.facesPending &&
     (imagePass?.pending ?? 0) === 0 &&
     materialPipelinesPending() === 0 &&
     !imagesLoading()
@@ -1146,6 +1182,7 @@ export async function createCompositor(
       images: scene.images.length,
       glyphs: scene.glyphCount(),
       cutouts: scene.cutouts.length,
+      paths: scene.paths.length,
       fallback: text?.fallbackCount ?? 0,
       fallbackSamples: text ? Array.from(text.fallbackSamples) : [],
       ligatures: text?.ligatureCount ?? 0,
@@ -1234,6 +1271,7 @@ export async function createCompositor(
       }
       stop()
       reducedMotion?.removeEventListener('change', setImageFade)
+      document.fonts.removeEventListener('loadingdone', onFontsLoaded)
       for (const img of [...opaqueImgs.keys()]) {
         unmarkOpaque(img)
       }
@@ -1263,77 +1301,4 @@ function fullReadCause(flags: number, last: string): string {
     names.push('content')
   }
   return `${names.join('+')}${last ? ` (last: ${last})` : ''}`
-}
-
-const inertProfile: Profile = {
-  start() {},
-  stop: () => Promise.resolve(null),
-  mark() {},
-  recording: false,
-  hud: () => false,
-  recent: () => []
-}
-
-function inert(): Compositor & { text: null; scene: null } {
-  return {
-    active: false,
-    canvas: null,
-    text: null,
-    scene: null,
-    graph: null,
-    profile: inertProfile,
-    stats: () => ({
-      active: false,
-      boxes: 0,
-      images: 0,
-      glyphs: 0,
-      cutouts: 0,
-      fallback: 0,
-      fallbackSamples: [],
-      ligatures: 0,
-      faces: 0,
-      uploads: 0,
-      batches: 0,
-      draws: 0,
-      instances: 0,
-      fillRows: 0,
-      pendingRows: 0,
-      skippedFrames: 0,
-      groups: 0,
-      groupPasses: 0,
-      sceneReused: false,
-      readElements: 0,
-      partialReads: 0,
-      patchedReads: 0,
-      refits: 0,
-      sync: {
-        layout: 0,
-        style: 0,
-        content: 0,
-        mutation: 0,
-        animating: 0,
-        last: ''
-      },
-      textRead: { graphemes: 0, perGrapheme: 0, ranges: 0 },
-      readMs: 0,
-      uploadMs: 0,
-      encodeMs: 0,
-      cullMs: 0,
-      fps: 0,
-      frameMs: 0,
-      maxDtMs: 0,
-      scrolling: false,
-      anchorX: 0,
-      anchorY: 0,
-      reanchors: 0
-    }),
-    start() {},
-    stop() {},
-    ready: Promise.resolve(),
-    sceneReuse: false,
-    skeleton: false,
-    invalidate() {},
-    setSourceHidden() {},
-    destroy() {}
-  }
 }

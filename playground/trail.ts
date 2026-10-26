@@ -1,5 +1,6 @@
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
+import './nav'
 import { createEffects } from '@/fx'
 import { createCompositor } from '@/index'
 
