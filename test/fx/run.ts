@@ -66,6 +66,9 @@
 //   fx-glitch         glitchSlices with the pattern held
 //   fx-vignette       vignette with a white flash
 //   fx-lens           lens on the pinned follower
+//   fx-shockwave      shockwave from the section's centre, ring 250 px out
+//                     at the pinned elapsed
+//   fx-shockwave-then-off  on, then off: equal to the section exactly
 //   fx-reveal         reveal on the section's h2 and develop on its img,
 //                     both at progress 0.4
 //   fx-reveal-0       both at progress 0 (heading and image hidden)
@@ -158,6 +161,7 @@ type Effect =
   | 'glitch'
   | 'vignette'
   | 'lens'
+  | 'shockwave'
   | 'reveal'
   | 'reveal-0'
   | 'p1'
@@ -245,6 +249,7 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.glitch.enabled = e === 'glitch' || e === 'p1'
     h.vig.enabled = e === 'vignette' || e === 'p1'
     h.lens.enabled = e === 'lens' || e === 'p1'
+    h.shock.enabled = e === 'shockwave'
     h.reveal.enabled = e === 'reveal' || e === 'reveal-0'
     h.develop.enabled = e === 'reveal' || e === 'reveal-0'
     for (const m of [h.reveal, h.develop]) {
@@ -884,6 +889,25 @@ async function main(): Promise<void> {
     }
     if (want('fx-lens')) {
       await capture('fx-displace', 'fx-lens', 'lens')
+    }
+    if (want('fx-shockwave')) {
+      await capture('fx-displace', 'fx-shockwave', 'shockwave')
+    }
+    if (want('fx-shockwave-then-off')) {
+      const s = 'fx-shockwave-then-off'
+      const pre = await capture('fx-displace', `${s}-pre`, 'none')
+      await capture('fx-displace', `${s}-on`, 'shockwave')
+      const post = await capture('fx-displace', s, 'none')
+      if (pre && post) {
+        const n = exactDiff(pre, post)
+        const pct = diffPng(pre, post, resolve(outDir, `${s}-invariant.png`))
+        results.push({
+          name: `${s} (= pre)`,
+          regressionPct: pct,
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
+      }
     }
     if (want('fx-reveal')) {
       await capture('fx-displace', 'fx-reveal', 'reveal')

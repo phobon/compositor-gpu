@@ -14,6 +14,7 @@ import { POINTER_WGSL } from './pointer'
 import { readsTime } from './shader'
 import type { Target } from './target'
 import { type Trail, trailState, trailWgsl } from './trail'
+import { guarded } from '../util/log'
 
 // Materials: re-shade a Target's mirrored records with author hooks
 // (docs/EFFECTS.md "Material"). The record passes compile a variant of
@@ -389,7 +390,14 @@ export function createMaterial<S extends ParamSchema>(
       }
       life.start(deps.clock)
       const time = deps.clock.time()
-      life.inside(() => o.update?.(handle as unknown as Material<S>, time, ctx))
+      const update = o.update
+      if (update) {
+        life.inside(() =>
+          guarded(`fx:${o.name} update`, () =>
+            update(handle as unknown as Material<S>, time, ctx)
+          )
+        )
+      }
       if (block.dirty) {
         device.queue.writeBuffer(paramsBuf, 0, block.pack())
       }

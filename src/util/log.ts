@@ -24,3 +24,25 @@ export function reportShaderErrors(
     }
   })
 }
+
+const reported = new Set<string>()
+
+/**
+ * Run author code (an effect's `update`, a page's `onFrame`) so that a
+ * throw can't escape into the frame loop: it is logged once per `label`
+ * and message, and the frame carries on without it.
+ */
+export function guarded(label: string, f: () => void): void {
+  try {
+    f()
+  } catch (err) {
+    const key = `${label}\u0000${err instanceof Error ? err.message : String(err)}`
+    if (!reported.has(key)) {
+      if (reported.size > 256) {
+        reported.clear()
+      }
+      reported.add(key)
+      log.error(`${label} threw (logged once; the frame continues):`, err)
+    }
+  }
+}

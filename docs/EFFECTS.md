@@ -230,7 +230,7 @@ only these:
   (`release()`); no DOM fallback; GSAP and Motion recipes.
 - **M5 — morph** (planned 2026-10-26, see Morph below). `fx.morph`
   between DOM states with keyed pairs; segment outline morphs for text;
-  a path pass for SVG and segments; the `wave` post preset; lazy
+  a path pass for SVG and segments; the `shockwave` post preset; lazy
   loading; runtime JFA distance fields; an optional bake CLI.
 
 ## Authoring (M4)
@@ -340,7 +340,7 @@ change is noted.
   the same segments and `pose`: an assemble or scatter reveal is a morph
   from or to nothing. Materials keep `subdivisions` for bending.
 - **Post (Q9, changed by the spike).** The reference's blur and fringe
-  are a frame-wide effect, separate from the morph: preset `wave`, a
+  are a frame-wide effect, separate from the morph: preset `shockwave`, a
   fullscreen pass on its own clock, started with each morph. A bulge at
   the text's centre becomes a ring that expands at `speed` px/s and
   fades (`decay`, `life`), magnifying what it passes (`bulge`, `width`)
@@ -349,8 +349,8 @@ change is noted.
   scale with the ring's strength. Per-piece analytic blur is dropped; a
   global velocity buffer stays on the ROADMAP.
 - **Reduced motion (Q19).** Pairs and segments cross-fade in place
-  (opacity only, no pose); `play()` runs a 150 ms fade; `wave` is off.
-- **Packaging (Q18).** `fx.morph` and `wave` live in `/fx`, loaded on
+  (opacity only, no pose); `play()` runs a 150 ms fade; `shockwave` is off.
+- **Packaging (Q18).** `fx.morph` and `shockwave` live in `/fx`, loaded on
   first use. Core gains generic seams only: ghost records (one or two
   `RenderGraph` members, per ADR 0001), pins in Slug and the atlas, the
   path pass, JFA.
@@ -380,10 +380,11 @@ change is noted.
   loop running and nothing drawn; `capture()` p95 at most 12 ms;
   compositor CPU p95 at most 2 ms per morph frame. The spike measured
   +0.07-0.20 ms (morph, 8-32 segments per string, 6 strings) and
-  +0.46-0.66 ms (with `wave`) at p95. An active extra layer turns scene
+  +0.46-0.66 ms (with the wave pass) at p95. An active extra layer turns scene
   reuse off, so the running loop itself costs about 1.9 ms p50 at dpr 2.
 - **Order.** M5a lazy loading; M5b path pass (SVG fill and stroke,
-  segment outlines); M5c `wave`; M5d morph engine (ghosts, pairing, text
+  segment outlines); M5c `shockwave` (built 2026-10-26: `play(at)` from an element, a
+  page point or the viewport's middle; age is `fx.elapsed`); M5d morph engine (ghosts, pairing, text
   segments, pose presets, reduced motion); M5e JFA; M5f bake CLI.
 
 ## Deviations (M1 implementation)

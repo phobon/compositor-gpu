@@ -917,6 +917,21 @@ layer draws nothing).
   red and blue split radially by up to `fringe` px from 0.6 × radius,
   fading out over `edge` px past the rim. `radius` 0 draws the page
   unchanged. Declares `fringe` as its radius.
+- `shockwave(fx, { speed = 520, life = 2.2, decay = 0.9, bulge = 0.22,
+  width = 140, zoom = 0.08, split = 0.03, fringe = 6, taps = 8,
+  enabled = false })` returns `{ pass, play(at?), destroy() }`.
+  `play(at)` starts a wave from an element's or target's centre, a page
+  point `[x, y]` (CSS px), or the viewport's middle, and switches the
+  pass off after `life` s; a running wave restarts; nothing under
+  reduced motion. The wave: a gaussian ring `width` px across whose
+  front moves out at `speed` px/s from `origin` (starting as a bulge),
+  fading by exp(−age / `decay`) and over the last fifth of `life`;
+  under it the scene magnifies by up to `bulge`, with a zoom blur of
+  `zoom` × distance (`taps` samples, fewer where the ring is faint), a
+  red/blue split of `split` × distance and a `fringe` px red/blue
+  fringe along the radius. Age is `fx.elapsed`: enabling the pass
+  directly shows the wave at that age and leaves it on. Pixels off the
+  ring copy through. Fullscreen only.
 - `reveal(fx, target, { progress = 0, blur = 12, split = 8, glitch =
   24, height = 10, density = 0.35, wash = 0, washColor = '#fff', fade =
   0.35, seed = 0 })`: an element's entrance as one region pass (three

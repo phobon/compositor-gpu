@@ -43,6 +43,8 @@ declare global {
       vig: Pass
       /** lens on the pinned follower. */
       lens: Pass
+      /** shockwave from the displace section's centre (pinned elapsed). */
+      shock: Pass
       /** reveal on the displace section's h2 (progress 0.4). */
       reveal: Pass
       /** develop on the displace section's img (progress 0.4). */

@@ -40,7 +40,7 @@ import type {
   FrameContext,
   Layer
 } from './types'
-import { log, setDebug } from './util/log'
+import { guarded, log, setDebug } from './util/log'
 import { FrameScheduler } from './util/raf'
 
 /** Frames keep running on rAF this long after the last `scroll` event. */
@@ -409,15 +409,20 @@ export async function createCompositor(
     }
     const hooksAt = performance.now()
     for (const h of hooks) {
-      h.beforeFrame?.(ctx)
+      if (h.beforeFrame) {
+        guarded('frame hook', () => h.beforeFrame?.(ctx))
+      }
     }
 
-    if (options.onGlyph) {
-      for (const run of scene.runs) {
-        for (const g of run.glyphs) {
-          options.onGlyph(g, ctx)
+    const onGlyph = options.onGlyph
+    if (onGlyph) {
+      guarded('onGlyph', () => {
+        for (const run of scene.runs) {
+          for (const g of run.glyphs) {
+            onGlyph(g, ctx)
+          }
         }
-      }
+      })
       // Only glyph offsets changed: re-upload just the text layer.
       scene.markDirty('text')
     }
@@ -426,7 +431,10 @@ export async function createCompositor(
     if (scene.hasDynamic || imagePass?.fades.active) {
       scene.markDirty('images')
     }
-    options.onFrame?.(ctx)
+    const onFrame = options.onFrame
+    if (onFrame) {
+      guarded('onFrame', () => onFrame(ctx))
+    }
     const hooksMs = performance.now() - hooksAt
 
     // The swapchain texture can't be created at 0x0 (e.g. before the canvas

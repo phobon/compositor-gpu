@@ -31,6 +31,7 @@ import {
   progressiveBlur,
   reveal,
   rgbSplit,
+  shockwave,
   vignette
 } from '@/fx'
 import { createCompositor } from '@/index'
@@ -631,6 +632,23 @@ async function boot(): Promise<void> {
     enabled: false,
     progress: 0.4
   })
+  // Shockwave (M5c) from the displace section's centre: slow, so at the
+  // pinned elapsed (1.25 s) the ring is 250 px out, across the section.
+  const shock = shockwave(fx, { speed: 200, life: 3, decay: 2 })
+  if (dspSec) {
+    const r = dspSec.getBoundingClientRect()
+    shock.pass.params.origin = [
+      r.left + window.scrollX + r.width / 2,
+      r.top + window.scrollY + r.height / 2
+    ]
+    if (!vrMode) {
+      // Click in the section: a wave from there.
+      dspSec.addEventListener('click', (e) => {
+        const ev = e as MouseEvent
+        shock.play([ev.pageX, ev.pageY])
+      })
+    }
+  }
   if (!vrMode) {
     const kit = mountDials(
       [
@@ -773,6 +791,21 @@ async function boot(): Promise<void> {
             flash: [0, 1, 0.01]
           }
         },
+        {
+          name: 'shockwave',
+          effect: shock.pass,
+          params: {
+            speed: [0, 2000, 10],
+            life: [0.1, 10, 0.1],
+            decay: [0.05, 10, 0.05],
+            bulge: [0, 0.9, 0.01],
+            width: [10, 800, 5],
+            zoom: [0, 0.4, 0.005],
+            split: [0, 0.1, 0.001],
+            fringe: [0, 40, 0.5],
+            taps: [1, 16, 1]
+          }
+        },
         { name: 'useGpuPass', effect: tgjs, params: { amount: [0, 1, 0.01] } }
       ],
       {
@@ -861,6 +894,7 @@ async function boot(): Promise<void> {
     glitch,
     vig,
     lens: lns,
+    shock: shock.pass,
     reveal: rvl,
     develop: dev,
     sim,

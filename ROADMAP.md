@@ -207,7 +207,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
 - [ ] M5 — morph (planned 2026-10-26, spec `docs/EFFECTS.md` "Morph";
       spike `playground/spike_morph.*`, record
       `docs/rd/experiments/2026-10-26-segment-morph.md`: 16 segments
-      per string x 6 strings + `wave` at +0.46-0.66 ms gpu total p95
+      per string x 6 strings + the wave pass at +0.46-0.66 ms gpu total p95
       over the running loop, M1 Pro dpr 2):
   - [x] M5a lazy loading (built and checked 2026-10-26, Chrome on the
         M1 Pro: `?nogpu` fetches no renderer or opentype.js, `?unusedfont`
@@ -228,7 +228,8 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         compiles off the JS thread already, and the handoff waits for
         the first draw), `formatReport` out of the shared profiler chunk
         (21 kB)
-  - [x] M5b path pass (built 2026-10-26; checked headless under
+  - [x] M5b path pass (built 2026-10-26; test:round passed on the M1
+        Pro, phobon.io unaffected; checked headless under
         SwiftShader at dpr 1 and 3 against the browser's own svg paint:
         only edge anti-aliasing differs; a `d` / `fill` edit patches in
         place): an inline svg root with `data-gpu-vector` or
@@ -251,9 +252,17 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [ ] Path pass follow-ups: re-flatten when a layer transform scales an
         svg up (flattened for its read-time scale); gradients, dashes,
         clip-path, symbol / nested svg; materials on path records
-  - [ ] M5c `wave` preset: ring from a centre, `speed` / `life` /
-        `decay`, `bulge`, `width`, `zoom`, `split`, `fringe`; skips
-        pixels off the ring
+  - [ ] M5c `shockwave` preset (built 2026-10-26; headless SwiftShader:
+        renders, then-off equals the section exactly, no console errors;
+        to run on the M1 Pro with `test:fx -- --update --only
+        fx-shockwave` for its golden): `shockwave(fx, opts)` returns
+        `{ pass, play(at?), destroy() }`; a ring from `origin` (page
+        CSS px) at `speed`, fading by `decay`, gone after `life`, with
+        `bulge`, `width`, `zoom`, `split`, `fringe`, `taps`; age is
+        `fx.elapsed`, pixels off the ring copy through; play() is a
+        no-op under reduced motion. Shots `fx-shockwave`,
+        `fx-shockwave-then-off`; click the fx page's displace section to
+        play one
   - [ ] M5d `fx.morph`: `data-gpu-morph` keys; `capture()` /
         `settled()` / `progress` / `play()` / `end()`; ghost records in
         viewport space with Slug band and atlas pins
@@ -267,8 +276,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
         (full cmap, contour data, licence warning), SVG paths,
         effect-input images (KTX2 / PNG), SDF masks
-  - [ ] Catch exceptions from `/fx` hooks (`update`, `beforeFrame`): one
-        throw stops the compositor's frame loop (hit by the spike)
+  - [x] Catch exceptions from author code (2026-10-26, `guarded` in
+        `util/log.ts`): layer and material `update`, every frame hook,
+        `onGlyph`, `onFrame`; logged once per label and message, the
+        frame carries on (a throw used to stop the frame loop)
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): font parsing and path work in a worker; range-split baked
       fonts; KTX2 for page images; a global velocity buffer for motion

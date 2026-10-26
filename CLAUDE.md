@@ -202,7 +202,9 @@ stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
 `fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`, `fx-vignette`,
 `fx-lens` and `fx-p1-then-off` (all five on, then off: must equal the displace
-section with nothing enabled exactly), `fx-reveal` / `fx-reveal-0`
+section with nothing enabled exactly), `fx-shockwave` (a ring 250 px
+out at the pinned elapsed) and `fx-shockwave-then-off` (must equal the
+section exactly), `fx-reveal` / `fx-reveal-0`
 (reveal on the section's h2 and develop on its img at progress 0.4 / 0)
 and `fx-reveal-then-off` (must equal the section exactly), on the
 displace section,

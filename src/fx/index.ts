@@ -124,6 +124,12 @@ export {
   textStagger
 } from './presets/text_stagger'
 export {
+  type Shockwave,
+  type ShockwaveOptions,
+  type ShockwaveSchema,
+  shockwave
+} from './presets/shockwave'
+export {
   type TouchTrail,
   type TouchTrailParams,
   type TouchTrailSchema,

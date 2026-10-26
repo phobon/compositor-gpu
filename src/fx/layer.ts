@@ -10,7 +10,7 @@ import type { GlyphRun } from '../scene/records'
 import type { GlyphTable } from '../text/slug/rasterizer'
 import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
 import type { FrameContext } from '../types'
-import { reportShaderErrors } from '../util/log'
+import { guarded, reportShaderErrors } from '../util/log'
 import type { EffectsClock } from './clock'
 import { type Hook, hookSource, LAYER_HOOKS } from './gpu'
 import { ImageArray } from './image_array'
@@ -926,7 +926,14 @@ export function createLayer<S extends ParamSchema>(
       }
       life.start(deps.clock)
       const time = deps.clock.time()
-      life.inside(() => o.update?.(handle as unknown as Layer<S>, time, ctx))
+      const update = o.update
+      if (update) {
+        life.inside(() =>
+          guarded(`fx:${o.name} update`, () =>
+            update(handle as unknown as Layer<S>, time, ctx)
+          )
+        )
+      }
       images?.update()
       ensureData()
       if (dataBuf) {
