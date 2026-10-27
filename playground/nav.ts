@@ -99,6 +99,13 @@ const PAGES: Page[] = [
     variants: [{ label: 'baked (npm run bake:playground)', query: '?baked' }]
   },
   {
+    file: 'textures.html',
+    title: 'Effect textures',
+    about:
+      'Baked noise and LUT textures in a pass, layer and material (M5f; npm run bake:playground)',
+    variants: []
+  },
+  {
     file: 'spike_morph.html',
     title: 'Morph spike',
     about: 'Segment outline morph with the wave pass (M5)',

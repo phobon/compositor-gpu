@@ -14,5 +14,9 @@
       "dir": "icons",
       "src": "/icons/"
     }
+  ],
+  "textures": [
+    { "name": "noise", "file": "fx/noise.png" },
+    { "name": "ramp", "file": "fx/ramp.png", "color": "srgb" }
   ]
 }

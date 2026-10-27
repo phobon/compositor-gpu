@@ -23,6 +23,18 @@ import {
 } from './params'
 import { POINTER_WGSL } from './pointer'
 import { type Sdf, type SdfField, sdfWgsl } from './sdf'
+import {
+  TextureBinding,
+  type TextureInputs,
+  type TextureStore,
+  textureLayoutEntries,
+  textureList,
+  texturesWgsl
+} from './textures'
+
+/** First group-1 binding of a layer's textures. */
+const TEX_BASE = 18
+
 import { readsTime } from './shader'
 import { type Target, targetRuns } from './target'
 import { type Trail, type TrailState, trailState, trailWgsl } from './trail'
@@ -321,6 +333,10 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
    * from page point p to its element's rendered shape, CSS px, negative
    * inside), `sdf_ready()`. */
   sdf?: Sdf
+  /** Baked textures to read in the hooks, by WGSL name (Effects.texture;
+   * at most 4): `tex_<name>(uv)`, `tex_<name>_level(uv, lod)`,
+   * `tex_<name>_size()`, `tex_<name>_ready()`. Not in `simulate`. */
+  textures?: TextureInputs
   /** Draw this element's mirrored glyphs: `glyph_count()`,
    * `glyph_point(k, uv)`, `glyph_size(k)`, `glyph_color(k)`,
    * `glyph_coverage(k, uv)` (k is the index into `target.glyphs`). */
@@ -371,6 +387,8 @@ export interface LayerDeps {
   /** The runtime's field behind an Sdf handle (null: not this runtime's
    * or destroyed). */
   sdfOf(s: Sdf): SdfField | null
+  /** The runtime's baked textures. */
+  textures: TextureStore
   device: GPUDevice
   format: GPUTextureFormat
   frameLayout: GPUBindGroupLayout
@@ -416,7 +434,8 @@ const toPlace = (p: Place): LayerPlace =>
 function layerSource(
   o: LayerOptions,
   wgslParams: string,
-  hooks: string
+  hooks: string,
+  texNames: readonly string[]
 ): string {
   const stride = Math.max(1, Math.floor(o.stride))
   return [
@@ -434,6 +453,7 @@ function layerSource(
     o.glyphs ? GLYPHS_WGSL : '',
     o.trail ? trailHelpers(1, 10) : '',
     o.sdf ? sdfWgsl(1, 15) : '',
+    texturesWgsl(1, TEX_BASE, texNames),
     HELPERS_WGSL,
     hooks,
     SKELETON_WGSL,
@@ -583,9 +603,18 @@ export function createLayer<S extends ParamSchema>(
     life.paramsChanged()
   ) as unknown as ParamBlock<ParamSchema>
   const label = `fx:${o.name}`
+  const texList = textureList(o.textures, o.name)
+  const tex = texList.length
+    ? new TextureBinding(device, deps.textures, texList, label)
+    : null
   const module = device.createShaderModule({
     label,
-    code: layerSource(o as LayerOptions, block.wgsl, hooks)
+    code: layerSource(
+      o as LayerOptions,
+      block.wgsl,
+      hooks,
+      texList.map(([n]) => n)
+    )
   })
   reportShaderErrors(module, label)
   const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT
@@ -657,7 +686,8 @@ export function createLayer<S extends ParamSchema>(
               buffer: { type: 'uniform' as const }
             }
           ]
-        : [])
+        : []),
+      ...textureLayoutEntries(TEX_BASE, tex?.count ?? 0, VF)
     ]
   })
   const res = sideResources(device, label, imageEl !== null, glyphEl !== null)
@@ -883,6 +913,11 @@ export function createLayer<S extends ParamSchema>(
       )
       key.push(sdfView)
     }
+    if (tex) {
+      const te = tex.entries(TEX_BASE)
+      entries.push(...te)
+      key.push(tex.version())
+    }
     if (imageEl || glyphEl) {
       device.queue.writeBuffer(fxBuf, 48, side)
     }
@@ -1056,6 +1091,7 @@ export function createLayer<S extends ParamSchema>(
       removeExtra()
       res.destroy()
       images?.destroy()
+      tex?.destroy()
       glyphIndex.destroy()
       dataBuf?.destroy()
       fxBuf.destroy()

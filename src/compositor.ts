@@ -562,6 +562,7 @@ export async function createCompositor(
     return false
   }
   const graph: RenderGraph = {
+    assets: options.assets ?? null,
     shared: renderer.shared,
     setPostChain(chain) {
       renderer.postChain = chain

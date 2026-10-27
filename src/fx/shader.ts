@@ -261,7 +261,9 @@ export function stageSource(
   image = false,
   trail = false,
   prev = false,
-  sdf = false
+  sdf = false,
+  /** texturesWgsl(...) for the stage's textures (group 2). */
+  textures = ''
 ): string {
   return [
     FRAME_WGSL,
@@ -269,6 +271,7 @@ export function stageSource(
     paramsWgsl,
     POINTER_WGSL,
     BINDINGS_WGSL,
+    textures,
     image ? IMAGE_WGSL : '',
     sdf ? sdfWgsl(3, 0) : '',
     trail ? TRAIL_WGSL : '',

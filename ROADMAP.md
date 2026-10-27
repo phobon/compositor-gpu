@@ -390,7 +390,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         identical instances and draws. Harness comparisons between text
         on the page and in a group can fail under SwiftShader only
   - [ ] M5f `compositor-gpu bake` + manifest loader
-    - [ ] Fonts (built 2026-10-27; headless SwiftShader: morph.html
+    - [x] Fonts (built 2026-10-27; headless SwiftShader: morph.html
           baked equals parsed exactly at rest and in flight, opentype.js
           never loaded, the sdf page's unbaked weight falls back and
           still matches; test:unit 114; to check on the M1 Pro).
@@ -416,7 +416,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           `-baked-half` (test:fx bakes first). Not yet: a published
           `compositor-gpu` bin, woff2 sources, codepoints outside the
           ranges per glyph (they fall back to the atlas, not the source)
-    - [ ] SVG files as vectors (built 2026-10-27; headless SwiftShader:
+    - [x] SVG files as vectors (built 2026-10-27; headless SwiftShader:
           each baked `<img>` equals its inline twin exactly, a morph
           held at 0 equals the old icon at rest; test:unit 121; to check
           on the M1 Pro). Baking inline svgs was measured first and
@@ -445,7 +445,33 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           `-morph-half`, `-morph-0`, `-unbaked`. Not yet: `<style>`
           rules, an img's object-fit other than fill, css backgrounds
           of svg files
-    - [ ] Effect-input images (PNG mip chains first; KTX2 / Basis later)
+    - [ ] Effect-input textures (built 2026-10-27; headless SwiftShader:
+          textures.html loads both, the ramp layer equals ramp.png over
+          the page to 0.5 levels, the noise warp pass and grain material
+          draw; test:unit 126; to check on the M1 Pro). `"textures": [{
+          name, file, color }]` in the bake config: a PNG (at most 4096
+          px a side) becomes a `.cgt` (src/assets/texture_file.ts): RGBA8
+          texels with the whole mip chain built offline (2 x 2 box, odd
+          edges folded in; "srgb" in linear light weighted by alpha,
+          "linear" plain averages), each byte stored as its residual from
+          the gradient prediction (left + above - above-left, as PNG
+          does: the noise tile 66 KB raw-deflated, 34 KB filtered, all 8
+          levels), deflated. Not PNG files: the browser's image decode
+          would apply colour management and premultiplication, and
+          writeTexture of exact bytes skips both and the mip pass
+          (DecompressionStream('deflate') inflates). Stored rgba8unorm,
+          colour sRGB-encoded like the page (nothing in the compositor is
+          an -srgb format). `fx.texture(name)` -> Texture { name,
+          loaded, ready }; passes, layers and materials take `textures:
+          { name: texture }` (at most 4): `tex_<name>(uv)`, `_level`,
+          `_size`, `_levels`, `_ready` (src/fx/textures.ts; group 2 from
+          binding 5 for passes and materials, group 1 from 18 for
+          layers; a pass's layouts are made per trail / count / group 3
+          and kept). Loaded on first use; transparent until then. Page
+          `textures.html`, shots `fx-textures`, `-off`, `-ramp`. Not yet:
+          tiling samplers (fract in WGSL for now), KTX2 / Basis for big
+          textures, textures in transitions' snapshot passes or a layer's
+          `simulate`
     - [ ] Distance-field masks
   - [x] Catch exceptions from author code (2026-10-26, `guarded` in
         `util/log.ts`): layer and material `update`, every frame hook,

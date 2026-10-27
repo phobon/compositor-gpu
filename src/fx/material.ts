@@ -13,7 +13,19 @@ import {
 import { POINTER_WGSL } from './pointer'
 import { readsTime } from './shader'
 import type { Target } from './target'
+import {
+  TextureBinding,
+  type TextureInputs,
+  type TextureStore,
+  textureLayoutEntries,
+  textureList,
+  texturesWgsl
+} from './textures'
 import { type Trail, trailState, trailWgsl } from './trail'
+
+/** First group-2 binding of a material's textures (after trail's). */
+const TEX_BASE = 5
+
 import { guarded } from '../util/log'
 
 // Materials: re-shade a Target's mirrored records with author hooks
@@ -110,6 +122,10 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
   /** Read this trail's field in the hooks: `trail_at(p)` (viewport CSS
    * px), `trail_page(p)`, `trail_cell(p)`, `trail_snap(p)`. */
   trail?: Trail
+  /** Baked textures to read in the hooks, by WGSL name (Effects.texture;
+   * at most 4): `tex_<name>(uv)`, `tex_<name>_level(uv, lod)`,
+   * `tex_<name>_size()`, `tex_<name>_ready()`. */
+  textures?: TextureInputs
 }
 
 export interface Material<S extends ParamSchema = ParamSchema> {
@@ -131,6 +147,8 @@ export interface Material<S extends ParamSchema = ParamSchema> {
 
 /** What a Material needs from the runtime (effects.ts). */
 export interface MaterialDeps {
+  /** The runtime's baked textures. */
+  textures: TextureStore
   device: GPUDevice
   graph: RenderGraph
   pointerBuf: GPUBuffer
@@ -232,6 +250,10 @@ export function createMaterial<S extends ParamSchema>(
     life.paramsChanged()
   ) as unknown as ParamBlock<ParamSchema>
   const trail = trailState(o.trail)
+  const texList = textureList(o.textures, o.name)
+  const tex = texList.length
+    ? new TextureBinding(device, deps.textures, texList, label)
+    : null
   // entry.changed's inputs (see frame()).
   const usesPointer = [hooks, ...Object.values(o.raw ?? {})].some(
     (c) => typeof c === 'string' && /\bpointer\s*\./.test(c)
@@ -245,6 +267,11 @@ export function createMaterial<S extends ParamSchema>(
     POINTER_WGSL,
     UNIFORMS_WGSL,
     trail ? TRAIL_WGSL : '',
+    texturesWgsl(
+      2,
+      TEX_BASE,
+      texList.map(([n]) => n)
+    ),
     hooks,
     HOOKS_WGSL
   ].join('\n')
@@ -268,7 +295,8 @@ export function createMaterial<S extends ParamSchema>(
             },
             { binding: 4, visibility: VF, buffer: { type: 'uniform' as const } }
           ]
-        : [])
+        : []),
+      ...textureLayoutEntries(TEX_BASE, tex?.count ?? 0, VF)
     ]
   })
   const fxBuf = device.createBuffer({
@@ -284,9 +312,11 @@ export function createMaterial<S extends ParamSchema>(
   device.queue.writeBuffer(paramsBuf, 0, block.pack())
   /** Group 2; rebuilt (frame()) when the trail's field is replaced. */
   let bound = -1
+  let texBound = -1
   const makeGroup = (): GPUBindGroup => {
     const t = trail?.binding()
     bound = t?.version ?? -1
+    texBound = tex?.version() ?? -1
     return device.createBindGroup({
       label,
       layout,
@@ -299,7 +329,8 @@ export function createMaterial<S extends ParamSchema>(
               { binding: 3, resource: { buffer: t.field } },
               { binding: 4, resource: { buffer: t.info } }
             ]
-          : [])
+          : []),
+        ...(tex ? tex.entries(TEX_BASE) : [])
       ]
     })
   }
@@ -384,7 +415,10 @@ export function createMaterial<S extends ParamSchema>(
         (usesPointer && deps.pointerMoved())
       fresh = false
       trailWasLive = trailLive
-      if (trail && trail.binding().version !== bound) {
+      if (
+        (trail && trail.binding().version !== bound) ||
+        (tex && tex.version() !== texBound)
+      ) {
         entry.bindGroup = makeGroup()
         changed = true
       }
@@ -428,6 +462,7 @@ export function createMaterial<S extends ParamSchema>(
       }
       fxBuf.destroy()
       paramsBuf.destroy()
+      tex?.destroy()
     }
   }
   const removeEntry = graph.addMaterial(entry)

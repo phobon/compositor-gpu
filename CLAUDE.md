@@ -222,7 +222,13 @@ and `fx-morph-b` (ended, the live text), `fx-morph-assemble-half`,
 (must equal `fx-morph-b`), `fx-morph-scatter-half`, `fx-morph-baked` /
 `fx-morph-baked-half` (morph.html?baked from baked fonts, baked first:
 equal to `fx-morph-a` / `fx-morph-half`, opentype.js never loaded), on `playground/sdf.html` `fx-sdf` (glows from distance fields) and
-`fx-sdf-off` (all destroyed: must equal the page loaded with none), on `playground/layout.html`
+`fx-sdf-off` (all destroyed: must equal the page loaded with none), on
+`playground/vectors.html` `fx-vectors` (baked svg files drawn from imgs;
+`-twins`: each equal to its inline svg, `-morph-half`, `-morph-0` equal
+to the old icon at rest, `-unbaked`: images without the manifest), on
+`playground/textures.html` `fx-textures` / `-off` (baked textures in a
+pass, layer and material; `-ramp`: the layer's 1:1 ramp equal to
+ramp.png over the page), on `playground/layout.html`
 `fx-layout-a` (the grid), `fx-layout-0` (keyed layout morph to the
 detail view held at progress 0: must equal `fx-layout-a`),
 `fx-layout-half`, `fx-layout-1` (must equal `fx-layout-b`) and

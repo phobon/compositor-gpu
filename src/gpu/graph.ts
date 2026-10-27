@@ -161,6 +161,9 @@ export interface FrameHook {
 /** The compositor's extension surface for the effects layer. */
 export interface RenderGraph {
   readonly shared: Shared
+  /** The compositor's baked-asset manifest URL (CompositorOptions.assets),
+   * or null: fx textures load from it. */
+  readonly assets: string | null
   /** Install (or clear, with null) the post chain. Requests a frame. */
   setPostChain(chain: PostChain | null): void
   /** Register a frame hook; returns its removal function. */

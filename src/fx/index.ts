@@ -172,6 +172,7 @@ export {
   type TgpuFnLike
 } from './shader'
 export type { Target, TargetGlyphs, TargetImage } from './target'
+export type { Texture, TextureInputs } from './textures'
 export {
   TRAIL_INFO_BYTES,
   type Trail,

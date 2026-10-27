@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu effect textures playground</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 16px system-ui, sans-serif;
+        background: #f2efe8;
+        color: #1b1c20;
+      }
+      main { padding: 48px; display: flex; flex-direction: column; gap: 32px; }
+      h1 { font-size: 64px; margin: 0; letter-spacing: -0.02em; }
+      .row { display: flex; gap: 32px; align-items: flex-start; }
+      .card {
+        width: 280px; height: 160px; border-radius: 20px; padding: 20px;
+        background: #3d7bf5; color: #fff; font-weight: 600; font-size: 20px;
+      }
+      /* The ramp layer draws over this box, 1:1 (256 x 32). */
+      #ramp-box { width: 256px; height: 32px; outline: 1px dashed #b9b2a3; }
+      #controls {
+        position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;
+        display: flex; gap: 12px; align-items: center; font: 13px system-ui;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Effect textures</h1>
+      <div class="row">
+        <div class="card" id="grain">A material reading tex_noise</div>
+        <div class="card" id="plain" style="background:#2b2f3a">Plain card</div>
+      </div>
+      <div id="ramp-box"></div>
+    </main>
+    <div id="controls" data-gpu-ignore>
+      <label><input id="warp" type="checkbox" checked /> noise warp pass</label>
+    </div>
+    <script type="module" src="./textures.ts"></script>
+  </body>
+</html>

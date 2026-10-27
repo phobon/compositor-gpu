@@ -718,6 +718,28 @@ can't also take a region pass.
 
 Layers can sit under an element: `place: { before: el }`.
 
+## Textures
+
+```ts
+const noise = fx.texture('noise') // a name from the assets manifest
+fx.pass({ name: 'warp', textures: { noise }, fragment }) // and fx.layer,
+fx.material({ name: 'grain', target, textures: { noise }, fragment }) // fx.material
+```
+
+Images baked ahead of time (`textures` in the bake config, docs/
+INTEGRATION.md) with their mip chains, for effects to read: noise,
+normal and displacement maps, LUTs. `textures: { <name>: texture }` (at
+most 4; names are WGSL identifiers) puts `tex_<name>(uv)` (level 0),
+`tex_<name>_level(uv, lod)`, `tex_<name>_size()` (texels),
+`tex_<name>_levels()` and `tex_<name>_ready()` in scope. `uv` is 0..1
+over the image, clamped at the edges (`fract(uv)` to tile). Values are
+as stored: straight alpha, colour sRGB-encoded like the page's pixels
+(`"color": "srgb"` only changes how the mips were filtered: in linear
+light, weighted by alpha). A texture loads when an effect first uses
+it (`texture.ready` resolves true then, or false when it can't: no
+`assets` manifest, not in it, a failed fetch); until then it reads as
+transparent and `_ready()` is false. Not in a layer's `simulate`.
+
 ## Trails
 
 ```ts

@@ -131,6 +131,11 @@
 //                their baked files; each img must match its inline twin
 //                (fx-vectors-twins) and draw the baked shapes, and without
 //                ?baked draw as images (fx-vectors-unbaked)
+//   fx-textures  playground/textures.html?vr (M5f): baked textures read by
+//                name, noise warping the page (a pass) and graining a card
+//                (a material), a ramp drawn 1:1 by a layer, which must
+//                equal ramp.png over the page (fx-textures-ramp); then the
+//                warp off (fx-textures-off)
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1655,6 +1660,85 @@ async function main(): Promise<void> {
           regressionPct: null,
           status: raster.every((n) => n === 0) ? 'ok' : 'fail',
           note: `shapes ${raster.join(' ')}`
+        })
+      } finally {
+        await p.close()
+      }
+    }
+    if (['fx-textures'].some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`textures: ${m.text()}`)
+        }
+      })
+      try {
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await bake(resolve(root, 'playground/compositor-gpu.bake.json'), true)
+        await p.goto(`${url}textures.html?vr`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__textures), null, {
+          timeout: 30_000
+        })
+        const loaded = await p.evaluate(() => window.__textures?.ready())
+        results.push({
+          name: 'fx-textures (loaded)',
+          regressionPct: null,
+          status: loaded?.every(Boolean) ? 'ok' : 'fail',
+          note: `noise, ramp: ${loaded?.join(', ')}`
+        })
+        const clip = { x: 0, y: 0, width: VW, height: 420 }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(6)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const on = await shot('fx-textures')
+        await p.evaluate(() => window.__textures?.warp(false))
+        const off = await shot('fx-textures-off')
+        const moved = exactDiff(on, off)
+        results.push({
+          name: 'fx-textures (warp draws)',
+          regressionPct: null,
+          status: moved > 1000 ? 'ok' : 'fail',
+          note: `${moved} px differ with the warp on`
+        })
+        // The ramp layer, 1:1 over the page background: ramp.png
+        // composited (premultiplied) over #f2efe8.
+        const [rx = 0, ry = 0] =
+          (await p.evaluate(() => window.__textures?.rampRect())) ?? []
+        const src = PNG.sync.read(
+          readFileSync(resolve(root, 'playground/fx/ramp.png'))
+        )
+        const bg = [0xf2, 0xef, 0xe8]
+        let worst = 0
+        for (let y = 0; y < src.height; y++) {
+          for (let x = 0; x < src.width; x++) {
+            const i = (y * src.width + x) * 4
+            const o =
+              ((Math.round(ry) + y) * off.width + Math.round(rx) + x) * 4
+            const a = (src.data[i + 3] ?? 0) / 255
+            for (let c = 0; c < 3; c++) {
+              const want = (src.data[i + c] ?? 0) * a + (bg[c] ?? 0) * (1 - a)
+              worst = Math.max(worst, Math.abs((off.data[o + c] ?? 0) - want))
+            }
+          }
+        }
+        results.push({
+          name: 'fx-textures-ramp (= ramp.png)',
+          regressionPct: null,
+          status: worst <= 1.5 ? 'ok' : 'fail',
+          note: `max ${worst.toFixed(2)} levels`
         })
       } finally {
         await p.close()

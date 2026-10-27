@@ -185,6 +185,30 @@ filters, dashes, text, embedded images, group opacity, lengths in units
 other than px) and says why. The img must use `object-fit: fill` (the
 default).
 
+### Effect textures
+
+Images that effects read (noise, normal and displacement maps, LUTs) are
+baked with their mip chains and read by name:
+
+```jsonc
+{
+  "out": "public/gpu",
+  "textures": [
+    { "name": "noise", "file": "fx/noise.png" },             // data
+    { "name": "paper", "file": "fx/paper.png", "color": "srgb" }
+  ]
+}
+```
+
+```ts
+const noise = fx.texture('noise')
+fx.pass({ name: 'warp', textures: { noise }, fragment }) // tex_noise(uv)
+```
+
+`color` is `"linear"` (default) for data or `"srgb"` for colour; sources
+are PNGs up to 4096 px a side. A texture loads when an effect first uses
+it and reads as transparent until then (src/fx/README.md, Textures).
+
 ## Note on `typegpu` and `process.env`
 
 `typegpu` reads `globalThis.process.env.NODE_ENV` when it is first imported.

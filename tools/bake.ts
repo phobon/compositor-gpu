@@ -1,8 +1,9 @@
 // compositor-gpu bake (M5f; docs/EFFECTS.md, Bake CLI): turn fonts into
 // GPU-ready files (src/text/slug/baked.ts), and svg files into vector
-// files (src/assets/vector_file.ts), plus a manifest pages load with
-// `createCompositor({ assets: '/gpu/manifest.json' })`. Effect-input
-// images and distance-field masks follow.
+// files (src/assets/vector_file.ts), and effect-input images into
+// mipmapped textures (src/assets/texture_file.ts), plus a manifest pages
+// load with `createCompositor({ assets: '/gpu/manifest.json' })`.
+// Distance-field masks follow.
 //
 //   npm run bake [-- path/to/compositor-gpu.bake.json]
 //
@@ -25,13 +26,20 @@
 //     "svgs": [                            // <img data-gpu-vector> files
 //       { "dir": "public/icons", "src": "/icons/" },  // every *.svg in it
 //       { "file": "art/logo.svg", "src": "/logo.svg" }
+//     ],
+//     "textures": [                        // fx.texture(name) inputs
+//       { "name": "noise", "file": "fx/noise.png" },   // data (default)
+//       { "name": "paper", "file": "fx/paper.png", "color": "srgb" }
 //     ]
 //   }
 //
 // `src` is the URL pages load the file from (an img's src, from the
 // site's root); the runtime matches imgs by it. An svg using something
 // the path pass can't draw is skipped with the reason (pages draw it as
-// an image, as before).
+// an image, as before). A texture's `name` is a WGSL identifier (the
+// helpers are `tex_<name>(uv)` ...); `color` is "linear" for data (noise,
+// normal and displacement maps, LUTs) or "srgb" for colour. PNG sources,
+// at most 4096 px a side; the mip chain is built here.
 //
 // Each (weight, opsz) is one file; the outlines come from the same code
 // the runtime parses fonts with (src/text/slug/font.ts), so a baked face
@@ -45,7 +53,20 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { BakedManifest, BakedSvgEntry } from '../src/assets/manifest'
+import { deflateSync } from 'node:zlib'
+import { PNG } from 'pngjs'
+import type {
+  BakedManifest,
+  BakedSvgEntry,
+  BakedTextureEntry
+} from '../src/assets/manifest'
+import {
+  type BakedTextureHeader,
+  encodeBakedTexture,
+  filterLevels,
+  mipChain,
+  type TextureColor
+} from '../src/assets/texture_file'
 import { encodeBakedSvg } from '../src/assets/vector_file'
 import { type BakedFace, encodeBakedFont } from '../src/text/slug/baked'
 import {
@@ -69,10 +90,60 @@ interface FontConfig {
 
 type SvgConfig = { dir: string; src: string } | { file: string; src: string }
 
+interface TextureConfig {
+  name: string
+  file: string
+  color?: TextureColor
+}
+
 interface Config {
   out: string
   fonts?: FontConfig[]
   svgs?: SvgConfig[]
+  textures?: TextureConfig[]
+}
+
+const TEXTURE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
+const MAX_TEXTURE = 4096
+
+/** One texture file: the PNG's texels and their mip chain, deflated. */
+export function bakeTexture(
+  png: Buffer,
+  color: TextureColor
+): { bytes: ArrayBuffer; header: BakedTextureHeader } {
+  const img = PNG.sync.read(png)
+  if (img.width > MAX_TEXTURE || img.height > MAX_TEXTURE) {
+    throw new Error(
+      `${img.width} x ${img.height} is over ${MAX_TEXTURE} px a side`
+    )
+  }
+  const levels = mipChain(
+    new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.length),
+    img.width,
+    img.height,
+    color
+  )
+  const header: BakedTextureHeader = {
+    width: img.width,
+    height: img.height,
+    levels: levels.length,
+    color
+  }
+  const all = new Uint8Array(levels.reduce((n, l) => n + l.length, 0))
+  let at = 0
+  const views = levels.map((l) => {
+    all.set(l, at)
+    at += l.length
+    return all.subarray(at - l.length, at)
+  })
+  filterLevels(views, header)
+  return {
+    bytes: encodeBakedTexture(
+      header,
+      new Uint8Array(deflateSync(all, { level: 9 }))
+    ),
+    header
+  }
 }
 
 /** The svg files a config lists, with the URLs pages use for them. */
@@ -186,7 +257,13 @@ export async function bake(
   const out = resolve(root, config.out)
   mkdirSync(out, { recursive: true })
   await loadParser()
-  const manifest: BakedManifest = { version: 1, fonts: [], svgs: [] }
+  const manifest: BakedManifest = {
+    version: 1,
+    fonts: [],
+    svgs: [],
+    textures: []
+  }
+  const textures = manifest.textures as BakedTextureEntry[]
   const fonts = manifest.fonts as BakedFace[]
   const svgs = manifest.svgs as BakedSvgEntry[]
   if ((config.fonts ?? []).length > 0) {
@@ -282,6 +359,42 @@ export async function bake(
   if (svgs.length) {
     const kb = svgs.reduce((n, f) => n + f.bytes, 0) / 1024
     say(`[bake] ${svgs.length} svg file(s), ${kb.toFixed(1)} KB`)
+  }
+  if ((config.textures ?? []).length > 0) {
+    mkdirSync(resolve(out, 'tex'), { recursive: true })
+  }
+  for (const t of config.textures ?? []) {
+    if (!TEXTURE_NAME.test(t.name)) {
+      throw new Error(
+        `[bake] texture name "${t.name}": letters, digits and _ only, starting with a letter`
+      )
+    }
+    if (textures.some((x) => x.name === t.name)) {
+      throw new Error(`[bake] texture "${t.name}" listed twice`)
+    }
+    const color = t.color ?? 'linear'
+    if (color !== 'linear' && color !== 'srgb') {
+      throw new Error(`[bake] texture "${t.name}": color "${color}"`)
+    }
+    let baked: ReturnType<typeof bakeTexture>
+    try {
+      baked = bakeTexture(readFileSync(resolve(root, t.file)), color)
+    } catch (err) {
+      throw new Error(
+        `[bake] texture "${t.name}" (${t.file}): ${(err as Error).message}`
+      )
+    }
+    const name = `tex/${t.name}.cgt`
+    writeFileSync(resolve(out, name), new Uint8Array(baked.bytes))
+    textures.push({
+      name: t.name,
+      url: name,
+      ...baked.header,
+      bytes: baked.bytes.byteLength
+    })
+    say(
+      `[bake] ${name}: ${baked.header.width} x ${baked.header.height}, ${baked.header.levels} levels, ${color}, ${(baked.bytes.byteLength / 1024).toFixed(1)} KB`
+    )
   }
   const mpath = resolve(out, 'manifest.json')
   writeFileSync(mpath, `${JSON.stringify(manifest, null, 2)}\n`)

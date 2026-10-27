@@ -55,6 +55,16 @@ import {
 } from './shader'
 import { createTarget, type Target, targetRuns } from './target'
 import {
+  inertTexture,
+  type Texture,
+  TextureBinding,
+  type TextureInputs,
+  TextureStore,
+  textureLayoutEntries,
+  textureList,
+  texturesWgsl
+} from './textures'
+import {
   createTrail,
   inertTrail,
   type Trail,
@@ -112,6 +122,10 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Read this trail's field in the fragment: `trail(uv)`,
    * `trail_at(p)`, `trail_cell(p)`, `trail_snap(p)` (see Trail). */
   trail?: Trail
+  /** Baked textures to read, by WGSL name (Effects.texture; at most 4):
+   * `tex_<name>(uv)`, `tex_<name>_level(uv, lod)`, `tex_<name>_size()`,
+   * `tex_<name>_ready()`. */
+  textures?: TextureInputs
 }
 
 export interface Pass<S extends ParamSchema = ParamSchema> {
@@ -183,6 +197,11 @@ export interface Effects {
    * SdfOptions). `el` is isolated while the field lives (not with a
    * region pass on the same element). */
   sdf(el: Target | Element, opts?: SdfOptions): Sdf
+  /** A baked effect-input texture by its name in the assets manifest
+   * (`textures` in the bake config; CompositorOptions.assets), for the
+   * `textures` option of passes, layers and materials. It loads when an
+   * effect first uses it. */
+  texture(name: string): Texture
   /** Give up this caller's use of the runtime (createEffects returns the
    * same runtime per compositor, counting callers): the last release
    * destroys it. Destroy your own passes, motions etc. first. */
@@ -257,7 +276,12 @@ interface PassState {
   snap: Snapshot | null
   /** With `sdf`: its field bound as group 3. */
   sdf: { bind: (rp: GPURenderPassEncoder) => void } | null
+  /** With `textures`: their binding (group 2, from TEX_BASE). */
+  tex: TextureBinding | null
 }
+
+/** First group-2 binding of a pass's textures (after trail's 3, 4). */
+const TEX_BASE = 5
 
 /** `continuous` unless given: whether a stage reads the clock. */
 const passContinuous = <S extends ParamSchema>(opts: PassOptions<S>): boolean =>
@@ -362,6 +386,7 @@ function inertEffects(): Effects {
       createMotion(inertComposer, false, el, opts, () => reduced.on),
     trail: (opts) => inertTrail(opts),
     sdf: (el, opts = {}) => inertSdf(el, opts),
+    texture: (name) => inertTexture(name),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
@@ -383,6 +408,7 @@ function inertEffects(): Effects {
         ping: [],
         image: null,
         sdf: null,
+        tex: null,
         snap: null
       }
       return passHandle<S>(s, () => s.life.destroy())
@@ -569,6 +595,37 @@ function buildEffects(compositor: Compositor): Effects {
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectLayout]
   })
+  // With `textures`: group 2 grows by their entries (from TEX_BASE); the
+  // layouts are made per (trail, texture count, group 3) and kept.
+  const texGroupLayouts = new Map<string, GPUBindGroupLayout>()
+  const texGroupLayout = (trail: boolean, n: number): GPUBindGroupLayout => {
+    const key = `${trail ? 1 : 0}:${n}`
+    let l = texGroupLayouts.get(key)
+    if (!l) {
+      l = device.createBindGroupLayout({
+        label: `fx-effect+tex${n}`,
+        entries: [
+          uniform(0),
+          uniform(1),
+          uniform(2),
+          ...(trail
+            ? [
+                {
+                  binding: 3,
+                  visibility: GPUShaderStage.FRAGMENT,
+                  buffer: { type: 'read-only-storage' as const }
+                },
+                uniform(4)
+              ]
+            : []),
+          ...textureLayoutEntries(TEX_BASE, n, GPUShaderStage.FRAGMENT)
+        ]
+      })
+      texGroupLayouts.set(key, l)
+    }
+    return l
+  }
+  const texPipelineLayouts = new Map<string, GPUPipelineLayout>()
   const imageLayout = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
@@ -995,7 +1052,9 @@ function buildEffects(compositor: Compositor): Effects {
     bindImage: ((rp: GPURenderPassEncoder) => void) | null,
     trail: TrailState | null,
     prev = false,
-    sdf = false
+    sdf = false,
+    tex: TextureBinding | null = null,
+    texNames: readonly string[] = []
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
     const code = stageSource(
@@ -1004,19 +1063,34 @@ function buildEffects(compositor: Compositor): Effects {
       bindImage !== null && !prev && !sdf,
       trail !== null,
       prev,
-      sdf
+      sdf,
+      texturesWgsl(2, TEX_BASE, texNames)
     )
-    const layout = prev
-      ? trail
-        ? trailPrevPipelineLayout
-        : prevPipelineLayout
-      : trail
-        ? bindImage
-          ? trailImagePipelineLayout
-          : trailPipelineLayout
-        : bindImage
-          ? imagePipelineLayout
-          : pipelineLayout
+    const group3 = prev ? prevLayout : bindImage ? imageLayout : null
+    const g2 = tex ? texGroupLayout(trail !== null, tex.count) : null
+    const texKey = `${trail ? 1 : 0}:${tex?.count ?? 0}:${prev ? 'p' : bindImage ? 'i' : '-'}`
+    let texLayout = g2 ? texPipelineLayouts.get(texKey) : undefined
+    if (g2 && !texLayout) {
+      texLayout = device.createPipelineLayout({
+        bindGroupLayouts: group3
+          ? [frameLayout, srcLayout, g2, group3]
+          : [frameLayout, srcLayout, g2]
+      })
+      texPipelineLayouts.set(texKey, texLayout)
+    }
+    const layout = texLayout
+      ? texLayout
+      : prev
+        ? trail
+          ? trailPrevPipelineLayout
+          : prevPipelineLayout
+        : trail
+          ? bindImage
+            ? trailImagePipelineLayout
+            : trailPipelineLayout
+          : bindImage
+            ? imagePipelineLayout
+            : pipelineLayout
     const module = device.createShaderModule({ label, code })
     reportShaderErrors(module, label)
     const pipeline = device.createRenderPipeline({
@@ -1056,20 +1130,26 @@ function buildEffects(compositor: Compositor): Effects {
     ]
     let bindGroup: GPUBindGroup | null = null
     let bound = -1
+    let texBound = -1
     const group = (): GPUBindGroup => {
       const t = trail?.binding()
-      if (!bindGroup || (t && t.version !== bound)) {
+      const tv = tex?.version() ?? -1
+      if (!bindGroup || (t && t.version !== bound) || tv !== texBound) {
         bound = t?.version ?? -1
+        texBound = tv
         bindGroup = device.createBindGroup({
           label,
-          layout: t ? effectTrailLayout : effectLayout,
-          entries: t
-            ? [
-                ...entries,
-                { binding: 3, resource: { buffer: t.field } },
-                { binding: 4, resource: { buffer: t.info } }
-              ]
-            : entries
+          layout: g2 ?? (t ? effectTrailLayout : effectLayout),
+          entries: [
+            ...entries,
+            ...(t
+              ? [
+                  { binding: 3, resource: { buffer: t.field } },
+                  { binding: 4, resource: { buffer: t.info } }
+                ]
+              : []),
+            ...(tex ? tex.entries(TEX_BASE) : [])
+          ]
         })
       }
       return bindGroup
@@ -1091,6 +1171,8 @@ function buildEffects(compositor: Compositor): Effects {
     s.stages = []
     s.image?.destroy()
     s.image = null
+    s.tex?.destroy()
+    s.tex = null
     s.snap?.destroy()
     s.paramsBuf?.destroy()
     s.paramsBuf = null
@@ -1281,7 +1363,11 @@ function buildEffects(compositor: Compositor): Effects {
 
   // Distance fields by handle (layers and passes resolve theirs here).
   const sdfs = new Map<Sdf, SdfField>()
+  const textureStore = new TextureStore(device, graph.assets, () =>
+    graph.requestFrame()
+  )
   const layerDeps = {
+    textures: textureStore,
     sdfOf: (s: Sdf) => sdfs.get(s) ?? null,
     device,
     format,
@@ -1324,6 +1410,7 @@ function buildEffects(compositor: Compositor): Effects {
         ping: [],
         image: null,
         sdf: null,
+        tex: null,
         snap: (opts as { [SNAPSHOT]?: Snapshot })[SNAPSHOT] ?? null
       }
       const handler = state.region ? regionHandler(state) : null
@@ -1360,6 +1447,16 @@ function buildEffects(compositor: Compositor): Effects {
           ? (rp: GPURenderPassEncoder) => snap.bind(rp)
           : (state.image?.bind ?? state.sdf?.bind ?? null)
         const trail = trailState(opts.trail)
+        const texList = textureList(opts.textures, opts.name)
+        if (texList.length) {
+          state.tex = new TextureBinding(
+            device,
+            textureStore,
+            texList,
+            `fx:${opts.name}`
+          )
+        }
+        const texNames = texList.map(([n]) => n)
         state.stages = frags.map((f, i) =>
           buildStage(
             opts.name,
@@ -1371,7 +1468,9 @@ function buildEffects(compositor: Compositor): Effects {
             bind,
             trail,
             snap !== null,
-            state.sdf !== null
+            state.sdf !== null,
+            state.tex,
+            texNames
           )
         )
         passes.push(state)
@@ -1536,6 +1635,9 @@ function buildEffects(compositor: Compositor): Effects {
       graph.requestFrame()
       return handle
     },
+    texture(name) {
+      return destroyed ? inertTexture(name) : textureStore.get(name)
+    },
     trail(opts = {}) {
       if (destroyed) {
         return inertTrail(opts)
@@ -1612,6 +1714,7 @@ function buildEffects(compositor: Compositor): Effects {
       releaseTargets()
       pointerBuf.destroy()
       noImage?.destroy()
+      textureStore.destroy()
     },
     get reducedMotion() {
       return reduced.on

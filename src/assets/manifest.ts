@@ -1,9 +1,10 @@
 import type { BakedFace } from '../text/slug/baked'
+import type { TextureColor } from './texture_file'
 
 // The baked-asset manifest (M5f; tools/bake.ts): what
-// `createCompositor({ assets })` points at. Fonts (text/slug/baked.ts)
-// and svg files (assets/vector_file.ts); each file loads when a page
-// first needs it.
+// `createCompositor({ assets })` points at. Fonts (text/slug/baked.ts),
+// svg files (assets/vector_file.ts) and effect-input textures
+// (assets/texture_file.ts); each file loads when a page first needs it.
 
 /** One baked svg file in a manifest. */
 export interface BakedSvgEntry {
@@ -16,10 +17,23 @@ export interface BakedSvgEntry {
   bytes: number
 }
 
+/** One baked effect-input texture in a manifest (fx.texture(name)). */
+export interface BakedTextureEntry {
+  name: string
+  /** The baked file, relative to the manifest. */
+  url: string
+  width: number
+  height: number
+  levels: number
+  color: TextureColor
+  bytes: number
+}
+
 export interface BakedManifest {
   version: number
   fonts?: BakedFace[]
   svgs?: BakedSvgEntry[]
+  textures?: BakedTextureEntry[]
 }
 
 const loads = new Map<string, Promise<BakedManifest>>()

@@ -370,9 +370,14 @@ change is noted.
   anything missing. Fonts: one file per (family, weight, style) instance
   listed, variable fonts instanced at bake time, full cmap within the
   face's unicode-range, with contour data for segment cutting; the CLI
-  warns that some font licences forbid conversion. SVGs: paths. Images:
-  effect inputs only (displacement and normal maps, noise, masks, LUTs)
-  as mipmapped KTX2 or PNG; page images keep the runtime path, since a
+  warns that some font licences forbid conversion. SVGs: files, so
+  `<img data-gpu-vector>` draws them as path records and they morph
+  (inline svgs aren't baked: their parse is under a millisecond and a
+  hash lookup costs about as much). Images:
+  effect inputs only (displacement and normal maps, noise, masks, LUTs),
+  read by name (`fx.texture`, `textures` on passes, layers and
+  materials) from mipmapped files (RGBA8, filtered and deflated; KTX2
+  for big ones later); page images keep the runtime path, since a
   baked copy would be a second download. A Vite plugin wrapping the CLI
   comes later.
 - **Budget (Q20).** M1 Pro, headed, dpr 2, 120 Hz: 0 dropped frames over
