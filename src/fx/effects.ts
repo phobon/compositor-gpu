@@ -34,6 +34,7 @@ import {
   type ParamSchema,
   type ParamValues
 } from './params'
+import { type PathShape, pathShapesOf } from './path_shapes'
 import {
   applyOverride,
   emptyPointer,
@@ -155,6 +156,11 @@ export interface Effects {
    * `release()`: the outgoing text of a morph (presets/morph.ts). Null
    * without WebGPU or before the element's text has been drawn. */
   glyphGhost(el: Target | Element): GlyphGhost | null
+  /** `el`'s vector svg shapes as last read (the path pass's records of
+   * its subtree, in paint order) as plain data in viewport CSS px: what a
+   * morph interpolates (presets/layout_morph.ts). Empty without WebGPU,
+   * before the first read, or for an svg not drawn as vectors. */
+  pathShapes(el: Target | Element): PathShape[]
   /** Move, scale, rotate and fade an element on the GPU (see
    * TransformOptions). Nothing without WebGPU. */
   transform(el: Target | Element, opts?: TransformOptions): Transform
@@ -336,6 +342,7 @@ function inertEffects(): Effects {
     material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
     glyphGhost: () => null,
+    pathShapes: () => [],
     transform: (el, opts) => createTransform(inertComposer, false, el, opts),
     motion: (el, opts) =>
       createMotion(inertComposer, false, el, opts, () => reduced.on),
@@ -1317,6 +1324,10 @@ function buildEffects(compositor: Compositor): Effects {
     glyphGhost(el) {
       const node = graph.nodeOf(el instanceof Element ? el : el.el)
       return node ? graph.glyphGhost(targetRuns(node)) : null
+    },
+    pathShapes(el) {
+      const node = graph.nodeOf(el instanceof Element ? el : el.el)
+      return node ? pathShapesOf(node, window.scrollX, window.scrollY) : []
     },
     transform(el, opts) {
       const t = createTransform(composer, true, el, opts, () => {

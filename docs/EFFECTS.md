@@ -408,6 +408,12 @@ Built so far (M5d-1, 2026-10-26, checked on the M1 Pro), and where it differs fr
   their own, nested ones relative to their parent's transform, and
   unkeyed content cross-fades with its box. Text moves by its content
   box (grown for overhangs), so a block heading scales with its size.
+- Svg shape morphs (M5d-3) run inside `layoutMorph` rather than the
+  path pass: a keyed vector svg's shapes, resampled and aligned in JS
+  (`fx/path_shapes.ts`, from `Effects.pathShapes`), are filled and
+  stroked by the transition pass from a uniform table (params `count`
+  arrays), the live svg hidden in flight by its layer transform. Shapes
+  pair by paint order; the path pass itself is unchanged.
 - Endpoint exactness comes from drawing every glyph at rest the way the
   text pass does, op for op (quad = ink box plus one device pixel, em
   interpolated per vertex, `fwidth(em)` for the pixel scale, colour from

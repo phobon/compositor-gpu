@@ -953,7 +953,14 @@ layer draws nothing).
   by its contents' box, its old text keyed out of the snapshot by its
   colour (exact over a flat background). Nested keys pair on their own.
   Progress 0 and 1 are the two pages exactly; `play()` ends the morph
-  when done, `end()` otherwise. Under reduced motion the pages
+  when done, `end()` otherwise. A keyed svg drawn as vectors in both
+  states (`data-gpu-morph` puts it on the path pass) morphs its shapes:
+  shapes pair by paint order and their subpaths by order, each resampled
+  to `MORPH_POINTS` (64) and turned to the same winding and the start
+  that travels least; fills, strokes and stroke widths mix, and a
+  subpath on one side only grows from or shrinks to its centroid. Up to
+  `MAX_SHAPES` (16) shapes and `MAX_CONTOURS` (24) subpaths in all; past
+  that the svg cross-fades as a box. Under reduced motion the pages
   cross-fade (150 ms). Elements with a CSS transform pair by their
   bounding boxes.
 - `morph(fx, el, { pieces = 16, spread = 0.5, arc = 0.2, spin = 0.4,

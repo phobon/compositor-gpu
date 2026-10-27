@@ -40,6 +40,7 @@ export {
   type ParamValues,
   parseHex
 } from './params'
+export { MORPH_POINTS, type PathShape } from './path_shapes'
 export {
   CLICKS,
   POINTER_BYTES,
@@ -92,7 +93,9 @@ export {
   type LayoutMorphOptions,
   type LayoutMorphSchema,
   layoutMorph,
-  MAX_PAIRS
+  MAX_CONTOURS,
+  MAX_PAIRS,
+  MAX_SHAPES
 } from './presets/layout_morph'
 export { type LensOptions, type LensSchema, lens } from './presets/lens'
 export {

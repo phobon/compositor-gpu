@@ -23,6 +23,15 @@
       .card img { display: block; width: 100%; object-fit: cover; }
       .card h2 { margin: 0; letter-spacing: -0.02em; }
       p { margin: 0; max-width: 60ch; font-size: 18px; line-height: 1.5; }
+      .card .row { display: flex; align-items: center; justify-content: space-between; }
+      .icon { display: block; flex: none; }
+      .mark { display: block; }
+      main.a .mark { width: 160px; height: 160px; margin-top: 32px; }
+      main.b .mark { width: 72px; height: 72px; align-self: flex-end; }
+      main.a .card .icon { width: 28px; height: 28px; margin-right: 20px; }
+      main.b .hero .icon { width: 56px; height: 56px; margin-right: 28px; }
+      main.b .side .card .row { flex: 1; }
+      main.b .side .card .icon { width: 20px; height: 20px; margin-right: 16px; }
 
       /* State a: a heading and a grid of three cards. */
       main.a h1 { font-size: 72px; margin-bottom: 32px; }

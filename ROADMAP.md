@@ -301,10 +301,27 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         Page `playground/layout.html`; shots `fx-layout-a`, `-0`,
         `-half`, `-1`, `-b`; `test/unit/params.test.ts`
         (`docs/rd/experiments/2026-10-26-morph-ghosts.md`)
-  - [ ] M5d-3 morph content inside pairs: SVG path morphs (resample to
-        one count, least-travel start), text segment morphs that follow
-        a pair's box, `pose` presets (assemble, scatter), route swaps
-        across scroll positions
+  - [ ] M5d-3 morph content inside pairs
+    - [ ] SVG shape morphs (built 2026-10-27; headless SwiftShader:
+          progress 0 / 1 exact, no console errors; to check on the M1
+          Pro): a keyed svg drawn as vectors on both sides morphs in
+          `layoutMorph` (pair kind 2): `Effects.pathShapes(el)` gives its
+          path records as viewport polylines (`fx/path_shapes.ts`);
+          shapes pair by paint order and subpaths by order, resampled
+          to `MORPH_POINTS` = 64 and aligned (winding direction,
+          least-travel start; open ones may reverse); a subpath on one
+          side only grows from or shrinks to its centroid carried with
+          the box. The pass fills (path_wgsl winding and edge distance)
+          and strokes the points in between, colours and widths mixed,
+          while a layer transform hides the live svg in flight; its old
+          spot shows the snapshot background around it. Tables:
+          `MAX_SHAPES` 16, `MAX_CONTOURS` 24 in all (past them the pair
+          cross-fades as a box, with a warning). Playground icons
+          (play -> pause, check -> plus, circle -> star) and a stroked
+          hexagon -> triangle; `test/unit/path_shapes.test.ts`
+    - [ ] Text segment morphs that follow a pair's box
+    - [ ] `pose` presets (assemble, scatter)
+    - [ ] Route swaps across scroll positions
   - [ ] M5e runtime JFA distance fields (`sdf` binding)
   - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
         (full cmap, contour data, licence warning), SVG paths,

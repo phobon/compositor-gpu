@@ -18,20 +18,53 @@ const vr = q.has('vr')
 const page = document.getElementById('page') as HTMLElement
 const NAMES = ['Harbour', 'Quarry', 'Orchard']
 
-const card = (i: number, cls: string, extra = ''): string => `
+// Icons keyed per card: vector svgs (data-gpu-morph draws them through the
+// path pass), so their shapes morph: play -> pause (one shape into two),
+// and a stroked check -> plus.
+const ICONS = [
+  [
+    '<path d="M8 5 L19 12 L8 19 Z" />',
+    '<rect x="6" y="5" width="4" height="14" /><rect x="14" y="5" width="4" height="14" />'
+  ],
+  [
+    '<path d="M5 12 L10 17 L19 7" fill="none" stroke="C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />',
+    '<path d="M12 5 L12 19 M5 12 L19 12" fill="none" stroke="C" stroke-width="2.5" stroke-linecap="round" />'
+  ],
+  [
+    '<circle cx="12" cy="12" r="7" />',
+    '<path d="M12 3 L14.6 9.4 L21.5 9.9 L16.2 14.3 L17.9 21 L12 17.3 L6.1 21 L7.8 14.3 L2.5 9.9 L9.4 9.4 Z" />'
+  ]
+]
+const icon = (i: number, s: number, color: string): string =>
+  `<svg class="icon" viewBox="0 0 24 24" data-gpu-morph="icon-${i}" fill="${color}">${(ICONS[i]?.[s] ?? '').replaceAll('"C"', `"${color}"`)}</svg>`
+
+// A larger stroked mark: a hexagon in the grid, a triangle in the detail
+// view (polygons morphing across vertex counts).
+const MARKS = [
+  'M50 6 L88 28 L88 72 L50 94 L12 72 L12 28 Z',
+  'M50 10 L92 86 L8 86 Z'
+]
+const mark = (s: number): string =>
+  `<svg class="mark" viewBox="0 0 100 100" data-gpu-morph="mark"><path d="${MARKS[s]}" fill="none" stroke="#c2410c" stroke-width="7" stroke-linejoin="round" /></svg>`
+
+const card = (i: number, cls: string, s: number, extra = ''): string => `
   <article class="card ${cls}" data-gpu-morph="card-${i}">
     <img src="./test.png" alt="" data-gpu-morph="img-${i}" />
-    <h2 data-gpu-morph="name-${i}">${NAMES[i]}</h2>${extra}
+    <div class="row">
+      <h2 data-gpu-morph="name-${i}">${NAMES[i]}</h2>
+      ${icon(i, s, cls === 'hero' ? '#f4f1ea' : '#151517')}
+    </div>${extra}
   </article>`
 
 const STATES = [
   () => `
     <h1 data-gpu-morph="title">Projects</h1>
-    <div class="grid">${[0, 1, 2].map((i) => card(i, '')).join('')}</div>`,
+    <div class="grid">${[0, 1, 2].map((i) => card(i, '', 0)).join('')}</div>
+    ${mark(0)}`,
   () => `
     <h1 data-gpu-morph="title">Projects</h1>
-    ${card(0, 'hero', '<p>Stone, water and a long horizon: the first of three studies, opened from the grid. Its box, image and title move here; this text fades in.</p>')}
-    <div class="side">${[1, 2].map((i) => card(i, '')).join('')}</div>`
+    ${card(0, 'hero', 1, '<p>Stone, water and a long horizon: the first of three studies, opened from the grid. Its box, image and title move here; this text fades in.</p>')}
+    <div class="side">${mark(1)}${[1, 2].map((i) => card(i, '', 1)).join('')}</div>`
 ]
 let state = 0
 const show = (s: number): void => {
