@@ -354,12 +354,23 @@ export interface MorphOptions {
 export interface Morph {
   /** Copy the text as drawn now and draw it from the copy (the live text
    * is hidden from here until end()). Resolves once the copy is taken:
-   * change the text then. */
-  capture(): Promise<void>
+   * change the text then. `el`: copy this element's text instead of the
+   * morph's own (presets/layout_morph.ts reuses morphs across keyed
+   * elements). */
+  capture(el?: Element): Promise<void>
   /** After the change: resolves once the new text has been drawn and the
    * pieces are built (or after `timeout` ms, default 1500, with no
-   * morph: the new text shows at end()). Then drive `progress`. */
-  settled(timeout?: number): Promise<void>
+   * morph: the new text shows at end()). Then drive `progress`. `el`:
+   * the element holding the new text, when the change replaced it (a
+   * route swap); its text is hidden too until end(). */
+  settled(timeout?: number, el?: Element): Promise<void>
+  /** False hides the live text (the default from capture() until end());
+   * true shows it while the morph draws (a caller compositing the morph
+   * itself, at its ends). */
+  showLive: boolean
+  /** True when the last settled() built the pieces (the new text was
+   * drawn in time). */
+  readonly ready: boolean
   /** 0 = the old text, 1 = the new text. */
   progress: number
   /** Tween progress 0 -> 1 over `ms` (default 1100) with `ease` (default
@@ -387,10 +398,7 @@ interface Side {
 const nextFrame = (): Promise<void> =>
   new Promise((r) => requestAnimationFrame(() => r()))
 
-function frameOf(
-  inst: Float32Array,
-  k: number
-): Side['frames'][number] {
+function frameOf(inst: Float32Array, k: number): Side['frames'][number] {
   const b = k * GLYPH_FLOATS
   const f = (i: number) => inst[b + i] ?? 0
   const [rx, ry, rw, rh] = [f(0), f(1), f(2), f(3)]
@@ -422,7 +430,9 @@ export function morph(
   el: Element | Target,
   opts: MorphOptions = {}
 ): Morph {
-  const target = el instanceof Element ? fx.target(el) : el
+  const own = el instanceof Element ? fx.target(el) : el
+  /** The element whose text is copied now (capture(el) changes it). */
+  let target = own
   const pieces = Math.max(1, Math.round(opts.pieces ?? 16))
   let a: Side | null = null
   let b: Side | null = null
@@ -432,8 +442,8 @@ export function morph(
     name: opts.name ?? 'morph',
     count: 0,
     stride: STRIDE,
-    glyphs: target,
-    place: { after: target },
+    glyphs: own,
+    place: { after: own },
     enabled: false,
     continuous: true,
     params: schema,
@@ -453,18 +463,43 @@ export function morph(
   }
   // Hides the live text while the morph draws it (Slug glyphs only:
   // fallback-atlas glyphs, emoji, keep drawing).
-  const hide: Material = fx.material({
-    name: `${opts.name ?? 'morph'}-hide`,
-    target,
-    kinds: ['glyph'],
-    enabled: false,
-    // Not drawn at all until compiled (never the plain text meanwhile).
-    hold: true,
-    fragment: /* wgsl */ `
+  const hider = (t: Target): Material =>
+    fx.material({
+      name: `${opts.name ?? 'morph'}-hide`,
+      target: t,
+      kinds: ['glyph'],
+      enabled: false,
+      // Not drawn at all until compiled (never the plain text meanwhile).
+      hold: true,
+      fragment: /* wgsl */ `
       fn fragment(m : MatIn) -> vec4f {
         return vec4f(0.0);
       }`
-  })
+    })
+  const hide: Material = hider(own)
+  /** Hiders of other elements (capture(el), settled(t, el)), freed at
+   * end(). */
+  const extra = new Map<Element, Material>()
+  let hiding = false
+  let showLive = false
+  /** The morph's own element is among those hidden. */
+  let ownUsed = false
+  const hidersOn = (): void => {
+    const on = hiding && !showLive
+    hide.enabled = on && ownUsed
+    for (const m of extra.values()) {
+      m.enabled = on
+    }
+  }
+  /** Hide `t`'s live text while the morph runs. */
+  const hideToo = (t: Target): void => {
+    if (t.el === own.el) {
+      ownUsed = true
+    } else if (!extra.has(t.el)) {
+      extra.set(t.el, hider(t))
+    }
+    hidersOn()
+  }
 
   const sideOf = (ghost: GlyphGhost, base: number): Side => ({
     ghost,
@@ -564,18 +599,13 @@ export function morph(
         }
       })
       const counts = share(weights, pieces)
-      const out: { k: number; cut: CutGlyph; seg: Segment; me: number }[] =
-        []
+      const out: { k: number; cut: CutGlyph; seg: Segment; me: number }[] = []
       const starts = new Map<number, number>()
       idx.forEach((k, n) => {
         const fr = s.frames[k] as Side['frames'][number]
         const aspect =
           Math.hypot(...fr.ay) / Math.max(Math.hypot(...fr.ax), 1e-6)
-        const cut = cutGlyph(
-          s.ghost.outlines[k] ?? [],
-          aspect,
-          counts[n] ?? 0
-        )
+        const cut = cutGlyph(s.ghost.outlines[k] ?? [], aspect, counts[n] ?? 0)
         starts.set(k, table.length)
         for (const seg of cut.segments) {
           table.push(seg.cx, seg.cy)
@@ -726,8 +756,19 @@ export function morph(
         p.fade = p.progress
       }
     },
-    async capture() {
+    get ready() {
+      return b !== null
+    },
+    get showLive() {
+      return showLive
+    },
+    set showLive(v: boolean) {
+      showLive = v
+      hidersOn()
+    },
+    async capture(el?: Element) {
       release()
+      target = el ? fx.target(el) : own
       let ghost = fx.glyphGhost(target)
       for (let i = 0; !ghost && i < 90; i++) {
         await nextFrame()
@@ -744,25 +785,37 @@ export function morph(
       last = 0
       upload(restRows(a), [])
       layer.enabled = true
-      hide.enabled = true
+      hiding = true
+      hideToo(target)
       // One frame so the copy is drawn before the page changes the text.
       await nextFrame()
     },
-    async settled(timeout = 1500) {
+    async settled(timeout = 1500, el?: Element) {
       if (!a) {
         return
+      }
+      const from = target
+      if (el && el !== target.el) {
+        target = fx.target(el)
+        hideToo(target)
       }
       const until = performance.now() + timeout
       let ghost: GlyphGhost | null = null
       const before = a.ghost.text.join('')
       while (performance.now() < until) {
         await nextFrame()
-        if (target.version === captured) {
+        const same = target === from
+        if (same && target.version === captured) {
           continue
         }
         const g = fx.glyphGhost(target)
         // A re-read for another reason can still hold the old text.
-        if (g && g.text.join('') === before && performance.now() < until) {
+        if (
+          same &&
+          g &&
+          g.text.join('') === before &&
+          performance.now() < until
+        ) {
           g.release()
           continue
         }
@@ -807,7 +860,13 @@ export function morph(
     },
     end() {
       layer.enabled = false
+      hiding = false
+      ownUsed = false
       hide.enabled = false
+      for (const m of extra.values()) {
+        m.destroy()
+      }
+      extra.clear()
       release()
     },
     destroy() {

@@ -10,6 +10,7 @@ import {
 } from '../path_shapes'
 import type { Transform } from '../transform'
 import type { Transition } from '../transition'
+import { type Morph, type MorphOptions, morph } from './morph'
 import type { Shockwave } from './shockwave'
 
 // Keyed layout morphs between two DOM states (M5d-2; docs/EFFECTS.md,
@@ -42,6 +43,14 @@ import type { Shockwave } from './shockwave'
 // strokes the points in between, colours and stroke widths mixed, while
 // the live svg is hidden. A shape or subpath on one side only grows from
 // or shrinks to its centroid, fading.
+//
+// A keyed element whose text changed (an element that paints no box,
+// its string different) morphs as glyph segments (presets/morph.ts):
+// kept graphemes move whole, changed ones break into segments that
+// re-form as the new string on the way to the new box. The morph's layer
+// draws for the pass alone (Transition.addLayer), composited over the
+// blend of the pages, so the text is never half faded; the live text is
+// hidden in flight and the old text keyed out of the snapshot.
 
 /** Pairs the pass can draw (more: the rest cross-fade, with a warning). */
 export const MAX_PAIRS = 16
@@ -67,8 +76,8 @@ const schema = {
   count: { type: 'f32', default: 0 },
   // Per pair: old and new boxes (uv: x, y, w, h over the viewport); radii
   // (CSS px: old, new) and the kind (0 box, 1 text keyed out of the
-  // snapshot by its colour, 2 svg shapes); the old text colour (sRGB,
-  // alpha).
+  // snapshot by its colour, 2 svg shapes, 3 text morphing as segments);
+  // the old text colour (sRGB, alpha).
   o: table,
   n: table,
   r: table,
@@ -149,7 +158,7 @@ fn lm_holes(first : u32, n : u32, q : vec2f, px : vec4f, fill : vec4f,
   for (var j = first; j < n; j++) {
     if (lm_in(q, lm_o(j))) {
       let k = lm_r(j).z;
-      if (k > 1.5) {
+      if (abs(k - 2.0) < 0.5) {
         o = lm_bg(j, css);
       } else if (k < 0.5) {
         return fill;
@@ -227,6 +236,10 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
     let r = o * (1.0 - t) + lm_n(i) * t;
     let rr = lm_r(i);
     let cov = lm_cov(p, r * vec4f(css, css), rr.x * (1.0 - t) + rr.y * t);
+    if (rr.z > 2.5) {
+      // Text morphing as segments: drawn by its layer (the overlay).
+      continue;
+    }
     if (rr.z > 1.5) {
       // Svg shapes, drawn here (the live svg is hidden in flight); only
       // near the box between (shapes stay inside their svg's box, with
@@ -250,7 +263,9 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
       }
     }
   }
-  return col;
+  // Text morphs, whole over the blend.
+  let ov = overlay(uv);
+  return ov + col * (1.0 - ov.a);
 }
 `
 
@@ -264,6 +279,9 @@ interface Old {
   color: number[]
   /** A vector svg's shapes, viewport CSS px; empty otherwise. */
   shapes: PathShape[]
+  /** Its text (text-only elements), and the morph holding a copy. */
+  string: string
+  morph: Morph | null
 }
 
 interface Box {
@@ -285,6 +303,8 @@ interface Pair {
   tf: Transform | null
   /** Its svg shapes morph (the live svg hidden in flight). */
   shapes: boolean
+  /** Its text morphs as segments (drawn by the morph's layer). */
+  morph: Morph | null
 }
 
 export interface LayoutMorphOptions {
@@ -294,6 +314,9 @@ export interface LayoutMorphOptions {
   timeout?: number
   /** Played from the viewport's middle when play() starts. */
   shockwave?: Shockwave | null
+  /** Changed text in text-only pairs morphs as glyph segments with these
+   * morph options (presets/morph.ts); false: it cross-fades. Default {}. */
+  text?: Omit<MorphOptions, 'shockwave' | 'name'> | false
   name?: string
 }
 
@@ -521,6 +544,25 @@ export function layoutMorph(
   const root = opts.root ?? document
   let olds = new Map<string, Old>()
   let pairs: Pair[] = []
+  // Text morphs, reused across captures (their layers draw for the pass).
+  const morphs: Morph[] = []
+  const morphOf = (k: number, el: Element): Morph => {
+    let m = morphs[k]
+    if (!m) {
+      m = morph(fx, el, {
+        ...(opts.text || {}),
+        name: `${opts.name ?? 'layout-morph'}-text-${k}`
+      })
+      pass.addLayer(m.layer)
+      morphs[k] = m
+    }
+    return m
+  }
+  const endMorphs = (): void => {
+    for (const m of morphs) {
+      m.end()
+    }
+  }
 
   const keyed = (): Element[] =>
     Array.from(root.querySelectorAll(`[${KEY_ATTR}]`))
@@ -567,6 +609,12 @@ export function layoutMorph(
       tf.opacity = q.shapes && t > 0 && t < 1 ? 0 : 1
       tf.x = want.x - q.org.x - sx * (q.now.x - q.org.x)
       tf.y = want.y - q.org.y - sy * (q.now.y - q.org.y)
+      if (q.morph) {
+        q.morph.progress = t
+        // The live text shows only at the ends (the pass shows the pages
+        // there, exactly).
+        q.morph.showLive = t <= 0 || t >= 1
+      }
     })
   }
 
@@ -575,25 +623,45 @@ export function layoutMorph(
     get keys() {
       return pairs.map((q) => q.key)
     },
-    capture() {
+    async capture() {
       clearPairs()
+      endMorphs()
       olds = new Map()
+      const texts: [Old, Element][] = []
       for (const el of keyed()) {
         const key = el.getAttribute(KEY_ATTR) ?? ''
         if (!key || olds.has(key)) {
           continue
         }
         const box = boxOf(el)
-        olds.set(key, {
+        const text = !paintsBox(el)
+        const old: Old = {
           box,
           radius: radiusOf(el, box),
-          text: !paintsBox(el),
+          text,
           color: colorOf(el),
-          shapes: isSvg(el) ? fx.pathShapes(el) : []
-        })
+          shapes: isSvg(el) ? fx.pathShapes(el) : [],
+          string: text ? (el.textContent ?? '').trim() : '',
+          morph: null
+        }
+        olds.set(key, old)
+        if (text && old.string && texts.length < MAX_PAIRS) {
+          texts.push([old, el])
+        }
       }
       p.progress = 0
-      return pass.capture()
+      // The snapshot first (with the live text), then the copies (which
+      // hide it).
+      await pass.capture()
+      if (opts.text !== false && !fx.reducedMotion) {
+        await Promise.all(
+          texts.map(async ([old, el], k) => {
+            const m = morphOf(k, el)
+            await m.capture(el)
+            old.morph = m
+          })
+        )
+      }
     },
     async settled() {
       await pass.settled()
@@ -609,6 +677,7 @@ export function layoutMorph(
       const r = new Float32Array(4 * MAX_PAIRS)
       const c = new Float32Array(4 * MAX_PAIRS)
       const st = newTables()
+      const texts: [number, Morph, Element][] = []
       const seen = new Set<string>()
       const index = new Map<Element, number>()
       for (const el of keyed()) {
@@ -649,6 +718,15 @@ export function layoutMorph(
             )
           }
         }
+        // Changed text morphs as segments (settled below).
+        const m =
+          was.morph && (el.textContent ?? '').trim() !== was.string
+            ? was.morph
+            : null
+        if (m) {
+          was.morph = null
+          texts.push([i, m, el])
+        }
         pairs.push({
           key,
           el,
@@ -657,7 +735,8 @@ export function layoutMorph(
           org: { x: b.x, y: b.y },
           parent,
           tf: fx.transform(el, { originX: 0, originY: 0 }),
-          shapes
+          shapes,
+          morph: null
         })
         o.set(
           [was.box.x / vw, was.box.y / vh, was.box.w / vw, was.box.h / vh],
@@ -668,6 +747,23 @@ export function layoutMorph(
         r.set([was.radius, radiusOf(el, now), kind, 0], i * 4)
         c.set(was.color, i * 4)
       }
+      // Copies of text that didn't pair, or didn't change, go.
+      for (const was of olds.values()) {
+        was.morph?.end()
+        was.morph = null
+      }
+      await Promise.all(
+        texts.map(async ([i, m, el]) => {
+          await m.settled(1500, el)
+          const q = pairs[i]
+          if (q && m.ready) {
+            q.morph = m
+            r[i * 4 + 2] = 3
+          } else {
+            m.end()
+          }
+        })
+      )
       p.o = Array.from(o)
       p.n = Array.from(nw)
       p.r = Array.from(r)
@@ -717,10 +813,15 @@ export function layoutMorph(
     },
     end() {
       clearPairs()
+      endMorphs()
       pass.end()
     },
     destroy() {
       handle.end()
+      for (const m of morphs) {
+        m.destroy()
+      }
+      morphs.length = 0
       pass.destroy()
     }
   }

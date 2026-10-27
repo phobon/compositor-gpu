@@ -3,6 +3,7 @@ import type { GpuTimer } from '../gpu/timer'
 import { timed } from '../gpu/timer'
 import { reportShaderErrors } from '../util/log'
 import type { Pass, PassOptions } from './effects'
+import type { Layer } from './layer'
 import type { ParamSchema } from './params'
 import { FX_PREV_BYTES } from './shader'
 
@@ -40,6 +41,13 @@ export interface Transition<S extends ParamSchema = ParamSchema>
   end(): void
   /** True from capture() until settled() resolves. */
   readonly holding: boolean
+  /** Draw `layer` on its own each frame (no longer in the page's paint
+   * order) for the fragment to read with `overlay(uv)` (premultiplied):
+   * content the transition composites itself, so its blend between the
+   * pages leaves it whole (presets/layout_morph.ts's text morphs).
+   * Several layers draw in the order added. Returns the undo (the layer
+   * goes back to the page). */
+  addLayer(layer: Layer): () => void
 }
 
 /** Marks a PassOptions object as a transition's (internal). */
@@ -62,11 +70,21 @@ fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
 }
 `
 
+/** A transition's own layer (TransitionOptions.layer), drawn offscreen. */
+export interface SnapshotOverlay {
+  /** Draw into `rp` (bind group 0 already the scene's Frame); false when
+   * there's nothing to draw. */
+  draw(rp: GPURenderPassEncoder): boolean
+}
+
 export interface SnapshotDeps {
   device: GPUDevice
   format: GPUTextureFormat
-  /** The pass's group-3 layout: texture, sampler, uniform. */
+  /** The pass's group-3 layout: texture, sampler, uniform, overlay
+   * texture. */
   layout: GPUBindGroupLayout
+  /** The scene's Frame (bind group 0 for drawing the overlay). */
+  frameGroup(): GPUBindGroup
   sampler: GPUSampler
   timer: GpuTimer | null
   /** The mirror is complete as of this frame's read. */
@@ -78,9 +96,15 @@ export interface SnapshotDeps {
 export class Snapshot {
   want = false
   hold = false
+  /** Layers drawn on their own for `overlay(uv)` (Transition.addLayer). */
+  readonly overlays: SnapshotOverlay[] = []
   private texture: GPUTexture | null = null
+  /** The overlay layer's texture (scene-sized), when it has one. */
+  private overlayTex: GPUTexture | null = null
+  private overlayDrawn = false
   /** Bound before the first copy (and after end()). */
   private placeholder: GPUTexture | null = null
+  private boundOverlay: GPUTexture | null = null
   private group: GPUBindGroup | null = null
   private bound: GPUTexture | null = null
   private readonly info: GPUBuffer
@@ -176,20 +200,60 @@ export class Snapshot {
     this.data[0] = t?.width ?? v.width
     this.data[1] = t?.height ?? v.height
     this.data[2] = this.hold ? 1 : 0
+    this.overlayDrawn = this.hold ? false : this.drawOverlay(frame)
+    this.data[3] = this.overlayDrawn ? 1 : 0
     this.d.device.queue.writeBuffer(this.info, 0, this.data)
+  }
+
+  /** Draw the overlay layer into its scene-sized texture. */
+  private drawOverlay(frame: PostFrame): boolean {
+    if (this.overlays.length === 0) {
+      return false
+    }
+    const w = frame.sceneWidth
+    const h = frame.sceneHeight
+    if (
+      !this.overlayTex ||
+      this.overlayTex.width !== w ||
+      this.overlayTex.height !== h
+    ) {
+      this.overlayTex?.destroy()
+      this.overlayTex = this.create(w, h)
+    }
+    const rp = frame.encoder.beginRenderPass({
+      label: 'fx:transition-layer',
+      colorAttachments: [
+        {
+          view: this.overlayTex.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }
+      ]
+    })
+    rp.setBindGroup(0, this.d.frameGroup())
+    let drew = false
+    for (const o of this.overlays) {
+      drew = o.draw(rp) || drew
+    }
+    rp.end()
+    return drew
   }
 
   bind(rp: GPURenderPassEncoder): void {
     const t = this.texture ?? this.empty()
-    if (t !== this.bound || !this.group) {
+    const ov = this.overlayTex ?? this.empty()
+    if (t !== this.bound || ov !== this.boundOverlay || !this.group) {
       this.bound = t
+      this.boundOverlay = ov
       this.group = this.d.device.createBindGroup({
         label: 'fx:snapshot',
         layout: this.d.layout,
         entries: [
           { binding: 0, resource: t.createView() },
           { binding: 1, resource: this.d.sampler },
-          { binding: 2, resource: { buffer: this.info } }
+          { binding: 2, resource: { buffer: this.info } },
+          { binding: 3, resource: ov.createView() }
         ]
       })
     }
@@ -207,6 +271,8 @@ export class Snapshot {
     }
     this.texture?.destroy()
     this.texture = null
+    this.overlayTex?.destroy()
+    this.overlayTex = null
   }
 
   destroy(): void {
@@ -301,7 +367,10 @@ export class Snapshot {
  * resolve at once). */
 export function transitionHandle<S extends ParamSchema>(
   pass: Pass<S>,
-  snap: Snapshot | null
+  snap: Snapshot | null,
+  /** The runtime's side of addLayer: the layer as an overlay (taken off
+   * the page) and its undo; null when it isn't this runtime's. */
+  attach: (layer: Layer) => { overlay: SnapshotOverlay; undo(): void } | null
 ): Transition<S> {
   const h = pass as Transition<S>
   return Object.defineProperties(h, {
@@ -322,6 +391,27 @@ export function transitionHandle<S extends ParamSchema>(
         snap?.end()
       }
     },
-    holding: { get: () => snap?.hold ?? false }
+    holding: { get: () => snap?.hold ?? false },
+    addLayer: {
+      value: (layer: Layer): (() => void) => {
+        const a = snap ? attach(layer) : null
+        if (!snap || !a) {
+          return () => {}
+        }
+        snap.overlays.push(a.overlay)
+        let done = false
+        return () => {
+          if (done) {
+            return
+          }
+          done = true
+          const i = snap.overlays.indexOf(a.overlay)
+          if (i !== -1) {
+            snap.overlays.splice(i, 1)
+          }
+          a.undo()
+        }
+      }
+    }
   })
 }

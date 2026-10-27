@@ -376,6 +376,12 @@ export interface LayerDeps {
 export interface LayerState {
   handle: Layer<ParamSchema>
   life: Lifecycle
+  /** Drawn by a transition into its own texture (TransitionOptions.layer)
+   * rather than in the page's paint order. */
+  offscreen: boolean
+  /** Draw now into `rp` (bind group 0 the target's Frame); false when
+   * there's nothing to draw. */
+  drawInto(rp: GPURenderPassEncoder): boolean
   /** Per-frame: update hook, uploads. */
   frame(ctx: FrameContext): void
   destroy(): void
@@ -903,7 +909,8 @@ export function createLayer<S extends ParamSchema>(
 
   const extra = {
     place: toPlace(place),
-    active: () => life.enabled && drawn > 0 && dataBuf !== null,
+    active: () =>
+      !state.offscreen && life.enabled && drawn > 0 && dataBuf !== null,
     draw(rp: GPURenderPassEncoder) {
       const group = currentGroup()
       if (!group) {
@@ -920,6 +927,14 @@ export function createLayer<S extends ParamSchema>(
   const state: LayerState = {
     handle,
     life,
+    offscreen: false,
+    drawInto(rp) {
+      if (!(life.enabled && drawn > 0 && dataBuf !== null)) {
+        return false
+      }
+      extra.draw(rp)
+      return true
+    },
     frame(ctx) {
       if (!life.enabled) {
         return

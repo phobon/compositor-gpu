@@ -302,9 +302,9 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         `-half`, `-1`, `-b`; `test/unit/params.test.ts`
         (`docs/rd/experiments/2026-10-26-morph-ghosts.md`)
   - [ ] M5d-3 morph content inside pairs
-    - [ ] SVG shape morphs (built 2026-10-27; headless SwiftShader:
-          progress 0 / 1 exact, no console errors; to check on the M1
-          Pro): a keyed svg drawn as vectors on both sides morphs in
+    - [x] SVG shape morphs (built 2026-10-27; headless SwiftShader:
+          progress 0 / 1 exact, no console errors; checked on the M1 Pro
+          2026-10-27): a keyed svg drawn as vectors on both sides morphs in
           `layoutMorph` (pair kind 2): `Effects.pathShapes(el)` gives its
           path records as viewport polylines (`fx/path_shapes.ts`);
           shapes pair by paint order and subpaths by order, resampled
@@ -319,7 +319,17 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           cross-fades as a box, with a warning). Playground icons
           (play -> pause, check -> plus, circle -> star) and a stroked
           hexagon -> triangle; `test/unit/path_shapes.test.ts`
-    - [ ] Text segment morphs that follow a pair's box
+    - [ ] Text segment morphs in pairs (built 2026-10-27; headless
+          SwiftShader: progress 0 / 1 exact, no console errors; to check
+          on the M1 Pro): a text-only pair whose string changed morphs
+          through a pooled `morph` (`capture(el)`, `settled(t, el)` for a
+          replaced element, `showLive`, `ready`), pair kind 3. Its layer
+          draws for the pass alone: `Transition.addLayer(layer)` and
+          `overlay(uv)` (a scene-sized texture drawn before the stages;
+          `LayerState.offscreen`), composited whole over the pages'
+          blend; the live text hidden in flight, the old keyed out of the
+          snapshot. Option `text` (morph settings, or false). The
+          playground's title changes ("Projects" -> "Project 01")
     - [ ] `pose` presets (assemble, scatter)
     - [ ] Route swaps across scroll positions
   - [ ] M5e runtime JFA distance fields (`sdf` binding)

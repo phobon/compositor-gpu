@@ -62,7 +62,7 @@ const STATES = [
     <div class="grid">${[0, 1, 2].map((i) => card(i, '', 0)).join('')}</div>
     ${mark(0)}`,
   () => `
-    <h1 data-gpu-morph="title">Projects</h1>
+    <h1 data-gpu-morph="title">Project 01</h1>
     ${card(0, 'hero', 1, '<p>Stone, water and a long horizon: the first of three studies, opened from the grid. Its box, image and title move here; this text fades in.</p>')}
     <div class="side">${mark(1)}${[1, 2].map((i) => card(i, '', 1)).join('')}</div>`
 ]

@@ -686,6 +686,13 @@ any pass, so passes created before the transition apply to the incoming
 page only. `playground/transition.html` is a reveal from the pointer;
 `npx tsx test/transition/run.ts` times it.
 
+`t.addLayer(layer)` takes a Layer out of the page's paint order and
+draws it on its own each frame, for the fragment to read with
+`overlay(uv)` (premultiplied; transparent without one): content the
+transition composites itself, whole, over its blend of the two pages
+(layoutMorph's text morphs). Several layers draw in the order added; the
+returned function puts the layer back in the page.
+
 ## Trails
 
 ```ts
@@ -952,6 +959,11 @@ layer draws nothing).
   shadow, an image) moves by its border box; one that paints none moves
   by its contents' box, its old text keyed out of the snapshot by its
   colour (exact over a flat background). Nested keys pair on their own.
+  When such an element's text changed, it morphs as glyph segments
+  (`morph`, with the `text` option's settings; `text: false`
+  cross-fades instead): kept graphemes move whole and changed ones break
+  and re-form as the new string on the way to the new box, drawn whole
+  over the blend of the pages (Transition.addLayer).
   Progress 0 and 1 are the two pages exactly; `play()` ends the morph
   when done, `end()` otherwise. A keyed svg drawn as vectors in both
   states (`data-gpu-morph` puts it on the path pass) morphs its shapes:
@@ -978,6 +990,11 @@ layer draws nothing).
   their centroid. Progress 0 and 1 are the two texts exactly; `end()`
   hands back to the live text. `shockwave` plays from the element when
   `play()` starts. Under reduced motion the glyphs cross-fade.
+  `capture(el)` copies another element's text, `settled(timeout, el)`
+  takes the new text from another element (a replaced one; both hidden
+  until `end()`), `showLive = true` shows the live text meanwhile, and
+  `ready` says whether the last `settled()` built the pieces
+  (layoutMorph reuses morphs this way).
 - `reveal(fx, target, { progress = 0, blur = 12, split = 8, glitch =
   24, height = 10, density = 0.35, wash = 0, washColor = '#fff', fade =
   0.35, seed = 0 })`: an element's entrance as one region pass (three

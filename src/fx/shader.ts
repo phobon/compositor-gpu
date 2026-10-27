@@ -109,11 +109,23 @@ const PREV_WGSL = /* wgsl */ `
 struct FxPrev {
   size : vec2f,   // runtime: snapshot size, device px
   hold : f32,     // runtime: 1 while waiting for the incoming page
-  _pad : f32,
+  overlay : f32,  // runtime: 1 when the transition's layer drew this frame
 };
 @group(3) @binding(0) var fx_prev : texture_2d<f32>;
 @group(3) @binding(1) var fx_prev_smp : sampler;
 @group(3) @binding(2) var<uniform> fx_prev_info : FxPrev;
+@group(3) @binding(3) var fx_overlay : texture_2d<f32>;
+
+// The transition's layer (TransitionOptions.layer) at uv, premultiplied:
+// drawn on its own, not in the page; transparent without one.
+fn overlay(uv : vec2f) -> vec4f {
+  if (fx_prev_info.overlay < 0.5) {
+    return vec4f(0.0);
+  }
+  let size = vec2i(textureDimensions(fx_overlay));
+  let p = vec2i(floor(fx.origin + uv * fx.viewport));
+  return textureLoad(fx_overlay, clamp(p, vec2i(0), size - 1), 0);
+}
 
 // The outgoing page at uv (over the visible viewport), premultiplied.
 fn prev(uv : vec2f) -> vec4f {

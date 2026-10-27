@@ -372,7 +372,11 @@ function inertEffects(): Effects {
       return passHandle<S>(s, () => s.life.destroy())
     },
     transition(opts) {
-      return transitionHandle(this.pass({ ...opts, enabled: false }), null)
+      return transitionHandle(
+        this.pass({ ...opts, enabled: false }),
+        null,
+        () => null
+      )
     },
     release() {},
     destroy() {
@@ -518,6 +522,21 @@ function buildEffects(compositor: Compositor): Effects {
   })
   const imagePipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectLayout, imageLayout]
+  })
+  // Transitions: the snapshot as an image, plus their layer's texture.
+  const prevLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      uniform(2),
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} }
+    ]
+  })
+  const prevPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [frameLayout, srcLayout, effectLayout, prevLayout]
+  })
+  const trailPrevPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [frameLayout, srcLayout, effectTrailLayout, prevLayout]
   })
   const trailPipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [frameLayout, srcLayout, effectTrailLayout]
@@ -896,13 +915,17 @@ function buildEffects(compositor: Compositor): Effects {
       trail !== null,
       prev
     )
-    const layout = trail
-      ? bindImage
-        ? trailImagePipelineLayout
-        : trailPipelineLayout
-      : bindImage
-        ? imagePipelineLayout
-        : pipelineLayout
+    const layout = prev
+      ? trail
+        ? trailPrevPipelineLayout
+        : prevPipelineLayout
+      : trail
+        ? bindImage
+          ? trailImagePipelineLayout
+          : trailPipelineLayout
+        : bindImage
+          ? imagePipelineLayout
+          : pipelineLayout
     const module = device.createShaderModule({ label, code })
     reportShaderErrors(module, label)
     const pipeline = device.createRenderPipeline({
@@ -1280,7 +1303,8 @@ function buildEffects(compositor: Compositor): Effects {
             {
               device,
               format,
-              layout: imageLayout,
+              layout: prevLayout,
+              frameGroup: () => graph.shared.frameBindGroup,
               sampler,
               timer: graph.shared.timer,
               complete: () => graph.mirrorComplete(),
@@ -1289,7 +1313,22 @@ function buildEffects(compositor: Compositor): Effects {
             opts.timeout ?? 1500
           )
       const o = { ...opts, enabled: false, [SNAPSHOT]: snap }
-      return transitionHandle(fx.pass<S>(o as PassOptions<S>), snap)
+      return transitionHandle(fx.pass<S>(o as PassOptions<S>), snap, (l) => {
+        // The layer leaves the page and draws only for this transition.
+        const ls = layers.find((x) => x.handle === l)
+        if (!ls || ls.offscreen) {
+          return null
+        }
+        ls.offscreen = true
+        graph.requestFrame()
+        return {
+          overlay: { draw: (rp) => ls.drawInto(rp) },
+          undo: () => {
+            ls.offscreen = false
+            graph.requestFrame()
+          }
+        }
+      })
     },
     layer<S extends ParamSchema>(opts: LayerOptions<S>): Layer<S> {
       if (destroyed) {
