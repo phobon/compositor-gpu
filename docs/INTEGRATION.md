@@ -125,6 +125,33 @@ already hold your compositor.
 - The submodule pins a commit; bump it with `git -C compositor-gpu pull` then
   commit the pointer in mds-home, exactly like `MDS-web-ui`.
 
+## Baked fonts (optional)
+
+Instead of parsing each `@font-face` source in the browser (fetching the
+font a second time and loading opentype.js), bake the faces the site uses
+ahead of time and point the compositor at the manifest:
+
+```jsonc
+// compositor-gpu.bake.json
+{
+  "out": "public/gpu",
+  "fonts": [{
+    "file": "src/fonts/Inter.ttf", "family": "Inter",
+    "weights": [400, 600], "opsz": [16, 32],
+    "unicodeRange": "U+0020-007E, U+00A0-00FF, U+2010-2027"
+  }]
+}
+```
+
+`npm run bake -- compositor-gpu.bake.json` (in this repo) writes one `.cgf`
+file per weight and optical size plus `manifest.json`; mount with
+`options={{ ..., assets: '/gpu/manifest.json' }}`. Faces of a listed
+family load their baked files when the page first uses the family; text
+in a weight, optical size or character the files don't cover falls back
+to the runtime path (that family's source is fetched and parsed then).
+Baked text draws exactly as parsed text. Check the font's licence allows
+converting it.
+
 ## Note on `typegpu` and `process.env`
 
 `typegpu` reads `globalThis.process.env.NODE_ENV` when it is first imported.

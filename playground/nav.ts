@@ -69,6 +69,7 @@ const PAGES: Page[] = [
     variants: [
       { label: 'auto', query: '?auto' },
       { label: '8 pieces', query: '?pieces=8' },
+      { label: 'baked fonts (npm run bake:playground)', query: '?baked' },
       { label: 'slow', query: '?ms=3000' }
     ]
   },
@@ -86,7 +87,10 @@ const PAGES: Page[] = [
     file: 'sdf.html',
     title: 'Distance fields',
     about: "Glow and outline from each element's distance field (M5e)",
-    variants: [{ label: 'start without', query: '?off' }]
+    variants: [
+      { label: 'start without', query: '?off' },
+      { label: 'baked fonts (heading falls back)', query: '?baked' }
+    ]
   },
   {
     file: 'spike_morph.html',

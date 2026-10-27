@@ -88,6 +88,12 @@ export interface CompositorOptions {
    * whose family has no resolved face are drawn by the Canvas 2D fallback
    * atlas. */
   fonts?: 'auto' | FontFace[]
+  /** URL of a baked-asset manifest (`compositor-gpu bake`, tools/bake.ts):
+   * families it lists draw from the baked font files (fetched per family
+   * as the page uses it) instead of parsing the @font-face sources, and a
+   * page whose text is all baked never loads opentype.js. A weight or
+   * optical size the manifest lacks falls back to the runtime path. */
+  assets?: string
   /** What to do when WebGPU is unavailable. Default 'passthrough'. */
   fallback?: Fallback
   /** Override devicePixelRatio (default: window.devicePixelRatio). */

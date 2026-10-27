@@ -10,7 +10,14 @@ import { createCompositor } from '@/index'
 // Edit the heading (contenteditable) to see its field rebuild. `?off`
 // starts without them; `?vr` is the harness view (window.__sdf).
 
-const compositor = await createCompositor({ mode: 'replace' })
+// `?baked`: baked fonts (npm run bake:playground; the heading's weight
+// isn't baked, so it falls back to parsing the font).
+const compositor = await createCompositor({
+  mode: 'replace',
+  ...(new URLSearchParams(location.search).has('baked')
+    ? { assets: '/gpu/manifest.json' }
+    : {})
+})
 compositor.start()
 await compositor.ready
 const fx = createEffects(compositor)

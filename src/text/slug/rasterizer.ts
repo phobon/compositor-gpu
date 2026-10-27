@@ -10,15 +10,16 @@ import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlas_shader'
 import { describeFace, resolveFontBytes } from '../font_source'
 import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
 import type { TextBackend } from '../text_rasterizer'
+import { type BakedFace, type BakedManifest, decodeBakedFont } from './baked'
 import {
   type FontHandle,
   type GlyphBands,
-  type Quad,
   loadFontFile,
   loadParser,
   makeInstance,
   type ParsedFont,
-  parserReady
+  parserReady,
+  type Quad
 } from './font'
 import { slugBody } from './shaders'
 
@@ -84,7 +85,13 @@ interface FaceEntry {
   weight: number
   italic: boolean
   font: ParsedFont
+  /** A baked face (M5f): matched only by bakedFor, never as a nearest
+   * static weight. */
+  baked?: BakedFace
 }
+
+/** A manifest's face with its file's absolute URL. */
+type BakedSpec = BakedFace & { href: string }
 
 /**
  * Slug text backend: atlas-free, outline-based glyph rendering.
@@ -172,9 +179,171 @@ export class SlugText implements TextBackend {
    * compositor re-reads styles then). */
   onFace: (() => void) | null = null
 
-  /** Fonts handed to loadFontBuffer still waiting for the parser. */
+  /** Fonts handed to loadFontBuffer still waiting for the parser, or
+   * baked files (and the faces they fall back to) still loading. */
   get facesPending(): boolean {
     return this.queued > 0
+  }
+
+  // Baked assets (useAssets): the manifest's faces, the files loaded or
+  // loading, and the FontFaces whose sources prepare() didn't fetch
+  // because their family is baked (the runtime fallback's input).
+  private assets: BakedSpec[] | null = null
+  private assetsLoad: Promise<void> | null = null
+  private bakedLoading = new Map<string, Promise<void>>()
+  /** Baked files done loading (registered or failed). */
+  private bakedSettled = new Set<string>()
+  private bakedSkipped = new Map<string, FontFace[]>()
+  private bakedFellBack = new Set<string>()
+
+  /**
+   * Draw the families a baked-asset manifest lists from its files
+   * (tools/bake.ts): prepare() fetches those instead of the @font-face
+   * sources. Call before the first prepare().
+   */
+  useAssets(url: string): void {
+    const href = new URL(url, document.baseURI).href
+    this.queued++
+    this.assetsLoad = fetch(href)
+      .then((r) =>
+        r.ok
+          ? (r.json() as Promise<BakedManifest>)
+          : Promise.reject(new Error(`${r.status} ${r.statusText}`))
+      )
+      .then((m) => {
+        this.assets = (m.fonts ?? []).map((f) => ({
+          ...f,
+          href: new URL(f.url, href).href
+        }))
+        log.info(`SlugText: ${this.assets.length} baked face(s) in ${url}`)
+      })
+      .catch((err: unknown) => {
+        log.info(
+          `SlugText: no baked assets from ${url} (${(err as Error).message}); parsing fonts at runtime`
+        )
+        this.assets = []
+      })
+      .finally(() => {
+        this.queued--
+      })
+  }
+
+  /** The manifest's faces of a family and slant. */
+  private bakedSpecs(family: string, italic: boolean): BakedSpec[] {
+    const fam = family.toLowerCase()
+    return (this.assets ?? []).filter(
+      (f) => f.family.toLowerCase() === fam && f.italic === italic
+    )
+  }
+
+  /** Fetch and register one baked file (once). */
+  private loadBaked(spec: BakedSpec): Promise<void> {
+    let p = this.bakedLoading.get(spec.href)
+    if (p) {
+      return p
+    }
+    this.queued++
+    p = fetch(spec.href)
+      .then((r) =>
+        r.ok
+          ? r.arrayBuffer()
+          : Promise.reject(new Error(`${r.status} ${r.statusText}`))
+      )
+      .then((buf) => {
+        const idx = this.faces.length
+        this.faces.push({
+          idx,
+          family: spec.family.toLowerCase(),
+          weight: spec.weight,
+          italic: spec.italic,
+          font: decodeBakedFont(buf, idx),
+          baked: spec
+        })
+        this.ready = true
+        this.resolveCache.clear()
+        log.info(
+          `SlugText: +baked ${spec.family} ${spec.weight}${
+            spec.italic ? 'i' : ''
+          }${spec.opsz === null ? '' : ` opsz ${spec.opsz}`}`
+        )
+      })
+      .catch((err: unknown) => {
+        log.info(
+          `SlugText: could not load baked ${spec.url} — ${(err as Error).message}`
+        )
+      })
+      .finally(() => {
+        this.bakedSettled.add(spec.href)
+        this.queued--
+      })
+    this.bakedLoading.set(spec.href, p)
+    return p
+  }
+
+  /** The baked face for a run, null when its family has none loaded that
+   * matches (weight clamped to the source's wght range, or the nearest
+   * static weight; opsz exact, or the axis default without one). */
+  private bakedFor(
+    fam: string,
+    weight: number,
+    italic: boolean,
+    opsz: number | null
+  ): FaceEntry | null {
+    const pool = this.faces.filter(
+      (f) => f.baked && f.family === fam && f.italic === italic
+    )
+    let best: FaceEntry | null = null
+    let bestDiff = Number.POSITIVE_INFINITY
+    for (const f of pool) {
+      const b = f.baked as BakedFace
+      const w = b.wghtRange
+        ? Math.max(b.wghtRange[0], Math.min(b.wghtRange[1], weight))
+        : weight
+      if (b.opsz !== null) {
+        const want =
+          opsz === null || !b.opszRange
+            ? b.opszDefault
+            : Math.max(b.opszRange[0], Math.min(b.opszRange[1], opsz))
+        if (want !== b.opsz) {
+          continue
+        }
+      }
+      if (b.wghtRange) {
+        if (w === b.weight) {
+          return f
+        }
+        continue
+      }
+      const d = Math.abs(b.weight - w)
+      if (d < bestDiff) {
+        best = f
+        bestDiff = d
+      }
+    }
+    return best
+  }
+
+  /** A run of a baked family the manifest doesn't cover: load the
+   * family's @font-face sources after all (once). */
+  private fallBack(fam: string, italic: boolean): void {
+    const key = `${fam}|${italic ? 1 : 0}`
+    if (this.bakedFellBack.has(key)) {
+      return
+    }
+    this.bakedFellBack.add(key)
+    const faces = this.bakedSkipped.get(key) ?? []
+    if (faces.length === 0) {
+      return
+    }
+    log.info(
+      `SlugText: ${fam} needs a weight or size the baked files lack; parsing its source`
+    )
+    this.queued++
+    void this.prepare(faces, true)
+      .then(() => this.onFace?.())
+      .finally(() => {
+        this.queued--
+      })
   }
   private resolveCache = new Map<string, FaceEntry | null>()
   // Variable fonts are kept as sources and instanced to exact weights on
@@ -284,10 +453,34 @@ export class SlugText implements TextBackend {
    * register it. Idempotent: faces already loaded here or via loadFontBuffer are
    * skipped, so it is safe to call again as document.fonts grows.
    */
-  async prepare(faces: FontFace[]): Promise<void> {
+  async prepare(faces: FontFace[], skipBaked = false): Promise<void> {
     if (faces.length === 0) {
       log.info('SlugText.prepare: no fonts provided')
       return
+    }
+    if (!skipBaked && this.assetsLoad) {
+      await this.assetsLoad
+      // Faces of baked families: their baked files, not their sources.
+      const baked: Promise<void>[] = []
+      faces = faces.filter((f) => {
+        const d = describeFace(f)
+        const specs = this.bakedSpecs(d.family, d.italic)
+        if (specs.length === 0) {
+          return true
+        }
+        const key = `${d.family.toLowerCase()}|${d.italic ? 1 : 0}`
+        const list = this.bakedSkipped.get(key) ?? []
+        list.push(f)
+        this.bakedSkipped.set(key, list)
+        for (const s of specs) {
+          baked.push(this.loadBaked(s))
+        }
+        return false
+      })
+      await Promise.all(baked)
+      if (faces.length === 0) {
+        return
+      }
     }
     // Faces registered or being fetched (a face reported again on
     // loadingdone) aren't fetched twice.
@@ -425,6 +618,24 @@ export class SlugText implements TextBackend {
     }
 
     const fam = family.toLowerCase()
+    // A baked face first (M5f); a baked family the files don't cover
+    // loads its source (this run uses the atlas until then).
+    if (this.assets?.length) {
+      const baked = this.bakedFor(fam, weight, italic, o)
+      if (baked) {
+        this.resolveCache.set(key, baked)
+        return baked
+      }
+      const specs = this.bakedSpecs(fam, italic)
+      if (specs.length > 0) {
+        if (specs.every((s) => this.bakedSettled.has(s.href))) {
+          this.fallBack(fam, italic)
+        } else {
+          // Still loading: the atlas meanwhile, resolved again after.
+          return null
+        }
+      }
+    }
     // Prefer a family-matching variable font (exact weight), then a static
     // face; faces registered without a family ('') match any run. A run
     // whose family has no face returns null and falls back to the atlas.
@@ -443,7 +654,7 @@ export class SlugText implements TextBackend {
     weight: number,
     italic: boolean
   ): FaceEntry | null {
-    let pool = this.faces.filter((f) => f.family === fam)
+    let pool = this.faces.filter((f) => f.family === fam && !f.baked)
     if (pool.length === 0) {
       return null
     }

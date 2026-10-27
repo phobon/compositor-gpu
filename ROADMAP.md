@@ -354,10 +354,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           (page-space glyphs only). Page `layout.html?scroll`; shots
           `fx-layout-scroll-a`, `-0`, `-half`, `-1`, `-b`. Svg shape
           points don't follow a scroll after settled()
-  - [ ] M5e runtime JFA distance fields (built 2026-10-27; headless
+  - [x] M5e runtime JFA distance fields (built 2026-10-27; headless
         SwiftShader: fields build and rebuild on edits only, glow and a
-        distance-band pass read them, no console errors; to check on the
-        M1 Pro). `fx.sdf(el, { spread = 32, resolution = 512 })` returns
+        distance-band pass read them, no console errors; checked on the
+        M1 Pro 2026-10-27). `fx.sdf(el, { spread = 32, resolution = 512 })` returns
         `{ el, spread, resolution, ready, builds, rebuild(), destroy() }`:
         `el` is isolated (as a region pass, its group grown by `spread`);
         on a frame where its content key changes (box, record ids, image
@@ -380,15 +380,45 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         field (record ids change); materials can't read fields yet; an
         element with a field can't also take a region pass or keep a
         layer transform
-  - [ ] Text in isolated groups draws slightly differently from the page
-        (found 2026-10-27 with M5e: a heading under any layer transform or
-        region, e.g. `fx.transform(el, { opacity: 0.999 })`, differs at
-        glyph edges by up to 36 levels, coverage a little thinner; boxes,
-        images and svgs differ by at most 1). Investigate the group path
-        for Slug text
-  - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
-        (full cmap, contour data, licence warning), SVG paths,
-        effect-input images (KTX2 / PNG), SDF masks
+  - [x] Text drawn on the page vs in an isolated group (found 2026-10-27
+        with M5e; closed 2026-10-27 as a SwiftShader artefact).
+        `npx tsx test/diag/group_text.ts [--swiftshader]` moves a heading
+        0-7 px and compares the page's drawing with a group's: on the M1
+        Pro (headed, Apple metal-3) every offset matches (at most 1
+        level); under SwiftShader the page's Slug text differs by up to
+        35 levels at some absolute positions (top 72, 74, 76 px) with
+        identical instances and draws. Harness comparisons between text
+        on the page and in a group can fail under SwiftShader only
+  - [ ] M5f `compositor-gpu bake` + manifest loader
+    - [ ] Fonts (built 2026-10-27; headless SwiftShader: morph.html
+          baked equals parsed exactly at rest and in flight, opentype.js
+          never loaded, the sdf page's unbaked weight falls back and
+          still matches; test:unit 114; to check on the M1 Pro).
+          `npm run bake [-- config]` (tools/bake.ts) reads
+          compositor-gpu.bake.json: per font file, family, weights
+          (variable instances), italic, opsz (axis values to bake) and a
+          unicode range; writes a `.cgf` per (weight, opsz) and
+          `manifest.json`, warning about licences. The `.cgf`
+          (src/text/slug/baked.ts): metrics (f64), the cmap and default
+          ligatures within the ranges, and per glyph its bbox and advance
+          (f64), outline quads (f32, the GPU's precision) and Slug band
+          lists (u16 indices), about 1.1 KB a glyph (a third gzipped);
+          decodeBakedFont builds the same GlyphBands as parsing
+          (test/unit/baked.test.ts compares every glyph). Pages pass
+          `assets: url`: the manifest is fetched at start (opentype.js is
+          not preloaded then); prepare() loads a baked family's files
+          instead of its sources when the page first uses it; runs match
+          a baked face by family, slant, weight (clamped to the wght
+          range, or nearest for static fonts) and exact opsz (or the
+          axis default); anything else falls back to the source (parsed
+          then, once per family). `npm run bake:playground`; pages
+          `morph.html?baked`, `sdf.html?baked`; shots `fx-morph-baked`,
+          `-baked-half` (test:fx bakes first). Not yet: a published
+          `compositor-gpu` bin, woff2 sources, codepoints outside the
+          ranges per glyph (they fall back to the atlas, not the source)
+    - [ ] SVG paths
+    - [ ] Effect-input images (KTX2 / PNG)
+    - [ ] Distance-field masks
   - [x] Catch exceptions from author code (2026-10-26, `guarded` in
         `util/log.ts`): layer and material `update`, every frame hook,
         `onGlyph`, `onFrame`; logged once per label and message, the

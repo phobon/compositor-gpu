@@ -1,0 +1,12 @@
+{
+  "out": "gpu",
+  "fonts": [
+    {
+      "file": "InterVariable.ttf",
+      "family": "Inter Play",
+      "weights": [400, 500],
+      "opsz": [15, 32],
+      "unicodeRange": "U+0020-007E, U+00A0-00FF, U+2010-2027"
+    }
+  ]
+}

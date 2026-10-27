@@ -16,7 +16,11 @@ const vr = q.has('vr')
 const STRINGS = ['83', 'S<sup>15</sup>_', '32<sup>*</sup>', '5/6']
 const word = document.getElementById('word') as HTMLElement
 
-const compositor = await createCompositor({ mode: 'replace' })
+// `?baked`: the heading and text drawn from baked fonts (npm run bake:playground).
+const compositor = await createCompositor({
+  mode: 'replace',
+  ...(q.has('baked') ? { assets: '/gpu/manifest.json' } : {})
+})
 compositor.start()
 await compositor.ready
 const fx = createEffects(compositor)

@@ -428,6 +428,11 @@ Built so far (M5d-1, 2026-10-26, checked on the M1 Pro), and where it differs fr
   element's content key changes; passes and layers read them (materials
   not yet). Layers gained `place: { before: el }` so a glow can sit under
   its element.
+- Baked fonts (M5f) carry Slug band lists and f32 outlines (not
+  instanced font files), so the runtime needs neither opentype.js nor
+  band building; they're matched per weight and exact optical size,
+  falling back to parsing the source otherwise. Fonts come first; svgs,
+  images and masks follow.
 - Endpoint exactness comes from drawing every glyph at rest the way the
   text pass does, op for op (quad = ink box plus one device pixel, em
   interpolated per vertex, `fwidth(em)` for the pixel scale, colour from

@@ -77,6 +77,10 @@
 //                     must equal fx-morph-a exactly
 //   fx-morph-half     half way (segments in flight)
 //   fx-morph-1        progress 1: must equal fx-morph-b exactly
+//   fx-morph-baked, -baked-half  morph.html?vr&baked (fonts from
+//                     playground/compositor-gpu.bake.json, baked first):
+//                     equal to fx-morph-a and fx-morph-half exactly, with
+//                     opentype.js never loaded
 //   fx-morph-assemble-half, -1  S15_ assembling from scattered segments
 //                     at progress 0.5 / 1 (-1 must equal fx-morph-b exactly)
 //   fx-morph-scatter-0, -half  scattering: at 0 must equal fx-morph-b
@@ -138,6 +142,7 @@ import pixelmatch from 'pixelmatch'
 import type { Browser, Page } from 'playwright'
 import { PNG } from 'pngjs'
 import { createServer, type ViteDevServer } from 'vite'
+import { bake } from '../../tools/bake'
 import { launchWithFallback } from '../lib/browser'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -1264,7 +1269,9 @@ async function main(): Promise<void> {
       'fx-morph-assemble-half',
       'fx-morph-assemble-1',
       'fx-morph-scatter-0',
-      'fx-morph-scatter-half'
+      'fx-morph-scatter-half',
+      'fx-morph-baked',
+      'fx-morph-baked-half'
     ]
     if (morphShots.some(want)) {
       const p = await launched.browser.newPage({
@@ -1325,7 +1332,7 @@ async function main(): Promise<void> {
         await p.evaluate(() => window.__morph?.hold(1, 0))
         exact('fx-morph-0', a, await shot('fx-morph-0'))
         await p.evaluate(() => window.__morph?.at(0.5))
-        await shot('fx-morph-half')
+        const half = await shot('fx-morph-half')
         await p.evaluate(() => window.__morph?.at(1))
         const one = await shot('fx-morph-1')
         await p.evaluate(() => window.__morph?.end())
@@ -1342,6 +1349,28 @@ async function main(): Promise<void> {
         await p.evaluate(() => window.__morph?.at(0.5))
         await shot('fx-morph-scatter-half')
         await p.evaluate(() => window.__morph?.end())
+        // The same page from baked fonts (M5f): equal to the parsed ones,
+        // and opentype.js never loaded.
+        await bake(resolve(root, 'playground/compositor-gpu.bake.json'), true)
+        await p.goto(`${url}morph.html?vr&baked`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__morph), null, {
+          timeout: 30_000
+        })
+        await frames(10)
+        exact('fx-morph-baked', a, await shot('fx-morph-baked'))
+        await p.evaluate(() => window.__morph?.hold(1, 0.5))
+        exact('fx-morph-baked-half', half, await shot('fx-morph-baked-half'))
+        const parser = await p.evaluate(() =>
+          performance
+            .getEntriesByType('resource')
+            .some((e) => /opentype/.test(e.name))
+        )
+        results.push({
+          name: 'fx-morph-baked (no opentype.js)',
+          regressionPct: null,
+          status: parser ? 'fail' : 'ok',
+          note: parser ? 'opentype.js was loaded' : 'not loaded'
+        })
       } finally {
         await p.close()
       }

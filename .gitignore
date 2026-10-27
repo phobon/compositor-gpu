@@ -18,3 +18,5 @@ test/profile/out/
 # fill check screenshots
 test/fill/out/
 test/edit/out/
+# baked playground fonts (npm run bake:playground; test:fx bakes them)
+playground/gpu/

@@ -93,8 +93,9 @@ export async function createCompositor(
   // paint via opacity, and the canvas must never be a descendant of it.
   document.documentElement.appendChild(canvas)
 
-  // The font parser (a dynamic import) downloads while the device starts.
-  if (layers.has('text')) {
+  // The font parser (a dynamic import) downloads while the device starts
+  // (not with baked assets: loaded only if a face falls back).
+  if (layers.has('text') && !options.assets) {
     loadParser().catch((err: unknown) => {
       log.error('could not load opentype.js', err)
     })
@@ -843,6 +844,9 @@ export async function createCompositor(
   const fontsAuto = (options.fonts ?? 'auto') === 'auto'
   const onFontsLoaded = (e: Event): void => {
     prepareFaces([...(e as FontFaceSetLoadEvent).fontfaces])
+  }
+  if (text && options.assets) {
+    text.useAssets(options.assets)
   }
   if (text) {
     text.onFace = () => {
