@@ -63,6 +63,25 @@ const PAGES: Page[] = [
     ]
   },
   {
+    file: 'morph.html',
+    title: 'Morph',
+    about: 'Text morphing into its next value, with a shockwave (M5d)',
+    variants: [
+      { label: 'auto', query: '?auto' },
+      { label: '8 pieces', query: '?pieces=8' },
+      { label: 'slow', query: '?ms=3000' }
+    ]
+  },
+  {
+    file: 'layout.html',
+    title: 'Layout morph',
+    about: 'Keyed cards moving between a grid and a detail view (M5d-2)',
+    variants: [
+      { label: 'auto', query: '?auto' },
+      { label: 'slow', query: '?ms=3000' }
+    ]
+  },
+  {
     file: 'spike_morph.html',
     title: 'Morph spike',
     about: 'Segment outline morph with the wave pass (M5)',

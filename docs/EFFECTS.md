@@ -387,6 +387,35 @@ change is noted.
   page point or the viewport's middle; age is `fx.elapsed`); M5d morph engine (ghosts, pairing, text
   segments, pose presets, reduced motion); M5e JFA; M5f bake CLI.
 
+Built so far (M5d-1, 2026-10-26, checked on the M1 Pro), and where it differs from the above:
+
+- The engine is a preset, `morph(fx, el, opts)` (as `shockwave`), not
+  `fx.morph(opts)`, and the first slice morphs one element's text in
+  place; keyed layout and route pairs come with M5d-2.
+- Ghosts are hybrid: text ghosts are copies of the element's Slug
+  instances with their bands pinned (`Effects.glyphGhost`, through the
+  graph's `glyphGhost`), drawn by an fx layer placed after the element
+  while a hold material hides the live glyphs. Boxes and images will use
+  the held snapshot, live elements layer transforms (M5d-2).
+- Keyed layout morphs (M5d-2) are a second preset, `layoutMorph(fx,
+  opts)`, built on `fx.transition` rather than ghost records: the old
+  element is cut from the held snapshot (a rounded rect for a box; for
+  an element that paints no box, its text keyed out by its colour over
+  the background just outside it), the live element is moved by a layer
+  transform from its new box to the box between, and both cross-fade.
+  Per-record interpolation (colours, borders, shadows) and structural
+  descendant pairing are dropped: keyed descendants pair by key on
+  their own, nested ones relative to their parent's transform, and
+  unkeyed content cross-fades with its box. Text moves by its content
+  box (grown for overhangs), so a block heading scales with its size.
+- Endpoint exactness comes from drawing every glyph at rest the way the
+  text pass does, op for op (quad = ink box plus one device pixel, em
+  interpolated per vertex, `fwidth(em)` for the pixel scale, colour from
+  the glyph). Recovering uv per pixel from the layer point differed by up
+  to 16 levels along every edge; flipping y after interpolation, or
+  reading constants back from interpolated varyings, left 1-level
+  differences on a few pixels.
+
 ## Deviations (M1 implementation)
 
 Where the built M1 differs from the text above. `src/fx/README.md` is the

@@ -7,6 +7,7 @@ import type {
 } from '../gpu/graph'
 import { materialPipelinesSettled } from '../gpu/material'
 import { timed } from '../gpu/timer'
+import type { GlyphGhost } from '../text/slug/rasterizer'
 import type { Compositor, FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { EffectsClock } from './clock'
@@ -49,7 +50,7 @@ import {
   readsTime,
   stageSource
 } from './shader'
-import { createTarget, type Target } from './target'
+import { createTarget, type Target, targetRuns } from './target'
 import {
   createTrail,
   inertTrail,
@@ -149,6 +150,11 @@ export interface Effects {
   target(el: Element): Target
   /** Targets for every element matching `selector` (under `root`). */
   targets(selector: string, root?: ParentNode): Target[]
+  /** A copy of `el`'s Slug glyphs as last drawn (the same set and order
+   * as its Target's `glyphs`), their outline bands held resident until
+   * `release()`: the outgoing text of a morph (presets/morph.ts). Null
+   * without WebGPU or before the element's text has been drawn. */
+  glyphGhost(el: Target | Element): GlyphGhost | null
   /** Move, scale, rotate and fade an element on the GPU (see
    * TransformOptions). Nothing without WebGPU. */
   transform(el: Target | Element, opts?: TransformOptions): Transform
@@ -329,6 +335,7 @@ function inertEffects(): Effects {
     layer: (opts) => inertLayer(opts),
     material: (opts) => inertMaterial(opts, targetOf(opts.target, cache, null)),
     target: (el) => targetOf(el, cache, null),
+    glyphGhost: () => null,
     transform: (el, opts) => createTransform(inertComposer, false, el, opts),
     motion: (el, opts) =>
       createMotion(inertComposer, false, el, opts, () => reduced.on),
@@ -1307,6 +1314,10 @@ function buildEffects(compositor: Compositor): Effects {
       return s.handle as unknown as Material<S>
     },
     target: (el) => targetOf(el, targetCache, graph),
+    glyphGhost(el) {
+      const node = graph.nodeOf(el instanceof Element ? el : el.el)
+      return node ? graph.glyphGhost(targetRuns(node)) : null
+    },
     transform(el, opts) {
       const t = createTransform(composer, true, el, opts, () => {
         const i = transforms.indexOf(t)

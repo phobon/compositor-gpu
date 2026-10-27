@@ -23,6 +23,10 @@ export interface GlyphBands {
   vbands: { yMin: number; yMax: number; start: number; end: number }[]
   /** Flat quad list, grouped by band (a quad may appear in multiple bands). */
   curves: Quad[]
+  /** The outline in drawing order (each quad once; a contour ends where
+   * the next quad doesn't start at its end), in the same normalised
+   * bbox space: for tracing it (the morph's segments, fx/morph.ts). */
+  outline: Quad[]
 }
 
 export interface ParsedFont {
@@ -234,7 +238,8 @@ export function makeInstance(
       },
       bands: bands.bands,
       vbands: bands.vbands,
-      curves: bands.curves
+      curves: bands.curves,
+      outline: quads
     }
     cache.set(index, result)
     return result

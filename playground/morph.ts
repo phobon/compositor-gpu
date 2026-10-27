@@ -1,0 +1,70 @@
+/// <reference path="./morph.d.ts" />
+// typegpu reads process.env at evaluation: the shim must run first.
+import '@/util/env'
+import './nav'
+import { createEffects, morph, shockwave } from '@/fx'
+import { createCompositor } from '@/index'
+
+// Morph playground (M5d, in-place text): the heading's text changes
+// through fx `morph`, glyph segments re-forming as the next string, under
+// a shockwave. Next plays one; `?auto` cycles; `?vr` is the harness view
+// (window.__morph holds a morph at any progress).
+
+const q = new URLSearchParams(location.search)
+const vr = q.has('vr')
+const STRINGS = ['83', 'S<sup>15</sup>_', '32<sup>*</sup>', '5/6']
+const word = document.getElementById('word') as HTMLElement
+
+const compositor = await createCompositor({ mode: 'replace' })
+compositor.start()
+await compositor.ready
+const fx = createEffects(compositor)
+const wave = shockwave(fx)
+const m = morph(fx, word, { pieces: Number(q.get('pieces') ?? 16) })
+const waveBox = document.getElementById('wave') as HTMLInputElement
+
+let at = 0
+let busy = false
+const next = async (): Promise<void> => {
+  if (busy) {
+    return
+  }
+  busy = true
+  at = (at + 1) % STRINGS.length
+  await m.capture()
+  word.innerHTML = STRINGS[at] ?? ''
+  await m.settled()
+  if (waveBox.checked) {
+    wave.play(word)
+  }
+  await m.play(Number(q.get('ms') ?? 1100))
+  busy = false
+}
+
+document.getElementById('next')?.addEventListener('click', () => {
+  void next()
+})
+if (q.has('auto') && !vr) {
+  const loop = async (): Promise<void> => {
+    await next()
+    setTimeout(() => void loop(), 700)
+  }
+  void loop()
+}
+
+window.__morph = {
+  morph: m,
+  async hold(i, progress) {
+    await m.capture()
+    word.innerHTML = STRINGS[i] ?? ''
+    await m.settled()
+    m.progress = progress
+  },
+  at(progress) {
+    m.progress = progress
+  },
+  end() {
+    m.end()
+  }
+}
+Object.assign(window, { __gpu: compositor, __fx: fx })

@@ -12,6 +12,10 @@ export interface ParamDef {
   /** Metadata for UIs; writes are not clamped. */
   min?: number
   max?: number
+  /** 'vec4' only: an array of this many vec4s (`array<vec4f, count>`,
+   * indexable in WGSL), its value one flat array of 4 × count floats; a
+   * 4-float default fills every element. For tables (a preset's pairs). */
+  count?: number
 }
 
 export type ParamSchema = Record<string, ParamDef>
@@ -33,8 +37,10 @@ interface Field {
   type: ParamType
   /** Float offset into the packed block. */
   offset: number
-  /** Components. */
+  /** Components (all elements, for an array). */
   n: number
+  /** Elements: 1 unless an array. */
+  count: number
 }
 
 const WGSL_TYPE: Record<ParamType, string> = {
@@ -81,8 +87,12 @@ export function parseHex(hex: string): number[] | null {
   return out
 }
 
-function toComponents(type: ParamType, v: unknown): number[] | null {
-  const n = COMPONENTS[type]
+function toComponents(type: ParamType, v: unknown, count = 1): number[] | null {
+  const n = COMPONENTS[type] * count
+  if (count > 1 && Array.isArray(v) && v.length === COMPONENTS[type]) {
+    // One element's default, repeated.
+    return Array.from({ length: n }, (_, i) => Number(v[i % v.length]))
+  }
   if (type === 'color' && typeof v === 'string') {
     return parseHex(v)
   }
@@ -132,24 +142,36 @@ export function createParams<S extends ParamSchema>(
         `[compositor-gpu/fx] param name '${name}' is not a WGSL identifier`
       )
     }
+    const count = def.count ?? 1
+    if (
+      count !== 1 &&
+      (def.type !== 'vec4' || !Number.isInteger(count) || count < 1)
+    ) {
+      throw new Error(
+        `[compositor-gpu/fx] param '${name}': count needs type 'vec4' and a positive integer`
+      )
+    }
     const align = ALIGN[def.type]
     bytes = Math.ceil(bytes / align) * align
     fields.push({
       name,
       type: def.type,
       offset: bytes / 4,
-      n: COMPONENTS[def.type]
+      n: COMPONENTS[def.type] * count,
+      count
     })
-    bytes += COMPONENTS[def.type] * 4
+    bytes += COMPONENTS[def.type] * count * 4
   }
   // A uniform struct's size rounds up to its alignment; the binding is
   // padded to 16 so an empty schema still has a valid buffer.
   const byteSize = Math.max(16, Math.ceil(bytes / 16) * 16)
   const data = new Float32Array(byteSize / 4)
 
-  const lines = fields.map(
-    (f) => `  ${f.name} : ${WGSL_TYPE[f.type]},  // offset ${f.offset * 4}`
-  )
+  const lines = fields.map((f) => {
+    const t = WGSL_TYPE[f.type]
+    const ty = f.count > 1 ? `array<${t}, ${f.count}>` : t
+    return `  ${f.name} : ${ty},  // offset ${f.offset * 4}`
+  })
   if (lines.length === 0) {
     lines.push('  _unused : f32,')
   }
@@ -217,7 +239,7 @@ export function createParams<S extends ParamSchema>(
 
   for (const f of fields) {
     const def = schema[f.name] as ParamDef
-    const c = toComponents(f.type, def.default)
+    const c = toComponents(f.type, def.default, f.count)
     if (!c) {
       throw new Error(
         `[compositor-gpu/fx] param '${f.name}': default doesn't fit ${f.type}`
@@ -240,7 +262,7 @@ export function createParams<S extends ParamSchema>(
         extra[key] = value
         return true
       }
-      const c = toComponents(f.type, value)
+      const c = toComponents(f.type, value, f.count)
       if (!c) {
         return true
       }

@@ -3,6 +3,8 @@
 /// <reference path="../../playground/trail.d.ts" />
 /// <reference path="../../playground/transition.d.ts" />
 /// <reference path="../../playground/gallery.d.ts" />
+/// <reference path="../../playground/morph.d.ts" />
+/// <reference path="../../playground/layout.d.ts" />
 // Effects harness: loads playground/fx.html?vr (time and pointer pinned via
 // fx.__override), captures each `section[data-vr]` GPU-only with its
 // effect state, and diffs against local goldens (regression gate 0.5%;
@@ -69,6 +71,11 @@
 //   fx-shockwave      shockwave from the section's centre, ring 250 px out
 //                     at the pinned elapsed
 //   fx-shockwave-then-off  on, then off: equal to the section exactly
+//   fx-morph-a / -b   morph.html: the heading as 83 / as S15_ (plain)
+//   fx-morph-0        captured, changed to S15_, held at progress 0:
+//                     must equal fx-morph-a exactly
+//   fx-morph-half     half way (segments in flight)
+//   fx-morph-1        progress 1: must equal fx-morph-b exactly
 //   fx-reveal         reveal on the section's h2 and develop on its img,
 //                     both at progress 0.4
 //   fx-reveal-0       both at progress 0 (heading and image hidden)
@@ -97,6 +104,12 @@
 //                    equal to fx-transition-a exactly
 //   fx-transition-half  the reveal at progress 0.5
 //   fx-transition-1  progress 1: equal to fx-transition-b exactly
+//   fx-layout-a, -b  playground/layout.html?vr, the grid and the detail
+//                    view alone
+//   fx-layout-0  keyed layout morph (layoutMorph) to the detail view held
+//                at progress 0: equal to fx-layout-a exactly
+//   fx-layout-half  progress 0.5 (cards, images and titles between)
+//   fx-layout-1  progress 1: equal to fx-layout-b exactly
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1226,6 +1239,155 @@ async function main(): Promise<void> {
         const one = await shot('fx-transition-1')
         await p.evaluate(() => window.__tr?.reveal.end())
         exact('fx-transition-1', await shot('fx-transition-b'), one)
+      } finally {
+        await p.close()
+      }
+    }
+    const morphShots = [
+      'fx-morph-a',
+      'fx-morph-0',
+      'fx-morph-half',
+      'fx-morph-1',
+      'fx-morph-b'
+    ]
+    if (morphShots.some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`morph: ${m.text()}`)
+        }
+      })
+      try {
+        await p.goto(`${url}morph.html?vr`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__morph), null, {
+          timeout: 30_000
+        })
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await frames(10)
+        // The heading with room for the pieces' travel.
+        const r = await p.evaluate(() => {
+          const b = document.getElementById('word')?.getBoundingClientRect()
+          return b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null
+        })
+        const clip = {
+          x: Math.max(0, Math.floor((r?.x ?? 0) - 160)),
+          y: Math.max(0, Math.floor((r?.y ?? 0) - 120)),
+          width: Math.min(VW, Math.ceil((r?.w ?? VW) + 320)),
+          height: Math.min(VH, Math.ceil((r?.h ?? VH) + 240))
+        }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(4)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const exact = (name: string, a: PNG, b: PNG): void => {
+          const n = exactDiff(a, b)
+          results.push({
+            name: `${name} (exact)`,
+            regressionPct: diffPng(
+              a,
+              b,
+              resolve(outDir, `${name}-invariant.png`)
+            ),
+            status: n === 0 ? 'ok' : 'fail',
+            note: `${n} px differ`
+          })
+        }
+        const a = await shot('fx-morph-a')
+        // 83 -> S15_, held at progress 0: the old text exactly.
+        await p.evaluate(() => window.__morph?.hold(1, 0))
+        exact('fx-morph-0', a, await shot('fx-morph-0'))
+        await p.evaluate(() => window.__morph?.at(0.5))
+        await shot('fx-morph-half')
+        await p.evaluate(() => window.__morph?.at(1))
+        const one = await shot('fx-morph-1')
+        await p.evaluate(() => window.__morph?.end())
+        exact('fx-morph-1', await shot('fx-morph-b'), one)
+      } finally {
+        await p.close()
+      }
+    }
+    const layoutShots = [
+      'fx-layout-a',
+      'fx-layout-0',
+      'fx-layout-half',
+      'fx-layout-1',
+      'fx-layout-b'
+    ]
+    if (layoutShots.some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`layout: ${m.text()}`)
+        }
+      })
+      try {
+        await p.goto(`${url}layout.html?vr`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__layout), null, {
+          timeout: 30_000
+        })
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await frames(10)
+        // The page above the fixed controls.
+        const top = await p.evaluate(
+          () => document.getElementById('controls')?.getBoundingClientRect().top
+        )
+        const clip = {
+          x: 0,
+          y: 0,
+          width: VW,
+          height: Math.floor(top ?? VH) - 8
+        }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(4)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const exact = (name: string, a: PNG, b: PNG): void => {
+          const n = exactDiff(a, b)
+          results.push({
+            name: `${name} (exact)`,
+            regressionPct: diffPng(
+              a,
+              b,
+              resolve(outDir, `${name}-invariant.png`)
+            ),
+            status: n === 0 ? 'ok' : 'fail',
+            note: `${n} px differ`
+          })
+        }
+        const a = await shot('fx-layout-a')
+        // Grid -> detail view, held at progress 0: the grid exactly.
+        await p.evaluate(() => window.__layout?.hold(1, 0))
+        exact('fx-layout-0', a, await shot('fx-layout-0'))
+        await p.evaluate(() => window.__layout?.at(0.5))
+        await shot('fx-layout-half')
+        await p.evaluate(() => window.__layout?.at(1))
+        const one = await shot('fx-layout-1')
+        await p.evaluate(() => window.__layout?.end())
+        exact('fx-layout-1', await shot('fx-layout-b'), one)
       } finally {
         await p.close()
       }

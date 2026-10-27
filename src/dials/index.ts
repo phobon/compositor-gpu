@@ -335,6 +335,10 @@ function controls(path: string, def: DialDef): [string, unknown][] {
     case 'vec2':
     case 'vec3':
     case 'vec4':
+      // Arrays (tables) get no dials.
+      if (((def as { count?: number }).count ?? 1) > 1) {
+        return []
+      }
       return ((def.default as readonly number[] | undefined) ?? []).map(
         (d, i) => [`${path}.${i}`, [d, min, max, step(def, min, max)]]
       )

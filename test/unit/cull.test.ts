@@ -168,8 +168,8 @@ describe('the y index', () => {
     const indexed = new Culler(() => false, s)
     indexed.rows(scene, 0, 1000, 0, 10)
     s.flush()
-    // One idle step per layer (boxes, images, cutouts, text).
-    assert.equal(s.idles, 1 + 4)
+    // One idle step per layer (boxes, images, cutouts, text, paths).
+    assert.equal(s.idles, 1 + 5)
     for (let y = 0; y < 7500; y += 377) {
       assert.deepEqual(
         indexed.rows(scene, 0, 1000, y, y + 211),
@@ -190,8 +190,8 @@ describe('the y index', () => {
     c.canvas(scene, [0, 0, 1000, 900], [0, 0])
     s.flush()
     // Four `after` callbacks each ask for an idle step; only the latest
-    // list's builds its four layers, one more step each.
-    assert.equal(s.idles, 4 + 4)
+    // list's builds its five layers, one more step each.
+    assert.equal(s.idles, 4 + 5)
   })
 })
 

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu morph playground</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Play';
+        src: url('/InterVariable.ttf');
+        font-weight: 100 900;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter Play', system-ui, sans-serif;
+        background: #fff;
+        color: #0b0b0c;
+      }
+      main {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        padding: 64px;
+      }
+      #word {
+        font-size: 200px;
+        font-weight: 500;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        margin: 0;
+        min-height: 1em;
+      }
+      #word sup { font-size: 0.45em; vertical-align: 0.9em; }
+      p { margin: 0; color: #6b6b75; font-size: 15px; }
+      #controls {
+        position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;
+        display: flex; gap: 8px; align-items: center; font: 13px system-ui;
+      }
+      #controls button {
+        padding: 8px 14px; border-radius: 999px; border: 1px solid #0002;
+        background: #fff; font: inherit; cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="word" data-gpu-morph="word">83</h1>
+      <p>Glyph segments re-forming as the next string (fx morph), under a
+        shockwave. Next, or ?auto.</p>
+    </main>
+    <div id="controls" data-gpu-ignore>
+      <label><input id="wave" type="checkbox" checked /> shockwave</label>
+      <button id="next" type="button">Next</button>
+    </div>
+    <script type="module" src="./morph.ts"></script>
+  </body>
+</html>

@@ -252,7 +252,8 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [ ] Path pass follow-ups: re-flatten when a layer transform scales an
         svg up (flattened for its read-time scale); gradients, dashes,
         clip-path, symbol / nested svg; materials on path records
-  - [ ] M5c `shockwave` preset (built 2026-10-26; headless SwiftShader:
+  - [x] M5c `shockwave` preset (built 2026-10-26, goldens taken and
+        checked on the M1 Pro; headless SwiftShader:
         renders, then-off equals the section exactly, no console errors;
         to run on the M1 Pro with `test:fx -- --update --only
         fx-shockwave` for its golden): `shockwave(fx, opts)` returns
@@ -263,15 +264,47 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         no-op under reduced motion. Shots `fx-shockwave`,
         `fx-shockwave-then-off`; click the fx page's displace section to
         play one
-  - [ ] M5d `fx.morph`: `data-gpu-morph` keys; `capture()` /
-        `settled()` / `progress` / `play()` / `end()`; ghost records in
-        viewport space with Slug band and atlas pins
-        (`docs/rd/experiments/2026-10-26-morph-ghosts.md`); per-record
-        interpolation and structural descendant pairing; LCS diff for
-        text, changed glyphs as segment outline morphs (cut from the font
-        outline); `pose` hook and presets (assemble, scatter); reduced
-        motion cross-fades; shots with progress 0 / 1 equal to each
-        state exactly
+  - [x] M5d-1 text morph in place (built 2026-10-26, goldens taken and
+        visuals checked on the M1 Pro; headless
+        SwiftShader: progress 0 / 1 equal each state exactly, no console
+        errors; goldens to take on the M1
+        Pro with `test:fx -- --update --only fx-morph`):
+        `morph(fx, el, opts)` (preset style, not `fx.morph`) returns
+        `{ capture(), settled(), progress, play(ms, ease), end(),
+        destroy(), layer }`. Ghosts are copies of the element's Slug
+        instances (`Effects.glyphGhost`, bands pinned while held); LCS
+        keeps unchanged graphemes as whole glyphs, changed ones are cut
+        into segments (`fx/morph_segments.ts`), Hungarian-paired and
+        interpolated point to point along an arc. At rest every glyph
+        quad is built op for op as the text pass builds it (ink box plus
+        a device pixel, em interpolated per vertex, `fwidth` of it, colour
+        from the glyph; kind and travel recomputed in the fragment rather
+        than read from interpolated extras), segments cut by their
+        Voronoi cell, so the ends match the live text. Reduced motion
+        cross-fades. Page `playground/morph.html`; shots `fx-morph-a`,
+        `-0`, `-half`, `-1`, `-b`
+  - [x] M5d-2 keyed layout morphs (built 2026-10-26; checked on the
+        M1 Pro 2026-10-27: test:fx exact shots and test:unit pass,
+        capture() 0.6-1.9 ms over 5 swaps (budget 12), settled() 14-28
+        ms; the gpu frame budget is still to profile): `layoutMorph(fx, { root, timeout, shockwave })` returns
+        `{ capture(), settled(), progress, play(ms, ease), end(),
+        destroy(), keys, pass }`. Elements keyed `data-gpu-morph` in both
+        states pair by key (DOM order, at most `MAX_PAIRS` = 16, none
+        more than a viewport off screen). One transition pass: each
+        pair's box moves old -> new with its radius, the old element cut
+        from the held snapshot (text keyed out by its colour, so only the
+        glyphs travel; boxes as rounded rects) cross-fading into the live
+        element, which a layer transform carries along (vector, crisp);
+        nested pairs relative to their parent; old spots show the new
+        page; the rest cross-fades. Text-only elements move by their
+        content box. Params gain vec4 arrays (`count`) for the table.
+        Page `playground/layout.html`; shots `fx-layout-a`, `-0`,
+        `-half`, `-1`, `-b`; `test/unit/params.test.ts`
+        (`docs/rd/experiments/2026-10-26-morph-ghosts.md`)
+  - [ ] M5d-3 morph content inside pairs: SVG path morphs (resample to
+        one count, least-travel start), text segment morphs that follow
+        a pair's box, `pose` presets (assemble, scatter), route swaps
+        across scroll positions
   - [ ] M5e runtime JFA distance fields (`sdf` binding)
   - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
         (full cmap, contour data, licence warning), SVG paths,

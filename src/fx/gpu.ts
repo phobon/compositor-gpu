@@ -101,7 +101,12 @@ export const gpu = {
   params<S extends ParamSchema>(schema: S): ParamSnippets<S> {
     const out: Record<string, unknown> = {}
     for (const [k, def] of Object.entries(schema)) {
-      out[k] = snippet(`params.${k}`, PARAM_TYPES[def.type])
+      out[k] = snippet(
+        `params.${k}`,
+        def.count && def.count > 1
+          ? d.arrayOf(d.vec4f, def.count)
+          : PARAM_TYPES[def.type]
+      )
     }
     return out as ParamSnippets<S>
   },

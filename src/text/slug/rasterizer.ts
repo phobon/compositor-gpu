@@ -13,6 +13,7 @@ import type { TextBackend } from '../text_rasterizer'
 import {
   type FontHandle,
   type GlyphBands,
+  type Quad,
   loadFontFile,
   loadParser,
   makeInstance,
@@ -23,7 +24,7 @@ import { slugBody } from './shaders'
 
 // rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
 // written through the shared u32 view of the same buffer.
-const GLYPH_FLOATS = 28
+export const GLYPH_FLOATS = 28
 
 /** The Slug instance and outline buffers, for drawing mirrored glyphs
  * elsewhere (`/fx` Layers). Instance layout: the `Glyph` struct in
@@ -34,6 +35,27 @@ export interface GlyphTable {
   curves: GPUBuffer
   /** Instance index of `run`'s first glyph in the last upload. */
   start(run: GlyphRun): number | undefined
+}
+
+/**
+ * A copy of some glyphs' Slug instances as last packed, with their bands
+ * held resident (pinned against LRU eviction) until `release()`: a
+ * morph draws the outgoing text from it after the DOM has changed
+ * (fx/morph.ts). Instance i is glyph i of the runs asked for, in order.
+ */
+export interface GlyphGhost {
+  count: number
+  /** GLYPH_FLOATS per glyph: the `Glyph` struct (shaders.ts); gref is u32
+   * in the same bytes. A glyph Slug doesn't draw has gref.y 0. */
+  instances: Float32Array
+  /** Per glyph: its outline in drawing order, normalised to its tight
+   * bbox, y-up (font.ts `GlyphBands.outline`); null when Slug doesn't
+   * draw it. */
+  outlines: (Quad[] | null)[]
+  /** The grapheme per glyph. */
+  text: string[]
+  /** Unpin the bands (idempotent). */
+  release(): void
 }
 /** Max gap (px) between a component's right edge and the next one's left
  * edge for them to count as one ligature: Chrome's split rects abut. */
@@ -173,6 +195,10 @@ export class SlugText implements TextBackend {
   private cache = new Map<number, number>()
   private slotBBox: BBox[] = new Array(SLOT_COUNT)
   private slotFrame = new Int32Array(SLOT_COUNT)
+  /** Ghosts holding each slot (GlyphGhost): never evicted while > 0. */
+  private slotPins = new Uint16Array(SLOT_COUNT)
+  /** What each slot holds (its outline, for ghosts). */
+  private slotGlyph: (GlyphBands | undefined)[] = new Array(SLOT_COUNT)
   private nextFree = 0
   private frameId = 0
   /** Slots reassigned to another glyph so far (see patchRuns). */
@@ -523,8 +549,16 @@ export class SlugText implements TextBackend {
     if (this.nextFree < SLOT_COUNT) {
       slot = this.nextFree++
     } else {
-      const oldestKey = this.cache.keys().next().value
+      // The least recently used slot no ghost holds.
+      let oldestKey: number | undefined
+      for (const [k, s] of this.cache) {
+        if ((this.slotPins[s] ?? 0) === 0) {
+          oldestKey = k
+          break
+        }
+      }
       if (oldestKey === undefined) {
+        this.overflowed = true // every slot is held by a ghost
         return -1
       }
       const victim = this.cache.get(oldestKey) as number
@@ -580,6 +614,7 @@ export class SlugText implements TextBackend {
 
   /** Upload one glyph's bands + curves (≤ MAX_CURVES) into a slot. */
   private writeSlot(slot: number, gb: GlyphBands): void {
+    this.slotGlyph[slot] = gb
     const curveBase = slot * MAX_CURVES
     const b = this.bandScratch
     for (let i = 0; i < BANDS_PER_SLOT; i++) {
@@ -639,6 +674,61 @@ export class SlugText implements TextBackend {
     this.quads.ensure(n)
     this.rebuildBindGroup()
     this.atlasBindGroup = null
+  }
+
+  /**
+   * Copy `runs`' glyph instances as last packed and pin their bands until
+   * the ghost is released (see GlyphGhost). Null when a run wasn't in the
+   * last upload.
+   */
+  ghost(runs: readonly GlyphRun[]): GlyphGhost | null {
+    let count = 0
+    for (const run of runs) {
+      if (this.runStarts.get(run) === undefined) {
+        return null
+      }
+      count += run.glyphs.length
+    }
+    const instances = new Float32Array(count * GLYPH_FLOATS)
+    const outlines: (Quad[] | null)[] = []
+    const text: string[] = []
+    const slots: number[] = []
+    const f = this.glyphs.f32
+    const u = this.glyphs.u32
+    let k = 0
+    for (const run of runs) {
+      const first = this.runStarts.get(run) ?? 0
+      for (let i = 0; i < run.glyphs.length; i++, k++) {
+        const base = (first + i) * GLYPH_FLOATS
+        instances.set(f.subarray(base, base + GLYPH_FLOATS), k * GLYPH_FLOATS)
+        const bands = u[base + 13] ?? 0
+        const slot = Math.floor((u[base + 12] ?? 0) / BANDS_PER_SLOT)
+        if (bands > 0 && slot < SLOT_COUNT) {
+          this.slotPins[slot] = (this.slotPins[slot] ?? 0) + 1
+          slots.push(slot)
+          outlines.push(this.slotGlyph[slot]?.outline ?? null)
+        } else {
+          outlines.push(null)
+        }
+        text.push(run.glyphs[i]?.text ?? '')
+      }
+    }
+    let held = true
+    return {
+      count,
+      instances,
+      outlines,
+      text,
+      release: () => {
+        if (!held) {
+          return
+        }
+        held = false
+        for (const slot of slots) {
+          this.slotPins[slot] = Math.max(0, (this.slotPins[slot] ?? 0) - 1)
+        }
+      }
+    }
   }
 
   /** The instance and outline buffers (null before the first glyph). */

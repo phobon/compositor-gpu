@@ -1,6 +1,7 @@
 import type { ElNode } from '../dom/tree'
 import type { ImageRegion } from '../images/image_renderer'
-import type { GlyphTable } from '../text/slug/rasterizer'
+import type { GlyphRun } from '../scene/records'
+import type { GlyphGhost, GlyphTable } from '../text/slug/rasterizer'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { FRAME_WGSL, type Shared } from './frame'
@@ -203,6 +204,10 @@ export interface RenderGraph {
   /** The Slug glyph buffers as of the last text upload (null with no
    * text layer or no Slug glyphs). Call while encoding, as imageOf. */
   glyphTable(): GlyphTable | null
+  /** A copy of `runs`' Slug glyph instances as last uploaded, their bands
+   * held resident until released (null when a run wasn't in the last
+   * upload, or there's no text layer): the morph's outgoing text. */
+  glyphGhost(runs: readonly GlyphRun[]): GlyphGhost | null
   /** Bumped whenever the scene is rebuilt (records and z change). */
   readonly version: number
 }

@@ -643,6 +643,7 @@ export async function createCompositor(
       return rec && imagePass ? imagePass.regionOf(rec) : null
     },
     glyphTable: () => text?.glyphTable() ?? null,
+    glyphGhost: (runs) => text?.ghost(runs) ?? null,
     get version() {
       return scene.version
     }

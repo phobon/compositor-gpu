@@ -202,6 +202,11 @@ vec4f 16; an f32 can follow a vec3f in its last 4 bytes), the block padded
 to a multiple of 16 bytes. An empty schema declares `_unused : f32`. Names
 must be WGSL identifiers starting with a letter.
 
+A `vec4` with `count: n` is an array, `array<vec4f, n>` (indexable:
+`params.rows[i]`), its value one flat array of 4 × n floats; a 4-float
+default fills every element. For tables a preset writes from JS
+(`layoutMorph`'s pairs); dials skip it.
+
 ## Pointer
 
 Tracked from passive `window` listeners (`pointermove`, `pointerdown`,
@@ -932,6 +937,40 @@ layer draws nothing).
   fringe along the radius. Age is `fx.elapsed`: enabling the pass
   directly shows the wave at that age and leaves it on. Pixels off the
   ring copy through. Fullscreen only.
+- `layoutMorph(fx, { root = document, timeout = 1500, shockwave = null
+  })` returns `{ capture(), settled(), progress, play(ms = 700, ease),
+  end(), destroy(), keys, pass }`. A keyed layout morph between two DOM
+  states: `capture()` measures every `[data-gpu-morph]` element and holds
+  the page; swap the DOM; `settled()` waits for the incoming mirror and
+  pairs elements by key (DOM order, up to `MAX_PAIRS` = 16; a pair with
+  an empty box or more than a viewport off screen cross-fades instead).
+  As `progress` goes 0 -> 1 each pair's box moves from its old place and
+  size to its new one, radius too, the old element (cut from the
+  snapshot) cross-fading into the live one (moved by a layer transform,
+  so text stays vector); old spots show the new page and everything
+  else cross-fades. An element that paints a box (background, border,
+  shadow, an image) moves by its border box; one that paints none moves
+  by its contents' box, its old text keyed out of the snapshot by its
+  colour (exact over a flat background). Nested keys pair on their own.
+  Progress 0 and 1 are the two pages exactly; `play()` ends the morph
+  when done, `end()` otherwise. Under reduced motion the pages
+  cross-fade (150 ms). Elements with a CSS transform pair by their
+  bounding boxes.
+- `morph(fx, el, { pieces = 16, spread = 0.5, arc = 0.2, spin = 0.4,
+  swap = 0.5, soft = 0.5, shockwave = null })` returns `{ capture(),
+  settled(timeout = 1500), progress, play(ms = 1100, ease), end(),
+  destroy(), layer }`. Text in place: `capture()` copies the element's
+  glyphs as drawn and draws them from the copy (the live text hidden);
+  change the text; `settled()` waits for the new text and pairs the two
+  strings. Unchanged graphemes (LCS) move as whole glyphs; changed ones
+  are cut into about `pieces` segments per string, paired by least
+  travel, and each pair's outline morphs point to point while it
+  travels along an arc (`arc` of its travel) and turns (`spin` rad);
+  `spread` staggers the pieces, `swap` / `soft` place the outline
+  change in a piece's travel. Leftover segments grow from or shrink to
+  their centroid. Progress 0 and 1 are the two texts exactly; `end()`
+  hands back to the live text. `shockwave` plays from the element when
+  `play()` starts. Under reduced motion the glyphs cross-fade.
 - `reveal(fx, target, { progress = 0, blur = 12, split = 8, glitch =
   24, height = 10, density = 0.35, wash = 0, washColor = '#fff', fade =
   0.35, seed = 0 })`: an element's entrance as one region pass (three

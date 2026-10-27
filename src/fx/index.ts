@@ -87,7 +87,20 @@ export {
   type GlitchSlicesSchema,
   glitchSlices
 } from './presets/glitch_slices'
+export {
+  type LayoutMorph,
+  type LayoutMorphOptions,
+  type LayoutMorphSchema,
+  layoutMorph,
+  MAX_PAIRS
+} from './presets/layout_morph'
 export { type LensOptions, type LensSchema, lens } from './presets/lens'
+export {
+  type Morph,
+  type MorphOptions,
+  type MorphSchema,
+  morph
+} from './presets/morph'
 export {
   type ProgressiveBlurOptions,
   type ProgressiveBlurSchema,
@@ -114,6 +127,12 @@ export {
   ripple
 } from './presets/ripple'
 export {
+  type Shockwave,
+  type ShockwaveOptions,
+  type ShockwaveSchema,
+  shockwave
+} from './presets/shockwave'
+export {
   type SpotlightOptions,
   type SpotlightSchema,
   spotlight
@@ -123,12 +142,6 @@ export {
   type TextStaggerSchema,
   textStagger
 } from './presets/text_stagger'
-export {
-  type Shockwave,
-  type ShockwaveOptions,
-  type ShockwaveSchema,
-  shockwave
-} from './presets/shockwave'
 export {
   type TouchTrail,
   type TouchTrailParams,
