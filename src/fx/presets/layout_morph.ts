@@ -576,10 +576,46 @@ export function layoutMorph(
     p.shapes = 0
   }
 
+  // Scroll at settled(): new boxes are measured then; a scroll after it
+  // moves them (the page) but not the old ones (the snapshot).
+  let settledAt: [number, number] = [0, 0]
+  let lastShift: [number, number] = [0, 0]
+  /** Where the new boxes are now, viewport CSS px. */
+  const shiftNow = (): [number, number] => {
+    const sx = window.scrollX - settledAt[0]
+    const sy = window.scrollY - settledAt[1]
+    if (sx !== lastShift[0] || sy !== lastShift[1]) {
+      lastShift = [sx, sy]
+      const vw = document.documentElement.clientWidth
+      const vh = document.documentElement.clientHeight
+      const n = new Float32Array(4 * MAX_PAIRS)
+      pairs.forEach((q, i) => {
+        n.set(
+          [
+            (q.now.x - sx) / vw,
+            (q.now.y - sy) / vh,
+            q.now.w / vw,
+            q.now.h / vh
+          ],
+          i * 4
+        )
+      })
+      p.n = Array.from(n)
+    }
+    return lastShift
+  }
+
   // Each pair's layer transform puts its new box at the box between,
   // relative to its paired ancestor's (whose transform already applies).
   const place = (t: number): void => {
-    const at = pairs.map((q) => mixBox(q.old, q.now, t))
+    const [sx, sy] = shiftNow()
+    const nowOf = (q: Pair): Box => ({
+      x: q.now.x - sx,
+      y: q.now.y - sy,
+      w: q.now.w,
+      h: q.now.h
+    })
+    const at = pairs.map((q) => mixBox(q.old, nowOf(q), t))
     pairs.forEach((q, i) => {
       const tf = q.tf
       const r = at[i]
@@ -590,25 +626,29 @@ export function layoutMorph(
       const pp = pairs[q.parent]
       const pr = at[q.parent]
       if (pp && pr) {
-        const sx = pr.w / Math.max(pp.now.w, 1e-6)
-        const sy = pr.h / Math.max(pp.now.h, 1e-6)
+        const pn = nowOf(pp)
+        const kx = pr.w / Math.max(pn.w, 1e-6)
+        const ky = pr.h / Math.max(pn.h, 1e-6)
         want = {
-          x: pp.now.x + (r.x - pr.x) / sx,
-          y: pp.now.y + (r.y - pr.y) / sy,
-          w: r.w / sx,
-          h: r.h / sy
+          x: pn.x + (r.x - pr.x) / kx,
+          y: pn.y + (r.y - pr.y) / ky,
+          w: r.w / kx,
+          h: r.h / ky
         }
       }
       // About the border box's corner: org + t + s (p - org) puts the
-      // box `now` at `want`.
-      const sx = want.w / Math.max(q.now.w, 1e-6)
-      const sy = want.h / Math.max(q.now.h, 1e-6)
-      tf.scaleX = sx
-      tf.scaleY = sy
+      // box `now` at `want` (all where they are now, after any scroll).
+      const now = nowOf(q)
+      const ox = q.org.x - sx
+      const oy = q.org.y - sy
+      const kx = want.w / Math.max(now.w, 1e-6)
+      const ky = want.h / Math.max(now.h, 1e-6)
+      tf.scaleX = kx
+      tf.scaleY = ky
       // A morphing svg's shapes are drawn by the pass in flight.
       tf.opacity = q.shapes && t > 0 && t < 1 ? 0 : 1
-      tf.x = want.x - q.org.x - sx * (q.now.x - q.org.x)
-      tf.y = want.y - q.org.y - sy * (q.now.y - q.org.y)
+      tf.x = want.x - ox - kx * (now.x - ox)
+      tf.y = want.y - oy - ky * (now.y - oy)
       if (q.morph) {
         q.morph.progress = t
         // The live text shows only at the ends (the pass shows the pages
@@ -778,6 +818,8 @@ export function layoutMorph(
       p.ct = Array.from(st.ct)
       p.pt = Array.from(st.pt)
       p.count = pairs.length
+      settledAt = [window.scrollX, window.scrollY]
+      lastShift = [0, 0]
       place(p.progress)
     },
     get progress() {

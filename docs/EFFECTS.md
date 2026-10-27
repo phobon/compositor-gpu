@@ -419,6 +419,10 @@ Built so far (M5d-1, 2026-10-26, checked on the M1 Pro), and where it differs fr
   its layer leaves the page and draws for the transition only
   (`Transition.addLayer`, `overlay(uv)`), so the pass composites the
   text whole over its blend of the pages instead of fading it with them.
+- Assemble and scatter (Q11) are `Morph.assemble()` / `Morph.scatter()`
+  on the in-place text morph, not presets of a WGSL `pose` hook: the
+  captured text paired with itself, each segment's start (or end) moved
+  to a random point and turned, fading. A free `pose` hook is not built.
 - Endpoint exactness comes from drawing every glyph at rest the way the
   text pass does, op for op (quad = ink box plus one device pixel, em
   interpolated per vertex, `fwidth(em)` for the pixel scale, colour from

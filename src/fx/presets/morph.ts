@@ -49,6 +49,10 @@ const FADE_B = 3
 // Segment flags.
 const APPEAR = 1
 const VANISH = 2
+// Fade in or out over the piece's run, its outline whole (assemble,
+// scatter).
+const FADE_IN = 4
+const FADE_OUT = 8
 
 const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
@@ -202,10 +206,10 @@ fn pt_b(i : u32, j : u32) -> vec2f {
 fn flag_alpha(i : u32, w : f32) -> f32 {
   let fl = u32(data(i, 12u));
   var a = 1.0;
-  if ((fl & ${APPEAR}u) != 0u) {
+  if ((fl & ${APPEAR | FADE_IN}u) != 0u) {
     a = w;
   }
-  if ((fl & ${VANISH}u) != 0u) {
+  if ((fl & ${VANISH | FADE_OUT}u) != 0u) {
     a = 1.0 - w;
   }
   return a;
@@ -338,6 +342,21 @@ fn fragment(q : Quad, i : u32) -> vec4f {
 }
 `
 
+/** Assemble and scatter (Morph.assemble / Morph.scatter). */
+export interface PoseOptions {
+  /** Farthest a piece starts (assemble) or ends (scatter) from its
+   * place, CSS px. Default 120. */
+  distance?: number
+  /** Largest turn on the way, radians. Default 2.5. */
+  spin?: number
+}
+
+interface Solo {
+  mode: 'assemble' | 'scatter'
+  distance: number
+  spin: number
+}
+
 export interface MorphOptions {
   /** Segments per string for the changed graphemes. Default 16. */
   pieces?: number
@@ -369,14 +388,29 @@ export interface Morph {
    * itself, at its ends). */
   showLive: boolean
   /** True when the last settled() built the pieces (the new text was
-   * drawn in time). */
+   * drawn in time), or after assemble() / scatter(). */
   readonly ready: boolean
+  /** After capture(), instead of a change: the captured text breaks into
+   * segments that fly in from scattered points and form it as progress
+   * goes 0 -> 1 (nothing at 0, the text exactly at 1). Shader-driven text
+   * animation in place: a reveal. */
+  assemble(opts?: PoseOptions): void
+  /** After capture(): the text breaks into segments that fly apart and
+   * fade (the text exactly at 0, nothing at 1). play(ms, ease, true)
+   * keeps it gone; end() brings the live text back. */
+  scatter(opts?: PoseOptions): void
   /** 0 = the old text, 1 = the new text. */
   progress: number
   /** Tween progress 0 -> 1 over `ms` (default 1100) with `ease` (default
    * linear: the pieces ease themselves), playing the shockwave if one
    * was given, then end(). Under reduced motion: a 150 ms cross-fade. */
-  play(ms?: number, ease?: (t: number) => number): Promise<void>
+  play(
+    ms?: number,
+    ease?: (t: number) => number,
+    /** True: stay at progress 1 instead of end() (a scatter that keeps
+     * the text gone). */
+    keep?: boolean
+  ): Promise<void>
   /** Back to the live text; frees the copies. */
   end(): void
   destroy(): void
@@ -397,6 +431,23 @@ interface Side {
 
 const nextFrame = (): Promise<void> =>
   new Promise((r) => requestAnimationFrame(() => r()))
+
+/** `s` with its page-space glyphs moved by (dx, dy) CSS px (viewport-space
+ * ones stay). */
+function shiftSide(s: Side, dx: number, dy: number): Side {
+  const inst = s.ghost.instances
+  for (let k = 0; k < s.ghost.count; k++) {
+    const b = k * GLYPH_FLOATS
+    if (inst[b + 6] !== 1) {
+      inst[b + 4] = (inst[b + 4] ?? 0) + dx
+      inst[b + 5] = (inst[b + 5] ?? 0) + dy
+    }
+  }
+  return {
+    ...s,
+    frames: s.frames.map((_, k) => frameOf(inst, k))
+  }
+}
 
 function frameOf(inst: Float32Array, k: number): Side['frames'][number] {
   const b = k * GLYPH_FLOATS
@@ -501,6 +552,7 @@ export function morph(
     hidersOn()
   }
 
+  let scrolled: [number, number] = [0, 0]
   const sideOf = (ghost: GlyphGhost, base: number): Side => ({
     ghost,
     base,
@@ -561,8 +613,13 @@ export function morph(
   const restRows = (s: Side): Float32Array[] =>
     s.frames.map((_, k) => row(FADE_A, s.base + k, s.base + k))
 
-  const build = (sa: Side, sb: Side): Float32Array[] => {
+  const build = (sa: Side, sb: Side, solo?: Solo): Float32Array[] => {
     pendingTable = []
+    if (fx.reducedMotion && solo) {
+      // Fade the text in (FADE_B) or out (FADE_A) in place.
+      const kind = solo.mode === 'assemble' ? FADE_B : FADE_A
+      return sa.frames.map((_, k) => row(kind, sa.base + k, sa.base + k))
+    }
     if (fx.reducedMotion) {
       return [
         ...sa.frames.map((_, k) => row(FADE_A, sa.base + k, sa.base + k)),
@@ -577,7 +634,7 @@ export function morph(
       return seed / 4294967296
     }
     // Kept graphemes move whole.
-    const kept = lcs(sa.ghost.text, sb.ghost.text).filter(
+    const kept = (solo ? [] : lcs(sa.ghost.text, sb.ghost.text)).filter(
       ([i, j]) => sa.ghost.outlines[i] && sb.ghost.outlines[j]
     )
     const keptA = new Set(kept.map(([i]) => i))
@@ -617,7 +674,7 @@ export function morph(
       return { out, starts }
     }
     const ca = cuts(sa, keptA)
-    const cb = cuts(sb, keptB)
+    const cb = solo ? ca : cuts(sb, keptB)
     type Piece = (typeof ca.out)[number]
     const docOf = (s: Side, pc: Piece): [number, number] =>
       pointOf(s.frames[pc.k] as Side['frames'][number], pc.seg.cx, pc.seg.cy)
@@ -699,6 +756,32 @@ export function morph(
       }
       return r
     }
+    if (solo) {
+      // Every piece flies in from (or out to) a random point within
+      // `distance` of its place, turning by up to `spin`, fading.
+      const assemble = solo.mode === 'assemble'
+      for (const pc of ca.out) {
+        const r = segRow(
+          pc,
+          pc,
+          sa,
+          sa,
+          assemble ? FADE_IN : FADE_OUT,
+          ca.starts,
+          ca.starts
+        )
+        const dir = rand() * Math.PI * 2
+        const d = solo.distance * (0.35 + 0.65 * rand())
+        const turn = solo.spin * (rand() * 2 - 1)
+        const at = assemble ? 13 : 15
+        r[at] = (r[at] ?? 0) + Math.cos(dir) * d
+        r[at + 1] = (r[at + 1] ?? 0) + Math.sin(dir) * d
+        r[assemble ? 9 : 10] = (r[assemble ? 9 : 10] ?? 0) + turn
+        rows.push(r)
+      }
+      pendingTable = table
+      return rows
+    }
     const n = Math.min(ca.out.length, cb.out.length)
     if (n > 0) {
       const cost = new Float64Array(n * n)
@@ -738,7 +821,28 @@ export function morph(
   }
   let pendingTable: number[] = []
 
+  let soloBuilt = false
+  const buildSolo = (mode: Solo['mode'], o: PoseOptions): void => {
+    if (!a) {
+      return
+    }
+    b?.ghost.release()
+    b = null
+    const rows = build(a, a, {
+      mode,
+      distance: o.distance ?? 120,
+      spin: o.spin ?? 2.5
+    })
+    upload(rows, pendingTable)
+    soloBuilt = true
+    p.progress = 0
+    p.prev = 0
+    p.fade = 0
+    last = 0
+  }
+
   const release = (): void => {
+    soloBuilt = false
     a?.ghost.release()
     b?.ghost.release()
     a = null
@@ -757,7 +861,13 @@ export function morph(
       }
     },
     get ready() {
-      return b !== null
+      return b !== null || soloBuilt
+    },
+    assemble(o: PoseOptions = {}) {
+      buildSolo('assemble', o)
+    },
+    scatter(o: PoseOptions = {}) {
+      buildSolo('scatter', o)
     },
     get showLive() {
       return showLive
@@ -778,6 +888,7 @@ export function morph(
         return
       }
       a = sideOf(ghost, 0)
+      scrolled = [window.scrollX, window.scrollY]
       captured = target.version
       p.progress = 0
       p.prev = 0
@@ -827,11 +938,18 @@ export function morph(
       if (!ghost) {
         return
       }
+      // The page scrolled since capture() (a route swap back to the
+      // top): the old text stays where it was on screen.
+      const dx = window.scrollX - scrolled[0]
+      const dy = window.scrollY - scrolled[1]
+      if (dx !== 0 || dy !== 0) {
+        a = shiftSide(a, dx, dy)
+      }
       b = sideOf(ghost, a.ghost.count)
       const rows = build(a, b)
       upload(rows, pendingTable)
     },
-    play(ms = 1100, ease = (t) => t) {
+    play(ms = 1100, ease = (t) => t, keep = false) {
       const reduced = fx.reducedMotion
       const dur = reduced ? 150 : ms
       if (!reduced) {
@@ -850,7 +968,9 @@ export function morph(
             void nextFrame()
               .then(nextFrame)
               .then(() => {
-                handle.end()
+                if (!keep) {
+                  handle.end()
+                }
                 resolve()
               })
           }

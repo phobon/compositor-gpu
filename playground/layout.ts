@@ -67,10 +67,19 @@ const STATES = [
     <div class="side">${mark(1)}${[1, 2].map((i) => card(i, '', 1)).join('')}</div>`
 ]
 let state = 0
+// `?scroll`: a tall page; each swap is a route change back to the top
+// (scroll down before Next to see the old page held where it was).
+const routed = q.has('scroll')
+if (routed) {
+  page.classList.add('tall')
+}
 const show = (s: number): void => {
   state = s
-  page.className = s === 0 ? 'a' : 'b'
+  page.className = `${s === 0 ? 'a' : 'b'}${routed ? ' tall' : ''}`
   page.innerHTML = STATES[s]?.() ?? ''
+  if (routed) {
+    window.scrollTo(0, 0)
+  }
 }
 show(0)
 
@@ -118,7 +127,11 @@ if (q.has('auto') && !vr) {
 window.__layout = {
   morph: m,
   results,
-  async hold(s, progress) {
+  async hold(s, progress, from) {
+    if (from !== undefined) {
+      window.scrollTo(0, from)
+      await new Promise((r) => requestAnimationFrame(r))
+    }
     await m.capture()
     show(s)
     await m.settled()

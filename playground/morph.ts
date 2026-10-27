@@ -7,8 +7,9 @@ import { createCompositor } from '@/index'
 
 // Morph playground (M5d, in-place text): the heading's text changes
 // through fx `morph`, glyph segments re-forming as the next string, under
-// a shockwave. Next plays one; `?auto` cycles; `?vr` is the harness view
-// (window.__morph holds a morph at any progress).
+// a shockwave. Next plays one; Assemble and Scatter break the heading
+// into flying segments and back; `?auto` cycles; `?vr` is the harness
+// view (window.__morph holds a morph at any progress).
 
 const q = new URLSearchParams(location.search)
 const vr = q.has('vr')
@@ -44,6 +45,42 @@ const next = async (): Promise<void> => {
 document.getElementById('next')?.addEventListener('click', () => {
   void next()
 })
+
+// Assemble: the heading flies together from scattered segments. Scatter:
+// it flies apart, then assembles again.
+const ms = Number(q.get('ms') ?? 1100)
+const assembleNow = async (): Promise<void> => {
+  if (busy) {
+    return
+  }
+  busy = true
+  await m.capture()
+  m.assemble()
+  if (waveBox.checked) {
+    wave.play(word)
+  }
+  await m.play(ms)
+  busy = false
+}
+const scatterNow = async (): Promise<void> => {
+  if (busy) {
+    return
+  }
+  busy = true
+  await m.capture()
+  m.scatter()
+  await m.play(ms, undefined, true)
+  await new Promise((r) => setTimeout(r, 500))
+  m.assemble()
+  await m.play(ms)
+  busy = false
+}
+document.getElementById('assemble')?.addEventListener('click', () => {
+  void assembleNow()
+})
+document.getElementById('scatter')?.addEventListener('click', () => {
+  void scatterNow()
+})
 if (q.has('auto') && !vr) {
   const loop = async (): Promise<void> => {
     await next()
@@ -61,6 +98,15 @@ window.__morph = {
     m.progress = progress
   },
   at(progress) {
+    m.progress = progress
+  },
+  async pose(mode, progress) {
+    await m.capture()
+    if (mode === 'assemble') {
+      m.assemble()
+    } else {
+      m.scatter()
+    }
     m.progress = progress
   },
   end() {

@@ -78,6 +78,7 @@ const PAGES: Page[] = [
     about: 'Keyed cards moving between a grid and a detail view (M5d-2)',
     variants: [
       { label: 'auto', query: '?auto' },
+      { label: 'route swap (scroll down first)', query: '?scroll' },
       { label: 'slow', query: '?ms=3000' }
     ]
   },

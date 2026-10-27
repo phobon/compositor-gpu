@@ -319,9 +319,9 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           cross-fades as a box, with a warning). Playground icons
           (play -> pause, check -> plus, circle -> star) and a stroked
           hexagon -> triangle; `test/unit/path_shapes.test.ts`
-    - [ ] Text segment morphs in pairs (built 2026-10-27; headless
-          SwiftShader: progress 0 / 1 exact, no console errors; to check
-          on the M1 Pro): a text-only pair whose string changed morphs
+    - [x] Text segment morphs in pairs (built 2026-10-27; headless
+          SwiftShader: progress 0 / 1 exact, no console errors; checked
+          on the M1 Pro 2026-10-27): a text-only pair whose string changed morphs
           through a pooled `morph` (`capture(el)`, `settled(t, el)` for a
           replaced element, `showLive`, `ready`), pair kind 3. Its layer
           draws for the pass alone: `Transition.addLayer(layer)` and
@@ -330,8 +330,29 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           blend; the live text hidden in flight, the old keyed out of the
           snapshot. Option `text` (morph settings, or false). The
           playground's title changes ("Projects" -> "Project 01")
-    - [ ] `pose` presets (assemble, scatter)
-    - [ ] Route swaps across scroll positions
+    - [x] Assemble and scatter (built 2026-10-27; headless SwiftShader:
+          assemble at 1 and scatter at 0 equal the text exactly, no
+          console errors; checked on the M1 Pro 2026-10-27): `Morph.assemble(o)` /
+          `Morph.scatter(o)` after `capture()` build pieces from the
+          captured text alone: every glyph cut into segments that fly in
+          from (or out to) a random point within `distance` (120 px),
+          turning by up to `spin` (2.5 rad), fading (flags FADE_IN /
+          FADE_OUT: alpha only, outline whole); reduced motion fades in
+          place. `play(ms, ease, keep)` can stay at 1 (a scatter that
+          keeps the text gone). Morph page buttons; shots
+          `fx-morph-assemble-half`, `-1`, `fx-morph-scatter-0`, `-half`.
+          A free WGSL `pose` hook is left for the framework extraction
+    - [ ] Route swaps across scroll positions (built 2026-10-27;
+          headless SwiftShader: progress 0 / 1 exact from 380 px down
+          back to the top, no console errors; to check on the M1 Pro):
+          the pass already works in viewport space (old boxes in the
+          snapshot's, new ones measured at settled()); layer transforms
+          and the new boxes follow any scroll after settled() (re-read
+          each progress write), and a text morph's old copy moves by the
+          scroll since capture() so it stays where it was on screen
+          (page-space glyphs only). Page `layout.html?scroll`; shots
+          `fx-layout-scroll-a`, `-0`, `-half`, `-1`, `-b`. Svg shape
+          points don't follow a scroll after settled()
   - [ ] M5e runtime JFA distance fields (`sdf` binding)
   - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
         (full cmap, contour data, licence warning), SVG paths,
@@ -341,7 +362,8 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         `onGlyph`, `onFrame`; logged once per label and message, the
         frame carries on (a throw used to stop the frame loop)
 - [ ] Framework extraction (later; not for the progressive-enhancement
-      build): font parsing and path work in a worker; range-split baked
+      build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
+      Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked
       fonts; KTX2 for page images; a global velocity buffer for motion
       blur; a Vite plugin for the bake CLI; glyph outline morphs between
       whole glyphs; variable-font deltas and weight morphs; automatic

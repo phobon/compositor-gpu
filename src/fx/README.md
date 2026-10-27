@@ -974,7 +974,10 @@ layer draws nothing).
   `MAX_SHAPES` (16) shapes and `MAX_CONTOURS` (24) subpaths in all; past
   that the svg cross-fades as a box. Under reduced motion the pages
   cross-fade (150 ms). Elements with a CSS transform pair by their
-  bounding boxes.
+  bounding boxes. A swap that scrolls (a route change back to the top)
+  works: the old page is held as it was on screen and the new boxes are
+  measured where they are after the swap; a scroll during the morph
+  moves the new side with the page.
 - `morph(fx, el, { pieces = 16, spread = 0.5, arc = 0.2, spin = 0.4,
   swap = 0.5, soft = 0.5, shockwave = null })` returns `{ capture(),
   settled(timeout = 1500), progress, play(ms = 1100, ease), end(),
@@ -994,7 +997,14 @@ layer draws nothing).
   takes the new text from another element (a replaced one; both hidden
   until `end()`), `showLive = true` shows the live text meanwhile, and
   `ready` says whether the last `settled()` built the pieces
-  (layoutMorph reuses morphs this way).
+  (layoutMorph reuses morphs this way). Instead of a change, after
+  `capture()`: `assemble({ distance = 120, spin = 2.5 })` breaks the text
+  into segments that fly in from scattered points (within `distance`
+  px, turning by up to `spin` rad) and form it as `progress` goes 0 -> 1
+  (nothing at 0, the text exactly at 1); `scatter(opts)` flies them
+  apart (the text at 0, nothing at 1). `play(ms, ease, true)` stays at 1
+  instead of ending (keep a scattered text gone; `end()` brings it
+  back). Under reduced motion both fade in place.
 - `reveal(fx, target, { progress = 0, blur = 12, split = 8, glitch =
   24, height = 10, density = 0.35, wash = 0, washColor = '#fff', fade =
   0.35, seed = 0 })`: an element's entrance as one region pass (three

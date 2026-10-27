@@ -102,7 +102,8 @@ export {
   type Morph,
   type MorphOptions,
   type MorphSchema,
-  morph
+  morph,
+  type PoseOptions
 } from './presets/morph'
 export {
   type ProgressiveBlurOptions,

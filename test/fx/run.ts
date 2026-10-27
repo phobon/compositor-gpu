@@ -76,6 +76,10 @@
 //                     must equal fx-morph-a exactly
 //   fx-morph-half     half way (segments in flight)
 //   fx-morph-1        progress 1: must equal fx-morph-b exactly
+//   fx-morph-assemble-half, -1  S15_ assembling from scattered segments
+//                     at progress 0.5 / 1 (-1 must equal fx-morph-b exactly)
+//   fx-morph-scatter-0, -half  scattering: at 0 must equal fx-morph-b
+//                     exactly; half way
 //   fx-reveal         reveal on the section's h2 and develop on its img,
 //                     both at progress 0.4
 //   fx-reveal-0       both at progress 0 (heading and image hidden)
@@ -110,6 +114,9 @@
 //                at progress 0: equal to fx-layout-a exactly
 //   fx-layout-half  progress 0.5 (cards, images and titles between)
 //   fx-layout-1  progress 1: equal to fx-layout-b exactly
+//   fx-layout-scroll-a, -0, -half, -1, -b  the same on layout.html?scroll,
+//                scrolled 380 px, the swap back at the top: -0 equal to -a
+//                and -1 to -b exactly
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1248,7 +1255,11 @@ async function main(): Promise<void> {
       'fx-morph-0',
       'fx-morph-half',
       'fx-morph-1',
-      'fx-morph-b'
+      'fx-morph-b',
+      'fx-morph-assemble-half',
+      'fx-morph-assemble-1',
+      'fx-morph-scatter-0',
+      'fx-morph-scatter-half'
     ]
     if (morphShots.some(want)) {
       const p = await launched.browser.newPage({
@@ -1313,7 +1324,19 @@ async function main(): Promise<void> {
         await p.evaluate(() => window.__morph?.at(1))
         const one = await shot('fx-morph-1')
         await p.evaluate(() => window.__morph?.end())
-        exact('fx-morph-1', await shot('fx-morph-b'), one)
+        const b = await shot('fx-morph-b')
+        exact('fx-morph-1', b, one)
+        // Assemble and scatter of the text now showing (b).
+        await p.evaluate(() => window.__morph?.pose('assemble', 0.5))
+        await shot('fx-morph-assemble-half')
+        await p.evaluate(() => window.__morph?.at(1))
+        exact('fx-morph-assemble-1', b, await shot('fx-morph-assemble-1'))
+        await p.evaluate(() => window.__morph?.end())
+        await p.evaluate(() => window.__morph?.pose('scatter', 0))
+        exact('fx-morph-scatter-0', b, await shot('fx-morph-scatter-0'))
+        await p.evaluate(() => window.__morph?.at(0.5))
+        await shot('fx-morph-scatter-half')
+        await p.evaluate(() => window.__morph?.end())
       } finally {
         await p.close()
       }
@@ -1323,7 +1346,12 @@ async function main(): Promise<void> {
       'fx-layout-0',
       'fx-layout-half',
       'fx-layout-1',
-      'fx-layout-b'
+      'fx-layout-b',
+      'fx-layout-scroll-a',
+      'fx-layout-scroll-0',
+      'fx-layout-scroll-half',
+      'fx-layout-scroll-1',
+      'fx-layout-scroll-b'
     ]
     if (layoutShots.some(want)) {
       const p = await launched.browser.newPage({
@@ -1388,6 +1416,23 @@ async function main(): Promise<void> {
         const one = await shot('fx-layout-1')
         await p.evaluate(() => window.__layout?.end())
         exact('fx-layout-1', await shot('fx-layout-b'), one)
+        // A route swap from 380 px down back to the top (?scroll): the
+        // old page held where it was on screen.
+        await p.goto(`${url}layout.html?vr&scroll`, { waitUntil: 'load' })
+        await p.waitForFunction(() => Boolean(window.__layout), null, {
+          timeout: 30_000
+        })
+        await frames(10)
+        await p.evaluate(() => window.scrollTo(0, 380))
+        const sa = await shot('fx-layout-scroll-a')
+        await p.evaluate(() => window.__layout?.hold(1, 0, 380))
+        exact('fx-layout-scroll-0', sa, await shot('fx-layout-scroll-0'))
+        await p.evaluate(() => window.__layout?.at(0.5))
+        await shot('fx-layout-scroll-half')
+        await p.evaluate(() => window.__layout?.at(1))
+        const sone = await shot('fx-layout-scroll-1')
+        await p.evaluate(() => window.__layout?.end())
+        exact('fx-layout-scroll-1', await shot('fx-layout-scroll-b'), sone)
       } finally {
         await p.close()
       }

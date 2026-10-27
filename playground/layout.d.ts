@@ -7,8 +7,9 @@ declare global {
       morph: LayoutMorph
       /** Per Next: capture() and settled() waits, ms. */
       results: { captureMs: number; settleMs: number }[]
-      /** Morph to state `s` and hold it at `progress` (no play). */
-      hold(s: number, progress: number): Promise<void>
+      /** Morph to state `s` and hold it at `progress` (no play); `from`:
+       * scroll there first (with `?scroll`, the swap returns to the top). */
+      hold(s: number, progress: number, from?: number): Promise<void>
       /** Set progress on the held morph. */
       at(progress: number): void
       /** End the held morph (the live page shows). */

@@ -207,11 +207,15 @@ out at the pinned elapsed) and `fx-shockwave-then-off` (must equal the
 section exactly), on `playground/morph.html` `fx-morph-a` (the first
 string), `fx-morph-0` (captured, changed, held at progress 0: must equal
 `fx-morph-a`), `fx-morph-half`, `fx-morph-1` (must equal `fx-morph-b`)
-and `fx-morph-b` (ended, the live text), on `playground/layout.html`
+and `fx-morph-b` (ended, the live text), `fx-morph-assemble-half`,
+`fx-morph-assemble-1` (must equal `fx-morph-b`), `fx-morph-scatter-0`
+(must equal `fx-morph-b`) and `fx-morph-scatter-half`, on `playground/layout.html`
 `fx-layout-a` (the grid), `fx-layout-0` (keyed layout morph to the
 detail view held at progress 0: must equal `fx-layout-a`),
 `fx-layout-half`, `fx-layout-1` (must equal `fx-layout-b`) and
-`fx-layout-b` (ended, the detail view), `fx-reveal` / `fx-reveal-0`
+`fx-layout-b` (ended, the detail view), `fx-layout-scroll-a` / `-0` /
+`-half` / `-1` / `-b` (the same on `layout.html?scroll`, from 380 px down
+back to the top; -0 equal to -a, -1 to -b), `fx-reveal` / `fx-reveal-0`
 (reveal on the section's h2 and develop on its img at progress 0.4 / 0)
 and `fx-reveal-then-off` (must equal the section exactly), on the
 displace section,

@@ -9,6 +9,9 @@ declare global {
       hold(i: number, progress: number): Promise<void>
       /** Set progress on the held morph. */
       at(progress: number): void
+      /** Capture the heading and hold an assemble or scatter at
+       * `progress`. */
+      pose(mode: 'assemble' | 'scatter', progress: number): Promise<void>
       /** End the held morph (the live text shows). */
       end(): void
     }
