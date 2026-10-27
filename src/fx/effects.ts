@@ -1,3 +1,4 @@
+import type { ElNode } from '../dom/tree'
 import type {
   PostChain,
   PostFrame,
@@ -43,6 +44,7 @@ import {
   PointerTracker
 } from './pointer'
 import { createReducedMotion } from './reduced_motion'
+import { type Sdf, SdfField, type SdfOptions } from './sdf'
 import {
   EFFECT_BYTES,
   effectSource,
@@ -102,6 +104,11 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
   /** Sample this element's image record in the fragment: `image(uv)`,
    * `image_level(uv, lod)` (premultiplied), `image_size()`. */
   image?: Target | Element
+  /** Read this distance field in the fragment: `sdf(p)` (signed
+   * distance from page point p, CSS px, to its element's rendered shape;
+   * `uv_to_page(uv)` gives p), `sdf_ready()`. Not with `image` or on a
+   * transition. */
+  sdf?: Sdf
   /** Read this trail's field in the fragment: `trail(uv)`,
    * `trail_at(p)`, `trail_cell(p)`, `trail_snap(p)` (see Trail). */
   trail?: Trail
@@ -171,6 +178,11 @@ export interface Effects {
    * GPU each frame, for passes, materials and layers to read (see
    * TrailOptions). */
   trail(opts?: TrailOptions): Trail
+  /** A distance field of `el`'s rendered shape for passes and layers
+   * (their `sdf` option), rebuilt when its content or box changes (see
+   * SdfOptions). `el` is isolated while the field lives (not with a
+   * region pass on the same element). */
+  sdf(el: Target | Element, opts?: SdfOptions): Sdf
   /** Give up this caller's use of the runtime (createEffects returns the
    * same runtime per compositor, counting callers): the last release
    * destroys it. Destroy your own passes, motions etc. first. */
@@ -243,6 +255,8 @@ interface PassState {
   } | null
   /** A transition's snapshot (group 3 instead of `image`). */
   snap: Snapshot | null
+  /** With `sdf`: its field bound as group 3. */
+  sdf: { bind: (rp: GPURenderPassEncoder) => void } | null
 }
 
 /** `continuous` unless given: whether a stage reads the clock. */
@@ -347,6 +361,7 @@ function inertEffects(): Effects {
     motion: (el, opts) =>
       createMotion(inertComposer, false, el, opts, () => reduced.on),
     trail: (opts) => inertTrail(opts),
+    sdf: (el, opts = {}) => inertSdf(el, opts),
     targets: (sel, root = document) =>
       Array.from(root.querySelectorAll(sel), (el) => targetOf(el, cache, null)),
     pass<S extends ParamSchema>(opts: PassOptions<S>): Pass<S> {
@@ -367,6 +382,7 @@ function inertEffects(): Effects {
         region: opts.region ? targetOf(opts.region, cache, null) : null,
         ping: [],
         image: null,
+        sdf: null,
         snap: null
       }
       return passHandle<S>(s, () => s.life.destroy())
@@ -385,6 +401,45 @@ function inertEffects(): Effects {
     __override() {},
     __pending: () => 0,
     __compiled: () => 0
+  }
+}
+
+/** What a distance field depends on in `node`'s subtree: its box and
+ * every record's id (a re-read replaces them), and whether each image is
+ * on the GPU yet (`uploaded`, by element). */
+function contentKey(node: ElNode, uploaded: (el: Element) => number): string {
+  const parts: (string | number)[] = []
+  const r = node.rect
+  parts.push(r.x, r.y, r.width, r.height)
+  const visit = (n: ElNode): void => {
+    for (const rec of n.own) {
+      parts.push(rec.id)
+      if (rec.kind === 'image') {
+        parts.push(`i${uploaded(n.el)}`)
+      }
+    }
+    for (const kid of n.kids) {
+      if ('kids' in kid) {
+        visit(kid)
+      } else {
+        parts.push(kid.id)
+      }
+    }
+  }
+  visit(node)
+  return parts.join(',')
+}
+
+/** An Sdf without WebGPU: never ready. */
+function inertSdf(el: Target | Element, opts: SdfOptions): Sdf {
+  return {
+    el: el instanceof Element ? el : el.el,
+    spread: opts.spread ?? 32,
+    resolution: opts.resolution ?? 512,
+    ready: false,
+    builds: 0,
+    rebuild() {},
+    destroy() {}
   }
 }
 
@@ -449,6 +504,7 @@ function buildEffects(compositor: Compositor): Effects {
   const trails: TrailState[] = []
   /** Destroyed trails, kept until teardown (consumers bind them). */
   const retired: TrailState[] = []
+  const retiredSdfs: SdfField[] = []
   const composer = createComposer(graph)
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
@@ -602,6 +658,32 @@ function buildEffects(compositor: Compositor): Effects {
       },
       destroy() {
         info.destroy()
+      }
+    }
+  }
+  /** Group 3 for a pass reading a distance field (the image layout:
+   * texture, sampler, uniform), rebuilt when the field is replaced. */
+  const sdfBinder = (
+    f: SdfField,
+    label: string
+  ): { bind: (rp: GPURenderPassEncoder) => void } => {
+    let gen = -1
+    let group: GPUBindGroup | null = null
+    return {
+      bind(rp) {
+        if (!group || gen !== f.generation) {
+          gen = f.generation
+          group = device.createBindGroup({
+            label: `${label}:sdf`,
+            layout: imageLayout,
+            entries: [
+              { binding: 0, resource: f.view() },
+              { binding: 1, resource: imageSampler },
+              { binding: 2, resource: { buffer: f.infoBuffer } }
+            ]
+          })
+        }
+        rp.setBindGroup(3, group)
       }
     }
   }
@@ -872,6 +954,13 @@ function buildEffects(compositor: Compositor): Effects {
         lastPointer = packed.slice()
         device.queue.writeBuffer(pointerBuf, 0, packed)
       }
+      // Fields first: one whose element changed rebuilds this frame.
+      for (const f of sdfs.values()) {
+        const node = graph.nodeOf(f.el)
+        if (node) {
+          f.check(contentKey(node, (el) => graph.imageOf(el)?.width ?? 0))
+        }
+      }
       for (const l of layers) {
         l.frame(ctx)
       }
@@ -905,15 +994,17 @@ function buildEffects(compositor: Compositor): Effects {
     over: boolean,
     bindImage: ((rp: GPURenderPassEncoder) => void) | null,
     trail: TrailState | null,
-    prev = false
+    prev = false,
+    sdf = false
   ): Stage => {
     const label = index > 0 ? `fx:${name}#${index}` : `fx:${name}`
     const code = stageSource(
       effectSource(fragment, name),
       block.wgsl,
-      bindImage !== null && !prev,
+      bindImage !== null && !prev && !sdf,
       trail !== null,
-      prev
+      prev,
+      sdf
     )
     const layout = prev
       ? trail
@@ -1188,7 +1279,10 @@ function buildEffects(compositor: Compositor): Effects {
     }
   })
 
+  // Distance fields by handle (layers and passes resolve theirs here).
+  const sdfs = new Map<Sdf, SdfField>()
   const layerDeps = {
+    sdfOf: (s: Sdf) => sdfs.get(s) ?? null,
     device,
     format,
     frameLayout,
@@ -1229,6 +1323,7 @@ function buildEffects(compositor: Compositor): Effects {
         region: opts.region ? targetOf(opts.region, targetCache, graph) : null,
         ping: [],
         image: null,
+        sdf: null,
         snap: (opts as { [SNAPSHOT]?: Snapshot })[SNAPSHOT] ?? null
       }
       const handler = state.region ? regionHandler(state) : null
@@ -1256,9 +1351,14 @@ function buildEffects(compositor: Compositor): Effects {
           )
         }
         const snap = state.snap
+        const field =
+          opts.sdf && !snap && !state.image ? sdfs.get(opts.sdf) : undefined
+        if (field) {
+          state.sdf = sdfBinder(field, `fx:${opts.name}`)
+        }
         const bind = snap
           ? (rp: GPURenderPassEncoder) => snap.bind(rp)
-          : (state.image?.bind ?? null)
+          : (state.image?.bind ?? state.sdf?.bind ?? null)
         const trail = trailState(opts.trail)
         state.stages = frags.map((f, i) =>
           buildStage(
@@ -1270,7 +1370,8 @@ function buildEffects(compositor: Compositor): Effects {
             handler !== null && i === frags.length - 1,
             bind,
             trail,
-            snap !== null
+            snap !== null,
+            state.sdf !== null
           )
         )
         passes.push(state)
@@ -1395,6 +1496,46 @@ function buildEffects(compositor: Compositor): Effects {
       motions.push(m)
       return m
     },
+    sdf(el, opts = {}) {
+      const element = el instanceof Element ? el : el.el
+      if (destroyed) {
+        return inertSdf(element, opts)
+      }
+      const field = new SdfField(
+        { device, format, frameLayout, graph },
+        element,
+        Math.max(1, opts.spread ?? 32),
+        Math.max(16, Math.round(opts.resolution ?? 512))
+      )
+      graph.isolate(element, field.handler)
+      let gone = false
+      const handle: Sdf = {
+        el: element,
+        spread: field.spread,
+        resolution: field.resolution,
+        get ready() {
+          return field.ready
+        },
+        get builds() {
+          return field.builds
+        },
+        rebuild: () => field.rebuild(),
+        destroy() {
+          if (gone) {
+            return
+          }
+          gone = true
+          sdfs.delete(handle)
+          graph.isolate(element, null)
+          // Consumers may still bind its textures this frame.
+          retiredSdfs.push(field)
+          graph.requestFrame()
+        }
+      }
+      sdfs.set(handle, field)
+      graph.requestFrame()
+      return handle
+    },
     trail(opts = {}) {
       if (destroyed) {
         return inertTrail(opts)
@@ -1461,6 +1602,13 @@ function buildEffects(compositor: Compositor): Effects {
         t.free()
       }
       retired.length = 0
+      for (const h of [...sdfs.keys()]) {
+        h.destroy()
+      }
+      for (const f of retiredSdfs) {
+        f.destroy()
+      }
+      retiredSdfs.length = 0
       releaseTargets()
       pointerBuf.destroy()
       noImage?.destroy()

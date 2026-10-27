@@ -22,6 +22,7 @@ import {
   type ParamValues
 } from './params'
 import { POINTER_WGSL } from './pointer'
+import { type Sdf, type SdfField, sdfWgsl } from './sdf'
 import { readsTime } from './shader'
 import { type Target, targetRuns } from './target'
 import { type Trail, type TrailState, trailState, trailWgsl } from './trail'
@@ -297,8 +298,9 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
    * px (fixed to the screen). */
   space?: 'doc' | 'viewport'
   /** Default 'above'. 'below' sits over the page background, under all
-   * mirrored content; `{ after: target }` right after that element. */
-  place?: 'above' | 'below' | { after: Target | Element }
+   * mirrored content; `{ after: target }` right after that element,
+   * `{ before: target }` right before it (under it). */
+  place?: Place
   /** WGSL defining `fn vertex(i : u32, corner : vec2f) -> Quad`. */
   vertex: Hook
   /** WGSL defining `fn fragment(q : Quad, i : u32) -> vec4f`
@@ -315,6 +317,10 @@ export interface LayerOptions<S extends ParamSchema = ParamSchema> {
   images?: readonly (Target | Element)[]
   /** Slice size for `images`, texels. Default 512. */
   imageSize?: number
+  /** Read this distance field in the hooks: `sdf(p)` (signed distance
+   * from page point p to its element's rendered shape, CSS px, negative
+   * inside), `sdf_ready()`. */
+  sdf?: Sdf
   /** Draw this element's mirrored glyphs: `glyph_count()`,
    * `glyph_point(k, uv)`, `glyph_size(k)`, `glyph_color(k)`,
    * `glyph_coverage(k, uv)` (k is the index into `target.glyphs`). */
@@ -348,7 +354,7 @@ export interface Layer<S extends ParamSchema = ParamSchema> {
   readonly data: Float32Array
   count: number
   readonly stride: number
-  place: 'above' | 'below' | { after: Target | Element }
+  place: Place
   enabled: boolean
   continuous: boolean
   /** `simulate` steps dispatched since last enabled. */
@@ -362,6 +368,9 @@ export interface Layer<S extends ParamSchema = ParamSchema> {
 
 /** What a Layer needs from the runtime (effects.ts). */
 export interface LayerDeps {
+  /** The runtime's field behind an Sdf handle (null: not this runtime's
+   * or destroyed). */
+  sdfOf(s: Sdf): SdfField | null
   device: GPUDevice
   format: GPUTextureFormat
   frameLayout: GPUBindGroupLayout
@@ -387,12 +396,22 @@ export interface LayerState {
   destroy(): void
 }
 
-const toPlace = (
-  p: 'above' | 'below' | { after: Target | Element }
-): LayerPlace =>
+/** Where a Layer draws in the page's paint order. */
+export type Place =
+  | 'above'
+  | 'below'
+  | { after: Target | Element }
+  | { before: Target | Element }
+
+const elOfPlace = (t: Target | Element): Element =>
+  t instanceof Element ? t : t.el
+
+const toPlace = (p: Place): LayerPlace =>
   typeof p === 'string'
     ? p
-    : { after: p.after instanceof Element ? p.after : p.after.el }
+    : 'before' in p
+      ? { before: elOfPlace(p.before) }
+      : { after: elOfPlace(p.after) }
 
 function layerSource(
   o: LayerOptions,
@@ -414,6 +433,7 @@ function layerSource(
       : '',
     o.glyphs ? GLYPHS_WGSL : '',
     o.trail ? trailHelpers(1, 10) : '',
+    o.sdf ? sdfWgsl(1, 15) : '',
     HELPERS_WGSL,
     hooks,
     SKELETON_WGSL,
@@ -578,6 +598,12 @@ export function createLayer<S extends ParamSchema>(
     ? new ImageArray(device, graph, imageEls, o.imageSize ?? 512, label)
     : null
   const trail: TrailState | null = trailState(o.trail)
+  const sdf = o.sdf ? deps.sdfOf(o.sdf) : null
+  const sdfSampler = sdf
+    ? device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
+    : null
+  let sdfView: GPUTextureView | null = null
+  let sdfGen = -1
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({
     binding,
     visibility: VF,
@@ -616,6 +642,17 @@ export function createLayer<S extends ParamSchema>(
             storage(10),
             {
               binding: 11,
+              visibility: VF,
+              buffer: { type: 'uniform' as const }
+            }
+          ]
+        : []),
+      ...(o.sdf
+        ? [
+            { binding: 15, visibility: VF, texture: {} },
+            { binding: 16, visibility: VF, sampler: {} },
+            {
+              binding: 17,
               visibility: VF,
               buffer: { type: 'uniform' as const }
             }
@@ -829,6 +866,22 @@ export function createLayer<S extends ParamSchema>(
         { binding: 13, resource: images.sampler },
         { binding: 14, resource: { buffer: images.info } }
       )
+    }
+    if (o.sdf) {
+      const f = sdf ?? deps.sdfOf(o.sdf)
+      if (!f || !sdfSampler) {
+        return null
+      }
+      if (!sdfView || sdfGen !== f.generation) {
+        sdfGen = f.generation
+        sdfView = f.view()
+      }
+      entries.push(
+        { binding: 15, resource: sdfView },
+        { binding: 16, resource: sdfSampler },
+        { binding: 17, resource: { buffer: f.infoBuffer } }
+      )
+      key.push(sdfView)
     }
     if (imageEl || glyphEl) {
       device.queue.writeBuffer(fxBuf, 48, side)

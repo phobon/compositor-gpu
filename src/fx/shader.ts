@@ -2,6 +2,7 @@ import tgpu from 'typegpu'
 import { FRAME_WGSL } from '../gpu/frame'
 import { log } from '../util/log'
 import { POINTER_WGSL } from './pointer'
+import { sdfWgsl } from './sdf'
 import { trailWgsl } from './trail'
 
 // Shader assembly for fullscreen passes. The author supplies
@@ -259,7 +260,8 @@ export function stageSource(
   paramsWgsl: string,
   image = false,
   trail = false,
-  prev = false
+  prev = false,
+  sdf = false
 ): string {
   return [
     FRAME_WGSL,
@@ -268,6 +270,7 @@ export function stageSource(
     POINTER_WGSL,
     BINDINGS_WGSL,
     image ? IMAGE_WGSL : '',
+    sdf ? sdfWgsl(3, 0) : '',
     trail ? TRAIL_WGSL : '',
     effect ?? PASSTHROUGH,
     prev ? PREV_WGSL : CALL_WGSL,

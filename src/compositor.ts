@@ -1,5 +1,6 @@
 import { BoxPass } from './boxes/box_renderer'
 import { CutoutPass } from './boxes/cutout_pass'
+import { inert } from './compositor_inert'
 import {
   Dirty,
   DomSync,
@@ -12,7 +13,6 @@ import type { ElNode } from './dom/tree'
 import { SceneReader, subtreeZ } from './dom/tree'
 import { blendMaterials } from './gpu/blend'
 import { initGpu } from './gpu/device'
-import { inert } from './compositor_inert'
 import type {
   FrameHook,
   LayerPlace,
@@ -706,7 +706,8 @@ export async function createCompositor(
     if (place === 'below') {
       return { id, z: belowZ(), depth: 0 }
     }
-    const node = reader.nodeOf(place.after)
+    const before = 'before' in place
+    const node = reader.nodeOf(before ? place.before : place.after)
     const range = node ? subtreeZ(node) : null
     if (!node || !range) {
       return null
@@ -719,7 +720,9 @@ export async function createCompositor(
         depth++
       }
     }
-    return { id, z: range[1] + 1, depth }
+    // Before: at the subtree's first z (extras precede records and group
+    // pushes there); after: past its last.
+    return { id, z: before ? range[0] : range[1] + 1, depth }
   }
   // Materials: tag the records of each active material's target subtree
   // (registration order, so a later material wins on overlap). Tags from

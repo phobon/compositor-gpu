@@ -423,6 +423,11 @@ Built so far (M5d-1, 2026-10-26, checked on the M1 Pro), and where it differs fr
   on the in-place text morph, not presets of a WGSL `pose` hook: the
   captured text paired with itself, each segment's start (or end) moved
   to a random point and turned, fading. A free `pose` hook is not built.
+- Distance fields (M5e) are built from the element's isolated group (its
+  rendered alpha) by jump flooding on the GPU, only on frames where the
+  element's content key changes; passes and layers read them (materials
+  not yet). Layers gained `place: { before: el }` so a glow can sit under
+  its element.
 - Endpoint exactness comes from drawing every glyph at rest the way the
   text pass does, op for op (quad = ink box plus one device pixel, em
   interpolated per vertex, `fwidth(em)` for the pixel scale, colour from

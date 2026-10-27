@@ -693,6 +693,31 @@ transition composites itself, whole, over its blend of the two pages
 (layoutMorph's text morphs). Several layers draw in the order added; the
 returned function puts the layer back in the page.
 
+## Distance fields
+
+```ts
+const field = fx.sdf(el, { spread: 32, resolution: 512 })
+fx.pass({ name: 'bands', sdf: field, fragment: wgsl }) // or fx.layer({ sdf: field, ... })
+```
+
+A signed distance from page point `p` to everything `el` draws (text,
+boxes, images, vector svgs), CSS px, negative inside: `sdf(p)` in the
+hooks of a pass or layer given `sdf: field` (`sdf(uv_to_page(uv))` in a
+pass; `sdf_ready()` is false until the first build). The element is
+isolated (as for a region pass, its group grown by `spread`); the field
+is built on the GPU by jump flooding from the group's alpha (>= 0.5 is
+inside), on frames where the element's box, records or image uploads
+changed, at most `resolution` texels on its longer side. Everything the
+element draws counts, outlines and focus rings included (style
+`:focus { outline: none }` on an editable element you don't want traced). Past the field
+`sdf(p)` is its edge's value plus the way out. `field.rebuild()` forces
+one (a canvas drawn into); `field.builds` counts them; `destroy()` ends
+the isolation. A pass with `sdf` can't also take `image`, and transitions
+can't take one; materials can't read fields yet. An element with a field
+can't also take a region pass.
+
+Layers can sit under an element: `place: { before: el }`.
+
 ## Trails
 
 ```ts
@@ -944,6 +969,12 @@ layer draws nothing).
   fringe along the radius. Age is `fx.elapsed`: enabling the pass
   directly shows the wave at that age and leaves it on. Pixels off the
   ring copy through. Fullscreen only.
+- `glow(fx, el, { color = '#fff', width = 2, offset = 3, glowColor =
+  '#7aa2ff', glow = 10, strength = 0.8, spread, enabled = true })` returns
+  `{ layer, sdf, enabled, destroy() }`: a `width` px outline `offset` px
+  out from whatever `el` draws and a glow fading over `glow` px past it,
+  from the element's distance field (`spread` defaults to room for both),
+  drawn under the element. `width` 0 or `glow` 0 turns either off.
 - `layoutMorph(fx, { root = document, timeout = 1500, shockwave = null
   })` returns `{ capture(), settled(), progress, play(ms = 700, ease),
   end(), destroy(), keys, pass }`. A keyed layout morph between two DOM

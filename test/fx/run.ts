@@ -5,6 +5,7 @@
 /// <reference path="../../playground/gallery.d.ts" />
 /// <reference path="../../playground/morph.d.ts" />
 /// <reference path="../../playground/layout.d.ts" />
+/// <reference path="../../playground/sdf.d.ts" />
 // Effects harness: loads playground/fx.html?vr (time and pointer pinned via
 // fx.__override), captures each `section[data-vr]` GPU-only with its
 // effect state, and diffs against local goldens (regression gate 0.5%;
@@ -117,6 +118,10 @@
 //   fx-layout-scroll-a, -0, -half, -1, -b  the same on layout.html?scroll,
 //                scrolled 380 px, the swap back at the top: -0 equal to -a
 //                and -1 to -b exactly
+//   fx-sdf, fx-sdf-off  playground/sdf.html?vr: glow (outline and glow
+//                from each element's distance field) on a heading, a card,
+//                a vector svg and an image; then all destroyed, which must
+//                equal the page loaded with none (?off) exactly
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1433,6 +1438,67 @@ async function main(): Promise<void> {
         const sone = await shot('fx-layout-scroll-1')
         await p.evaluate(() => window.__layout?.end())
         exact('fx-layout-scroll-1', await shot('fx-layout-scroll-b'), sone)
+      } finally {
+        await p.close()
+      }
+    }
+    if (['fx-sdf', 'fx-sdf-off'].some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`sdf: ${m.text()}`)
+        }
+      })
+      try {
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        const clip = { x: 0, y: 0, width: VW, height: 520 }
+        const shot = async (name: string): Promise<PNG> => {
+          await frames(4)
+          const path = resolve(outDir, `${name}-gpu.png`)
+          await p.screenshot({ path, clip })
+          const png = PNG.sync.read(readFileSync(path))
+          results.push(judge(name, png))
+          return png
+        }
+        const open = async (q: string): Promise<void> => {
+          await p.goto(`${url}sdf.html${q}`, { waitUntil: 'load' })
+          await p.waitForFunction(() => Boolean(window.__sdf), null, {
+            timeout: 30_000
+          })
+          await frames(10)
+        }
+        await open('?vr&off')
+        await frames(10)
+        const plain = PNG.sync.read(
+          await p.screenshot({
+            clip,
+            path: resolve(outDir, 'fx-sdf-plain-gpu.png')
+          })
+        )
+        await open('?vr')
+        await p.evaluate(() => window.__sdf?.built())
+        await shot('fx-sdf')
+        await p.evaluate(() => window.__sdf?.set(false))
+        const off = await shot('fx-sdf-off')
+        const n = exactDiff(plain, off)
+        results.push({
+          name: 'fx-sdf-off (= plain)',
+          regressionPct: diffPng(
+            plain,
+            off,
+            resolve(outDir, 'fx-sdf-off-invariant.png')
+          ),
+          status: n === 0 ? 'ok' : 'fail',
+          note: `${n} px differ`
+        })
       } finally {
         await p.close()
       }

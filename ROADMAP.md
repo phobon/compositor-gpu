@@ -301,7 +301,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         Page `playground/layout.html`; shots `fx-layout-a`, `-0`,
         `-half`, `-1`, `-b`; `test/unit/params.test.ts`
         (`docs/rd/experiments/2026-10-26-morph-ghosts.md`)
-  - [ ] M5d-3 morph content inside pairs
+  - [x] M5d-3 morph content inside pairs
     - [x] SVG shape morphs (built 2026-10-27; headless SwiftShader:
           progress 0 / 1 exact, no console errors; checked on the M1 Pro
           2026-10-27): a keyed svg drawn as vectors on both sides morphs in
@@ -342,9 +342,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           keeps the text gone). Morph page buttons; shots
           `fx-morph-assemble-half`, `-1`, `fx-morph-scatter-0`, `-half`.
           A free WGSL `pose` hook is left for the framework extraction
-    - [ ] Route swaps across scroll positions (built 2026-10-27;
+    - [x] Route swaps across scroll positions (built 2026-10-27;
           headless SwiftShader: progress 0 / 1 exact from 380 px down
-          back to the top, no console errors; to check on the M1 Pro):
+          back to the top, no console errors; checked on the M1 Pro
+          2026-10-27):
           the pass already works in viewport space (old boxes in the
           snapshot's, new ones measured at settled()); layer transforms
           and the new boxes follow any scroll after settled() (re-read
@@ -353,7 +354,38 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           (page-space glyphs only). Page `layout.html?scroll`; shots
           `fx-layout-scroll-a`, `-0`, `-half`, `-1`, `-b`. Svg shape
           points don't follow a scroll after settled()
-  - [ ] M5e runtime JFA distance fields (`sdf` binding)
+  - [ ] M5e runtime JFA distance fields (built 2026-10-27; headless
+        SwiftShader: fields build and rebuild on edits only, glow and a
+        distance-band pass read them, no console errors; to check on the
+        M1 Pro). `fx.sdf(el, { spread = 32, resolution = 512 })` returns
+        `{ el, spread, resolution, ready, builds, rebuild(), destroy() }`:
+        `el` is isolated (as a region pass, its group grown by `spread`);
+        on a frame where its content key changes (box, record ids, image
+        uploads) the region handler seeds from the group's alpha (>= 0.5
+        inside, boundary texels; the most covered of the k x k group
+        texels a field texel spans, so a 1 px line survives a smaller
+        field, and nothing past the group's used region), jump-floods in log2(size) steps
+        (rgba16f ping-pong) and resolves the signed distance in CSS px
+        (r16f, at most `resolution` texels a side), compositing the group
+        unchanged; other frames composite it plainly. Passes and layers
+        read it with an `sdf` option: `sdf(p)` (page CSS px; past the
+        field, its edge plus the way out), `sdf_ready()`
+        (`sdfWgsl(group, binding)`; group 3 on passes, bindings 15-17 on
+        layers). Layers gain `place: { before: el }` (under an element;
+        an anchor at its subtree's first z). Preset `glow(fx, el, { color,
+        width, offset, glowColor, glow, strength, spread })`: one quad
+        under the element. Page `playground/sdf.html` (heading, card,
+        vector svg, image; `?off`); shots `fx-sdf`, `fx-sdf-off` (= the
+        page with none, exactly). Notes: a full re-read rebuilds every
+        field (record ids change); materials can't read fields yet; an
+        element with a field can't also take a region pass or keep a
+        layer transform
+  - [ ] Text in isolated groups draws slightly differently from the page
+        (found 2026-10-27 with M5e: a heading under any layer transform or
+        region, e.g. `fx.transform(el, { opacity: 0.999 })`, differs at
+        glyph edges by up to 36 levels, coverage a little thinner; boxes,
+        images and svgs differ by at most 1). Investigate the group path
+        for Slug text
   - [ ] M5f `compositor-gpu bake` + manifest loader: fonts per instance
         (full cmap, contour data, licence warning), SVG paths,
         effect-input images (KTX2 / PNG), SDF masks

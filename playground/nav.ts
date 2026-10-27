@@ -83,6 +83,12 @@ const PAGES: Page[] = [
     ]
   },
   {
+    file: 'sdf.html',
+    title: 'Distance fields',
+    about: "Glow and outline from each element's distance field (M5e)",
+    variants: [{ label: 'start without', query: '?off' }]
+  },
+  {
     file: 'spike_morph.html',
     title: 'Morph spike',
     about: 'Segment outline morph with the wave pass (M5)',

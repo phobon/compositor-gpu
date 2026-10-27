@@ -55,7 +55,11 @@ export interface PostChain {
 }
 
 /** Where an extra layer draws in paint order (RenderGraph.addLayer). */
-export type LayerPlace = 'above' | 'below' | { after: Element }
+export type LayerPlace =
+  | 'above'
+  | 'below'
+  | { after: Element }
+  | { before: Element }
 
 /** Geometry drawn in the scene's paint order (an `/fx` Layer). */
 export interface ExtraLayer {

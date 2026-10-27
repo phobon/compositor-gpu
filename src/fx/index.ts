@@ -89,6 +89,12 @@ export {
   glitchSlices
 } from './presets/glitch_slices'
 export {
+  type Glow,
+  type GlowOptions,
+  type GlowSchema,
+  glow
+} from './presets/glow'
+export {
   type LayoutMorph,
   type LayoutMorphOptions,
   type LayoutMorphSchema,
@@ -157,6 +163,7 @@ export {
   type VignetteSchema,
   vignette
 } from './presets/vignette'
+export type { Sdf, SdfOptions } from './sdf'
 export {
   EFFECT_BYTES,
   EFFECT_WGSL,

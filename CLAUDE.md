@@ -209,7 +209,8 @@ string), `fx-morph-0` (captured, changed, held at progress 0: must equal
 `fx-morph-a`), `fx-morph-half`, `fx-morph-1` (must equal `fx-morph-b`)
 and `fx-morph-b` (ended, the live text), `fx-morph-assemble-half`,
 `fx-morph-assemble-1` (must equal `fx-morph-b`), `fx-morph-scatter-0`
-(must equal `fx-morph-b`) and `fx-morph-scatter-half`, on `playground/layout.html`
+(must equal `fx-morph-b`) and `fx-morph-scatter-half`, on `playground/sdf.html` `fx-sdf` (glows from distance fields) and
+`fx-sdf-off` (all destroyed: must equal the page loaded with none), on `playground/layout.html`
 `fx-layout-a` (the grid), `fx-layout-0` (keyed layout morph to the
 detail view held at progress 0: must equal `fx-layout-a`),
 `fx-layout-half`, `fx-layout-1` (must equal `fx-layout-b`) and
