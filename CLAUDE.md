@@ -228,7 +228,9 @@ equal to `fx-morph-a` / `fx-morph-half`, opentype.js never loaded), on `playgrou
 to the old icon at rest, `-unbaked`: images without the manifest), on
 `playground/textures.html` `fx-textures` / `-off` (baked textures in a
 pass, layer and material; `-ramp`: the layer's 1:1 ramp equal to
-ramp.png over the page), on `playground/layout.html`
+ramp.png over the page), on `playground/masks.html` `fx-masks` (glows from
+baked distance masks; `-vs-live`: the baked star's field against a live
+field of the same star, mean under 0.5 CSS px), on `playground/layout.html`
 `fx-layout-a` (the grid), `fx-layout-0` (keyed layout morph to the
 detail view held at progress 0: must equal `fx-layout-a`),
 `fx-layout-half`, `fx-layout-1` (must equal `fx-layout-b`) and

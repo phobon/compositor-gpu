@@ -18,5 +18,9 @@
   "textures": [
     { "name": "noise", "file": "fx/noise.png" },
     { "name": "ramp", "file": "fx/ramp.png", "color": "srgb" }
+  ],
+  "masks": [
+    { "name": "star", "file": "icons/star.svg", "spread": 3 },
+    { "name": "badge", "file": "icons/badge.svg" }
   ]
 }

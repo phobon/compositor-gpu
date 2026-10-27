@@ -136,6 +136,10 @@
 //                (a material), a ramp drawn 1:1 by a layer, which must
 //                equal ramp.png over the page (fx-textures-ramp); then the
 //                warp off (fx-textures-off)
+//   fx-masks     playground/masks.html (M5f): glows from baked distance
+//                masks; with ?vr each star's field as grey levels, the
+//                baked mask's distances against the live field's
+//                (fx-masks-vs-live)
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1739,6 +1743,82 @@ async function main(): Promise<void> {
           regressionPct: null,
           status: worst <= 1.5 ? 'ok' : 'fail',
           note: `max ${worst.toFixed(2)} levels`
+        })
+      } finally {
+        await p.close()
+      }
+    }
+    if (['fx-masks'].some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`masks: ${m.text()}`)
+        }
+      })
+      try {
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        await bake(resolve(root, 'playground/compositor-gpu.bake.json'), true)
+        const open = async (q: string): Promise<boolean[]> => {
+          await p.goto(`${url}masks.html${q}`, { waitUntil: 'load' })
+          await p.waitForFunction(() => Boolean(window.__masks), null, {
+            timeout: 30_000
+          })
+          const ready = (await p.evaluate(() => window.__masks?.ready())) ?? []
+          await frames(8)
+          return ready
+        }
+        const clip = { x: 0, y: 0, width: VW, height: 520 }
+        const ready = await open('')
+        await p.screenshot({ path: resolve(outDir, 'fx-masks-gpu.png'), clip })
+        results.push(
+          judge(
+            'fx-masks',
+            PNG.sync.read(readFileSync(resolve(outDir, 'fx-masks-gpu.png')))
+          )
+        )
+        results.push({
+          name: 'fx-masks (fields ready)',
+          regressionPct: null,
+          status: ready.every(Boolean) ? 'ok' : 'fail',
+          note: `live, baked: ${ready.join(', ')}`
+        })
+        // The two stars' fields as grey levels (128 + 8 per CSS px):
+        // the baked mask against the live field, within 12 px of the edge.
+        await open('?vr')
+        const path = resolve(outDir, 'fx-masks-fields-gpu.png')
+        await p.screenshot({ path, clip })
+        const png = PNG.sync.read(readFileSync(path))
+        const [a = [], b = []] =
+          (await p.evaluate(() => window.__masks?.rects())) ?? []
+        const errs: number[] = []
+        const g = (x: number, y: number): number =>
+          png.data[(Math.round(y) * png.width + Math.round(x)) * 4] ?? 0
+        for (let y = -12; y < (a[3] ?? 0) + 12; y++) {
+          for (let x = -12; x < (a[2] ?? 0) + 12; x++) {
+            const ga = g((a[0] ?? 0) + x, (a[1] ?? 0) + y)
+            const gb = g((b[0] ?? 0) + x, (b[1] ?? 0) + y)
+            if (Math.abs(ga - 128) < 96 && Math.abs(gb - 128) < 96) {
+              errs.push(Math.abs(ga - gb) / 8)
+            }
+          }
+        }
+        errs.sort((x, y) => x - y)
+        const mean = errs.reduce((n, e) => n + e, 0) / Math.max(errs.length, 1)
+        const p95 = errs[Math.floor(errs.length * 0.95)] ?? 99
+        results.push({
+          name: 'fx-masks-vs-live (CSS px)',
+          regressionPct: null,
+          status:
+            errs.length > 1000 && mean < 0.5 && p95 < 1.25 ? 'ok' : 'fail',
+          note: `${errs.length} px compared, mean ${mean.toFixed(2)}, p95 ${p95.toFixed(2)}`
         })
       } finally {
         await p.close()

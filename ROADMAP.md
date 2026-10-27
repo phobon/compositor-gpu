@@ -445,7 +445,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           `-morph-half`, `-morph-0`, `-unbaked`. Not yet: `<style>`
           rules, an img's object-fit other than fill, css backgrounds
           of svg files
-    - [ ] Effect-input textures (built 2026-10-27; headless SwiftShader:
+    - [x] Effect-input textures (built 2026-10-27; headless SwiftShader:
           textures.html loads both, the ramp layer equals ramp.png over
           the page to 0.5 levels, the noise warp pass and grain material
           draw; test:unit 126; to check on the M1 Pro). `"textures": [{
@@ -472,7 +472,31 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           tiling samplers (fract in WGSL for now), KTX2 / Basis for big
           textures, textures in transitions' snapshot passes or a layer's
           `simulate`
-    - [ ] Distance-field masks
+    - [ ] Distance-field masks (built 2026-10-27; headless SwiftShader:
+          masks.html, the baked star's field against a live field of the
+          same star within 12 px of its edge: mean 0.23 CSS px, p95 0.5;
+          the live glow page unchanged; test:unit 131; to check on the M1
+          Pro). `"masks": [{ name, file, resolution, spread }]` in the
+          bake config: an svg file (as bake_svg reads it) becomes a `.cgd`
+          (src/assets/mask_file.ts): the signed distance from each texel
+          centre to what the svg paints, viewBox units, negative inside,
+          clamped to +-spread (default 8% of the viewBox's longer side),
+          as half floats at `resolution` (default 256) on the longer side,
+          deflated. tools/bake_mask.ts measures exactly (brute force
+          against the outlines flattened at 1/16 texel; Flat moved to
+          paths/path_data.ts): fills by their fill rule, strokes as their
+          centreline plus half the width (caps and joins come out round),
+          fill and stroke as one region. `fx.sdf(el, { mask: name })`
+          returns the usual Sdf: a MaskField (src/fx/sdf_mask.ts) placed
+          each frame over the element's content box per the svg's viewBox
+          and preserveAspectRatio, the stored distances scaled to CSS px
+          (FxSdf info.z; live fields leave it 0); `sdf(p)`, `sdf_ready()`,
+          and `glow(fx, el, { mask })` unchanged. No isolation and no
+          rebuilds, so the element can also take a region pass or a live
+          field elsewhere. Page `masks.html` (`?vr` shows fields as
+          grey), shots `fx-masks`, `-vs-live`. Not yet: PNG-alpha masks,
+          masks under a transformed element (placed by its bounding box),
+          materials reading fields
   - [x] Catch exceptions from author code (2026-10-26, `guarded` in
         `util/log.ts`): layer and material `update`, every frame hook,
         `onGlyph`, `onFrame`; logged once per label and message, the

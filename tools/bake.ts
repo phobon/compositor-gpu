@@ -2,8 +2,8 @@
 // GPU-ready files (src/text/slug/baked.ts), and svg files into vector
 // files (src/assets/vector_file.ts), and effect-input images into
 // mipmapped textures (src/assets/texture_file.ts), plus a manifest pages
-// load with `createCompositor({ assets: '/gpu/manifest.json' })`.
-// Distance-field masks follow.
+// load with `createCompositor({ assets: '/gpu/manifest.json' })`, and
+// svg files into distance-field masks (src/assets/mask_file.ts).
 //
 //   npm run bake [-- path/to/compositor-gpu.bake.json]
 //
@@ -30,6 +30,11 @@
 //     "textures": [                        // fx.texture(name) inputs
 //       { "name": "noise", "file": "fx/noise.png" },   // data (default)
 //       { "name": "paper", "file": "fx/paper.png", "color": "srgb" }
+//     ],
+//     "masks": [                           // fx.sdf(el, { mask: name })
+//       { "name": "logo", "file": "art/logo.svg",
+//         "resolution": 256,               // texels, longer side
+//         "spread": 4 }                    // viewBox units (default 8%)
 //     ]
 //   }
 //
@@ -57,6 +62,7 @@ import { deflateSync } from 'node:zlib'
 import { PNG } from 'pngjs'
 import type {
   BakedManifest,
+  BakedMaskEntry,
   BakedSvgEntry,
   BakedTextureEntry
 } from '../src/assets/manifest'
@@ -76,6 +82,7 @@ import {
   loadParser,
   makeInstance
 } from '../src/text/slug/font'
+import { bakeMask } from './bake_mask'
 import { BakeSvgError, bakeSvg } from './bake_svg'
 
 interface FontConfig {
@@ -96,11 +103,19 @@ interface TextureConfig {
   color?: TextureColor
 }
 
+interface MaskConfig {
+  name: string
+  file: string
+  resolution?: number
+  spread?: number
+}
+
 interface Config {
   out: string
   fonts?: FontConfig[]
   svgs?: SvgConfig[]
   textures?: TextureConfig[]
+  masks?: MaskConfig[]
 }
 
 const TEXTURE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
@@ -261,9 +276,11 @@ export async function bake(
     version: 1,
     fonts: [],
     svgs: [],
-    textures: []
+    textures: [],
+    masks: []
   }
   const textures = manifest.textures as BakedTextureEntry[]
+  const masks = manifest.masks as BakedMaskEntry[]
   const fonts = manifest.fonts as BakedFace[]
   const svgs = manifest.svgs as BakedSvgEntry[]
   if ((config.fonts ?? []).length > 0) {
@@ -394,6 +411,43 @@ export async function bake(
     })
     say(
       `[bake] ${name}: ${baked.header.width} x ${baked.header.height}, ${baked.header.levels} levels, ${color}, ${(baked.bytes.byteLength / 1024).toFixed(1)} KB`
+    )
+  }
+  if ((config.masks ?? []).length > 0) {
+    mkdirSync(resolve(out, 'mask'), { recursive: true })
+  }
+  for (const m of config.masks ?? []) {
+    if (!/^[A-Za-z0-9][\w-]*$/.test(m.name)) {
+      throw new Error(`[bake] mask name "${m.name}"`)
+    }
+    if (masks.some((x) => x.name === m.name)) {
+      throw new Error(`[bake] mask "${m.name}" listed twice`)
+    }
+    let baked: ReturnType<typeof bakeMask>
+    try {
+      const svg = bakeSvg(readFileSync(resolve(root, m.file), 'utf8'), m.file)
+      baked = bakeMask(svg, {
+        ...(m.resolution !== undefined ? { resolution: m.resolution } : {}),
+        ...(m.spread !== undefined ? { spread: m.spread } : {})
+      })
+    } catch (err) {
+      throw new Error(
+        `[bake] mask "${m.name}" (${m.file}): ${(err as Error).message}`
+      )
+    }
+    const name = `mask/${m.name}.cgd`
+    writeFileSync(resolve(out, name), new Uint8Array(baked.bytes))
+    const h = baked.header
+    masks.push({
+      name: m.name,
+      url: name,
+      width: h.width,
+      height: h.height,
+      spread: h.spread,
+      bytes: baked.bytes.byteLength
+    })
+    say(
+      `[bake] ${name}: ${h.width} x ${h.height}, spread ${h.spread.toFixed(2)}, ${(baked.bytes.byteLength / 1024).toFixed(1)} KB`
     )
   }
   const mpath = resolve(out, 'manifest.json')

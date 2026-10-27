@@ -362,8 +362,8 @@ change is noted.
   extraction.
 - **Distance fields (Q16).** A runtime jump-flood pass builds a distance
   field from any target's rendered coverage on demand (`sdf` binding for
-  passes, materials and layers). The bake CLI also bakes SDFs of static
-  mask images.
+  passes, materials and layers). The bake CLI also bakes SDFs of svg
+  files (`fx.sdf(el, { mask })`, placed over an element's content box).
 - **Bake CLI (Q13-Q15).** `compositor-gpu bake` (a node bin, dev-only
   dependencies) writes a manifest and binary files; pages opt in with
   `assets: '/gpu/manifest.json'` and fall back to the runtime path for

@@ -22,6 +22,12 @@ export interface SdfOptions {
   spread?: number
   /** Texels on the field's longer side, at most. Default 512. */
   resolution?: number
+  /** A baked mask's name (`masks` in the bake config): its field, an
+   * svg's shape computed offline, placed over the element's content box
+   * (per the svg's viewBox and preserveAspectRatio) instead of built from
+   * what the element draws. No isolation and no rebuilds; `spread` and
+   * `resolution` are the baked ones. */
+  mask?: string
 }
 
 export interface Sdf {
@@ -47,7 +53,7 @@ export function sdfWgsl(group: number, binding: number): string {
   return /* wgsl */ `
 struct FxSdf {
   rect : vec4f,   // runtime: the field's box, page CSS px (x, y, w, h)
-  info : vec4f,   // runtime: ready, spread, _, _
+  info : vec4f,   // runtime: ready, spread (CSS px), texel scale (0: 1), _
 };
 @group(${group}) @binding(${binding}) var fx_sdf : texture_2d<f32>;
 @group(${group}) @binding(${binding + 1}) var fx_sdf_smp : sampler;
@@ -62,8 +68,10 @@ fn sdf(p : vec2f) -> f32 {
     return fx_sdf_info.info.y;
   }
   let q = clamp(p, r.xy, r.xy + r.zw);
+  // Baked masks store viewBox units: info.z scales them to CSS px.
+  let k = select(1.0, fx_sdf_info.info.z, fx_sdf_info.info.z > 0.0);
   let d = textureSampleLevel(fx_sdf, fx_sdf_smp, (q - r.xy) / r.zw, 0.0).r;
-  return d + length(p - q);
+  return d * k + length(p - q);
 }
 fn sdf_ready() -> bool {
   return fx_sdf_info.info.x > 0.5;
@@ -218,8 +226,24 @@ export interface SdfDeps {
   graph: RenderGraph
 }
 
+/** What consumers (passes, layers, the frame loop) need of a field: a
+ * live SdfField or a baked mask (sdf_mask.ts). */
+export interface FieldSource {
+  readonly el: Element
+  readonly ready: boolean
+  readonly builds: number
+  /** Changes when the texture is replaced (bind groups re-made). */
+  readonly generation: number
+  view(): GPUTextureView
+  readonly infoBuffer: GPUBuffer
+  /** Each frame, after the read (`key`: the element's content and box). */
+  check(key: string): void
+  rebuild(): void
+  destroy(): void
+}
+
 /** The field's GPU side: the region handler and the textures. */
-export class SdfField {
+export class SdfField implements FieldSource {
   ready = false
   builds = 0
   /** The field's box, page CSS px. */

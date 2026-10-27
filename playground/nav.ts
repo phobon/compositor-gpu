@@ -106,6 +106,13 @@ const PAGES: Page[] = [
     variants: []
   },
   {
+    file: 'masks.html',
+    title: 'Distance masks',
+    about:
+      'Baked svg distance fields placed over elements (M5f; npm run bake:playground)',
+    variants: [{ label: 'fields as grey levels', query: '?vr' }]
+  },
+  {
     file: 'spike_morph.html',
     title: 'Morph spike',
     about: 'Segment outline morph with the wave pass (M5)',

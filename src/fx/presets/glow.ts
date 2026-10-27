@@ -74,6 +74,10 @@ export interface GlowOptions {
   /** The field's reach, CSS px. Default: room for offset, width and
    * three glow lengths (at least 16). */
   spread?: number
+  /** A baked mask's name (fx.sdf's `mask`): glow around that shape,
+   * placed over the element's content box, instead of what the element
+   * draws (its reach is the baked spread). */
+  mask?: string
   enabled?: boolean
   name?: string
 }
@@ -93,9 +97,14 @@ export function glow(
   const width = opts.width ?? 2
   const offset = opts.offset ?? 3
   const g = opts.glow ?? 10
-  const sdf = fx.sdf(el, {
-    spread: opts.spread ?? Math.max(16, Math.ceil(offset + width + 3 * g))
-  })
+  const sdf = fx.sdf(
+    el,
+    opts.mask !== undefined
+      ? { mask: opts.mask }
+      : {
+          spread: opts.spread ?? Math.max(16, Math.ceil(offset + width + 3 * g))
+        }
+  )
   const layer = fx.layer({
     name: opts.name ?? 'glow',
     count: 1,

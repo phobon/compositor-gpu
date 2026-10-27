@@ -22,7 +22,7 @@ import {
   type ParamValues
 } from './params'
 import { POINTER_WGSL } from './pointer'
-import { type Sdf, type SdfField, sdfWgsl } from './sdf'
+import { type FieldSource, type Sdf, sdfWgsl } from './sdf'
 import {
   TextureBinding,
   type TextureInputs,
@@ -386,7 +386,7 @@ export interface Layer<S extends ParamSchema = ParamSchema> {
 export interface LayerDeps {
   /** The runtime's field behind an Sdf handle (null: not this runtime's
    * or destroyed). */
-  sdfOf(s: Sdf): SdfField | null
+  sdfOf(s: Sdf): FieldSource | null
   /** The runtime's baked textures. */
   textures: TextureStore
   device: GPUDevice

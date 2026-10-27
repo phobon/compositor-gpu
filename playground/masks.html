@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu distance mask playground</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 14px system-ui, sans-serif; background: #15161b; color: #e9e6df; }
+      main { padding: 56px; display: flex; flex-direction: column; gap: 48px; }
+      .row { display: flex; gap: 96px; align-items: center; }
+      .cell { display: flex; flex-direction: column; gap: 16px; align-items: center; }
+      .icon { width: 120px; height: 120px; display: block; }
+      .logo { width: 240px; height: 120px; border-radius: 16px;
+        border: 1px dashed #4a4d57; padding: 12px; }
+      .label { color: #8d8a83; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <!-- The same star twice: a live field (built from what it draws)
+           and the baked mask placed over it. -->
+      <div class="row" id="pair">
+        <div class="cell"><svg class="icon" id="live" viewBox="0 0 24 24" data-gpu-vector></svg><span class="label">live field</span></div>
+        <div class="cell"><svg class="icon" id="baked" viewBox="0 0 24 24" data-gpu-vector></svg><span class="label">baked mask</span></div>
+      </div>
+      <!-- A mask needs no drawing of its own: the badge's shape glows
+           around a plain box, letterboxed into it (xMidYMid meet). -->
+      <div class="row">
+        <div class="cell"><div class="logo" id="box"></div><span class="label">mask "badge" on a box</span></div>
+      </div>
+    </main>
+    <script type="module" src="./masks.ts"></script>
+  </body>
+</html>

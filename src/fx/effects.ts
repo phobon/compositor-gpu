@@ -44,7 +44,8 @@ import {
   PointerTracker
 } from './pointer'
 import { createReducedMotion } from './reduced_motion'
-import { type Sdf, SdfField, type SdfOptions } from './sdf'
+import { type FieldSource, type Sdf, SdfField, type SdfOptions } from './sdf'
+import { MaskField } from './sdf_mask'
 import {
   EFFECT_BYTES,
   effectSource,
@@ -530,7 +531,7 @@ function buildEffects(compositor: Compositor): Effects {
   const trails: TrailState[] = []
   /** Destroyed trails, kept until teardown (consumers bind them). */
   const retired: TrailState[] = []
-  const retiredSdfs: SdfField[] = []
+  const retiredSdfs: FieldSource[] = []
   const composer = createComposer(graph)
   const targetCache = new WeakMap<Element, Target>()
   let override: FxOverride | null = null
@@ -721,7 +722,7 @@ function buildEffects(compositor: Compositor): Effects {
   /** Group 3 for a pass reading a distance field (the image layout:
    * texture, sampler, uniform), rebuilt when the field is replaced. */
   const sdfBinder = (
-    f: SdfField,
+    f: FieldSource,
     label: string
   ): { bind: (rp: GPURenderPassEncoder) => void } => {
     let gen = -1
@@ -1362,7 +1363,7 @@ function buildEffects(compositor: Compositor): Effects {
   })
 
   // Distance fields by handle (layers and passes resolve theirs here).
-  const sdfs = new Map<Sdf, SdfField>()
+  const sdfs = new Map<Sdf, FieldSource>()
   const textureStore = new TextureStore(device, graph.assets, () =>
     graph.requestFrame()
   )
@@ -1599,6 +1600,44 @@ function buildEffects(compositor: Compositor): Effects {
       const element = el instanceof Element ? el : el.el
       if (destroyed) {
         return inertSdf(element, opts)
+      }
+      if (opts.mask !== undefined) {
+        const mask = new MaskField(
+          device,
+          graph.assets,
+          element,
+          opts.mask,
+          () => graph.requestFrame()
+        )
+        let gone = false
+        const handle: Sdf = {
+          el: element,
+          get spread() {
+            return mask.spread
+          },
+          get resolution() {
+            return mask.resolution
+          },
+          get ready() {
+            return mask.ready
+          },
+          get builds() {
+            return mask.builds
+          },
+          rebuild: () => {},
+          destroy() {
+            if (gone) {
+              return
+            }
+            gone = true
+            sdfs.delete(handle)
+            retiredSdfs.push(mask)
+            graph.requestFrame()
+          }
+        }
+        sdfs.set(handle, mask)
+        graph.requestFrame()
+        return handle
       }
       const field = new SdfField(
         { device, format, frameLayout, graph },

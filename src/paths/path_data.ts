@@ -469,3 +469,160 @@ export function replayTape(
     i = p + n
   }
 }
+
+// --- Flattening ------------------------------------------------------------
+
+/** An affine map a b c d e f (x' = a x + c y + e, y' = b x + d y + f). */
+export type Affine6 = readonly [number, number, number, number, number, number]
+
+/** Points and subpaths being flattened, in path space. */
+export class Flat implements PathSink {
+  pts: number[] = []
+  contours: number[] = []
+  private start = -1
+
+  constructor(
+    readonly m: Affine6,
+    /** Flattening tolerance in path space. */
+    readonly tol: number
+  ) {}
+
+  /** Largest scale `m` applies (its larger singular value). */
+  get scale(): number {
+    return maxScale(this.m)
+  }
+
+  private push(x: number, y: number): void {
+    const m = this.m
+    this.pts.push(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
+  }
+
+  moveTo(x: number, y: number): void {
+    this.end(false)
+    this.start = this.pts.length / 2
+    this.push(x, y)
+  }
+
+  lineTo(x: number, y: number): void {
+    if (this.start < 0) {
+      this.moveTo(x, y)
+      return
+    }
+    this.push(x, y)
+  }
+
+  /** Close (or leave open) the current subpath. */
+  end(closed: boolean): void {
+    if (this.start < 0) {
+      return
+    }
+    const n = this.pts.length / 2 - this.start
+    if (n >= 2) {
+      this.contours.push(this.start, n, closed ? 1 : 0)
+    } else {
+      this.pts.length = this.start * 2
+    }
+    this.start = -1
+  }
+
+  quadTo(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ) {
+    const s = this.scale
+    const dd = Math.hypot(x0 - 2 * x1 + x2, y0 - 2 * y1 + y2) * s
+    const n = Math.max(1, Math.ceil(Math.sqrt((0.25 * dd) / this.tol)))
+    for (let i = 1; i <= n; i++) {
+      const t = i / n
+      const u = 1 - t
+      this.lineTo(
+        u * u * x0 + 2 * u * t * x1 + t * t * x2,
+        u * u * y0 + 2 * u * t * y1 + t * t * y2
+      )
+    }
+  }
+
+  cubicTo(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    x3: number,
+    y3: number
+  ): void {
+    // Wang's formula: segments for a cubic within `tol`.
+    const s = this.scale
+    const dd =
+      Math.max(
+        Math.hypot(x0 - 2 * x1 + x2, y0 - 2 * y1 + y2),
+        Math.hypot(x1 - 2 * x2 + x3, y1 - 2 * y2 + y3)
+      ) * s
+    const n = Math.max(1, Math.ceil(Math.sqrt((0.75 * dd) / this.tol)))
+    for (let i = 1; i <= n; i++) {
+      const t = i / n
+      const u = 1 - t
+      const a = u * u * u
+      const b = 3 * u * u * t
+      const c = 3 * u * t * t
+      const d = t * t * t
+      this.lineTo(
+        a * x0 + b * x1 + c * x2 + d * x3,
+        a * y0 + b * y1 + c * y2 + d * y3
+      )
+    }
+  }
+
+  /** Steps for an arc of radius r (user units) through `sweep` radians. */
+  arcSteps(r: number, sweep: number): number {
+    const rs = r * this.scale
+    if (rs <= this.tol) {
+      return 1
+    }
+    const step = 2 * Math.acos(Math.max(-1, 1 - this.tol / rs))
+    return Math.max(1, Math.ceil(Math.abs(sweep) / Math.max(step, 1e-3)))
+  }
+
+  /** Ellipse arc around (cx, cy), radii rx ry, x axis rotated by phi,
+   * from angle a0 through `sweep`; the start point is not pushed. */
+  arc(
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    phi: number,
+    a0: number,
+    sweep: number
+  ): void {
+    const n = this.arcSteps(Math.max(rx, ry), sweep)
+    const cp = Math.cos(phi)
+    const sp = Math.sin(phi)
+    for (let i = 1; i <= n; i++) {
+      const a = a0 + (sweep * i) / n
+      const x = rx * Math.cos(a)
+      const y = ry * Math.sin(a)
+      this.lineTo(cx + cp * x - sp * y, cy + sp * x + cp * y)
+    }
+  }
+}
+
+export function maxScale(m: Affine6): number {
+  const [a, b, c, d] = m
+  const s1 = a * a + b * b + c * c + d * d
+  const det = a * d - b * c
+  const disc = Math.sqrt(Math.max(0, s1 * s1 - 4 * det * det))
+  return Math.sqrt((s1 + disc) / 2)
+}
+
+export function minScale(m: Affine6): number {
+  const [a, b, c, d] = m
+  const s1 = a * a + b * b + c * c + d * d
+  const det = a * d - b * c
+  const disc = Math.sqrt(Math.max(0, s1 * s1 - 4 * det * det))
+  return Math.sqrt(Math.max(0, (s1 - disc) / 2))
+}

@@ -718,6 +718,14 @@ can't also take a region pass.
 
 Layers can sit under an element: `place: { before: el }`.
 
+A baked mask stands in for the live field: `fx.sdf(el, { mask: 'logo' })`
+(`masks` in the bake config; CompositorOptions.assets) is the svg's shape
+as a distance field computed offline, placed over `el`'s content box per
+the svg's viewBox and preserveAspectRatio and read with the same
+`sdf(p)` / `sdf_ready()` (`glow(fx, el, { mask: 'logo' })` too). The
+element isn't isolated and nothing is rebuilt, so it needn't draw the
+shape at all; `spread` is the baked one (in CSS px at the current size).
+
 ## Textures
 
 ```ts

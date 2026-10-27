@@ -209,6 +209,24 @@ fx.pass({ name: 'warp', textures: { noise }, fragment }) // tex_noise(uv)
 are PNGs up to 4096 px a side. A texture loads when an effect first uses
 it and reads as transparent until then (src/fx/README.md, Textures).
 
+### Distance masks
+
+An svg's shape can be baked into a distance field for glows, outlines
+and reveals around any element, without the live field's isolation:
+
+```jsonc
+{
+  "masks": [{ "name": "logo", "file": "art/logo.svg", "resolution": 256 }]
+}
+```
+
+```ts
+glow(fx, el, { mask: 'logo' })      // or fx.sdf(el, { mask: 'logo' })
+```
+
+The mask is fitted to the element's content box like the svg would be
+(its viewBox and preserveAspectRatio).
+
 ## Note on `typegpu` and `process.env`
 
 `typegpu` reads `globalThis.process.env.NODE_ENV` when it is first imported.
