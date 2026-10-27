@@ -125,7 +125,9 @@ already hold your compositor.
 - The submodule pins a commit; bump it with `git -C compositor-gpu pull` then
   commit the pointer in mds-home, exactly like `MDS-web-ui`.
 
-## Baked fonts (optional)
+## Baked assets (optional)
+
+### Fonts
 
 Instead of parsing each `@font-face` source in the browser (fetching the
 font a second time and loading opentype.js), bake the faces the site uses
@@ -151,6 +153,37 @@ in a weight, optical size or character the files don't cover falls back
 to the runtime path (that family's source is fetched and parsed then).
 Baked text draws exactly as parsed text. Check the font's licence allows
 converting it.
+
+### Svg files as vectors
+
+Svg files the site serves can be baked too, so an `<img>` of one draws as
+vectors (sharp at any scale, and keyed morphs between them) instead of an
+image:
+
+```jsonc
+{
+  "out": "public/gpu",
+  "svgs": [
+    { "dir": "public/icons", "src": "/icons/" },   // every *.svg in it
+    { "file": "public/logo.svg", "src": "/logo.svg" }
+  ]
+}
+```
+
+`src` is the URL pages load each file from. Mark the imgs with
+`data-gpu-vector` (or `data-gpu-morph="key"` for layout morphs):
+
+```html
+<img src="/icons/star.svg" alt="" data-gpu-vector />
+```
+
+An opted-in img whose src the manifest lists draws from its baked file
+(fetched when first needed; the img draws nothing until it arrives);
+anything else draws as an image, as before. The bake skips a file it
+can't draw as vectors (gradients, `<style>` rules, clip paths, masks,
+filters, dashes, text, embedded images, group opacity, lengths in units
+other than px) and says why. The img must use `object-fit: fill` (the
+default).
 
 ## Note on `typegpu` and `process.env`
 

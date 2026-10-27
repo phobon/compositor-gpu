@@ -126,6 +126,11 @@
 //                from each element's distance field) on a heading, a card,
 //                a vector svg and an image; then all destroyed, which must
 //                equal the page loaded with none (?off) exactly
+//   fx-vectors   playground/vectors.html?vr&baked (M5f): svg files drawn
+//                inline (data-gpu-vector) and as <img data-gpu-vector> from
+//                their baked files; each img must match its inline twin
+//                (fx-vectors-twins) and draw the baked shapes, and without
+//                ?baked draw as images (fx-vectors-unbaked)
 //   fx-gallery-pre, fx-gallery, fx-gallery-off  playground/gallery.html?vr:
 //                    the page, the ring held still over it, then the ring
 //                    off again (equal to -pre exactly)
@@ -1527,6 +1532,129 @@ async function main(): Promise<void> {
           ),
           status: n === 0 ? 'ok' : 'fail',
           note: `${n} px differ`
+        })
+      } finally {
+        await p.close()
+      }
+    }
+    if (['fx-vectors'].some(want)) {
+      const p = await launched.browser.newPage({
+        viewport: { width: VW, height: VH },
+        deviceScaleFactor: 1
+      })
+      p.on('console', (m) => {
+        if (m.type() === 'error' && m.text().includes('[compositor-gpu]')) {
+          errors.push(`vectors: ${m.text()}`)
+        }
+      })
+      try {
+        const frames = (n: number): Promise<void> =>
+          p.evaluate(async (k) => {
+            for (let i = 0; i < k; i++) {
+              await new Promise((r) => requestAnimationFrame(r))
+            }
+          }, n)
+        const open = async (q: string): Promise<number[]> => {
+          await p.goto(`${url}vectors.html${q}`, { waitUntil: 'load' })
+          await p.waitForFunction(() => Boolean(window.__vectors), null, {
+            timeout: 30_000
+          })
+          await frames(10)
+          return p.evaluate(() => window.__vectors?.shapes() ?? [])
+        }
+        await bake(resolve(root, 'playground/compositor-gpu.bake.json'), true)
+        // Shapes per img, two rows: the gradient icon isn't baked.
+        const expect = [1, 2, 8, 2, 2, 0]
+        const shapes = await open('?vr&baked')
+        const ok = shapes.join() === [...expect, ...expect].join()
+        results.push({
+          name: 'fx-vectors (baked shapes)',
+          regressionPct: null,
+          status: ok ? 'ok' : 'fail',
+          note: `shapes ${shapes.join(' ')}`
+        })
+        const clip = { x: 0, y: 0, width: VW, height: 420 }
+        const path = resolve(outDir, 'fx-vectors-gpu.png')
+        await p.screenshot({ path, clip })
+        const png = PNG.sync.read(readFileSync(path))
+        results.push(judge('fx-vectors', png))
+        // Each baked img against its inline twin: same file, same box.
+        const boxes = await p.evaluate(() =>
+          ['#inline svg', '#imgs img'].map((q) =>
+            [...document.querySelectorAll(q)].map((e) => {
+              const r = e.getBoundingClientRect()
+              return [Math.round(r.x), Math.round(r.y), r.width, r.height]
+            })
+          )
+        )
+        let worst = 0
+        let differ = 0
+        const [ins = [], ims = []] = boxes
+        expect.forEach((n, k) => {
+          const a = ins[k]
+          const b = ims[k]
+          if (!a || !b || n === 0) {
+            return
+          }
+          for (let y = -2; y < (a[3] ?? 0) + 2; y++) {
+            for (let x = -2; x < (a[2] ?? 0) + 2; x++) {
+              const ia = (((a[1] ?? 0) + y) * png.width + (a[0] ?? 0) + x) * 4
+              const ib = (((b[1] ?? 0) + y) * png.width + (b[0] ?? 0) + x) * 4
+              let d = 0
+              for (let c = 0; c < 3; c++) {
+                d = Math.max(
+                  d,
+                  Math.abs((png.data[ia + c] ?? 0) - (png.data[ib + c] ?? 0))
+                )
+              }
+              worst = Math.max(worst, d)
+              differ += d > 2 ? 1 : 0
+            }
+          }
+        })
+        results.push({
+          name: 'fx-vectors-twins (img = inline)',
+          regressionPct: null,
+          status: differ === 0 ? 'ok' : 'fail',
+          note: `${differ} px differ by more than 2 levels (max ${worst})`
+        })
+        // The morphing img, star to leaf: held half way, then at 1 (equal
+        // to the page with the leaf at rest).
+        const mclip = await p.evaluate(() => {
+          const r = document.getElementById('morph')?.getBoundingClientRect()
+          return r
+            ? { x: 0, y: Math.round(r.y) - 8, width: 640, height: 120 }
+            : null
+        })
+        if (mclip) {
+          const mshot = async (name: string): Promise<PNG> => {
+            await frames(4)
+            const path = resolve(outDir, `${name}-gpu.png`)
+            await p.screenshot({ path, clip: mclip })
+            return PNG.sync.read(readFileSync(path))
+          }
+          await p.evaluate(() => window.__vectors?.hold(0.5))
+          const half = await mshot('fx-vectors-morph-half')
+          results.push(judge('fx-vectors-morph-half', half))
+          await p.evaluate(() => window.__vectors?.end())
+          const rest = await mshot('fx-vectors-morph-rest')
+          await p.evaluate(() => window.__vectors?.hold(0))
+          const zero = await mshot('fx-vectors-morph-0')
+          await p.evaluate(() => window.__vectors?.end())
+          const n0 = exactDiff(rest, zero)
+          results.push({
+            name: 'fx-vectors-morph-0 (= leaf at rest)',
+            regressionPct: null,
+            status: n0 === 0 ? 'ok' : 'fail',
+            note: `${n0} px differ`
+          })
+        }
+        const raster = await open('?vr')
+        results.push({
+          name: 'fx-vectors-unbaked (images)',
+          regressionPct: null,
+          status: raster.every((n) => n === 0) ? 'ok' : 'fail',
+          note: `shapes ${raster.join(' ')}`
         })
       } finally {
         await p.close()

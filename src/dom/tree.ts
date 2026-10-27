@@ -1,3 +1,4 @@
+import type { VectorStore } from '../assets/vectors'
 import { type BlendMode, blendMaterialId } from '../scene/blend'
 import { type GroupFilter, parseFilter } from '../scene/filter'
 import type {
@@ -54,7 +55,7 @@ import {
   recordRadii
 } from './styles'
 import { disposeSvgImages, isInlineSvgRoot, readSvgRecord } from './svg'
-import { readSvgPaths, wantsVector } from './svg_paths'
+import { readImgPaths, readSvgPaths, wantsVector } from './svg_paths'
 import {
   contentHeight,
   FAST_TEXT_READ,
@@ -521,6 +522,10 @@ export class SceneReader {
     private readonly onAsset: (el: Element) => void
   ) {}
 
+  /** Baked svg files for `<img data-gpu-vector>` (M5f; the compositor's
+   * `assets` option), or null. */
+  vectors: VectorStore | null = null
+
   /** The element's node from the most recent read (undefined when it is
    * outside the mirrored root, display:none, or not read yet). */
   nodeOf(el: Element): ElNode | undefined {
@@ -952,7 +957,32 @@ export class SceneReader {
       }
     }
     let replaced: ImageRecord | null = null
+    // An svg root opted in to vectors paints as path records (one per
+    // shape); under a blend mode, or with anything the path pass can't
+    // draw, it is rasterised as before. So does an <img> opted in whose
+    // svg file was baked (M5f; drawn as nothing while the file loads).
+    let vector: PathRecord[] | null = null
+    let vectorPending = false
+    const vectorOk =
+      layers.has('paths') &&
+      wantsVector(el) &&
+      blendMaterialId(s.mixBlendMode) === undefined &&
+      (parent?.blendGroup || parent?.blend === undefined)
+    if (vectorOk && this.vectors && el.tagName === 'IMG') {
+      const img = el as HTMLImageElement
+      const src = img.currentSrc || img.src
+      const svg = src
+        ? this.vectors.lookup(src, el, () => this.onAsset(el))
+        : null
+      if (svg === 'pending') {
+        vectorPending = true
+      } else if (svg) {
+        vector = readImgPaths(img, s, svg, place, clip, () => scene.allocId())
+      }
+    }
     if (
+      !vector &&
+      !vectorPending &&
       layers.has('images') &&
       (el.tagName === 'IMG' ||
         el.tagName === 'CANVAS' ||
@@ -960,17 +990,7 @@ export class SceneReader {
     ) {
       replaced = readImageRecord(el, s, rect, scene.allocId(), clip, place)
     }
-    // An svg root opted in to vectors paints as path records (one per
-    // shape); under a blend mode, or with anything the path pass can't
-    // draw, it is rasterised as before.
-    let vector: PathRecord[] | null = null
-    if (
-      layers.has('paths') &&
-      svgRoot &&
-      wantsVector(el) &&
-      blendMaterialId(s.mixBlendMode) === undefined &&
-      (parent?.blendGroup || parent?.blend === undefined)
-    ) {
+    if (vectorOk && svgRoot) {
       vector = readSvgPaths(el as SVGSVGElement, s, place, clip, () =>
         scene.allocId()
       )

@@ -252,7 +252,7 @@ export function createTrail(
   const name = o.name ?? 'trail'
   const label = `fx:${name}`
   const cell = cellOf(o)
-  const life = new Lifecycle({
+  const life: Lifecycle = new Lifecycle({
     enabled: o.enabled ?? true,
     continuous: null,
     timed: false,

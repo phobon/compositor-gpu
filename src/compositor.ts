@@ -1,3 +1,4 @@
+import { VectorStore } from './assets/vectors'
 import { BoxPass } from './boxes/box_renderer'
 import { CutoutPass } from './boxes/cutout_pass'
 import { inert } from './compositor_inert'
@@ -169,6 +170,9 @@ export async function createCompositor(
   const reader = new SceneReader(root, scene, layers, (el) =>
     sync.invalidateScope(el)
   )
+  if (options.assets && layers.has('paths')) {
+    reader.vectors = new VectorStore(options.assets)
+  }
   reader.canvasZ = options.zIndex ?? 2147483646
   reader.patchEdits = options.patchEdits ?? true
   reader.patchOpacity = options.patchOpacity ?? true
@@ -962,6 +966,7 @@ export async function createCompositor(
   const mirrorComplete = (): boolean =>
     fontsPending === 0 &&
     !text?.facesPending &&
+    (reader.vectors?.pending ?? 0) === 0 &&
     (imagePass?.pending ?? 0) === 0 &&
     materialPipelinesPending() === 0 &&
     !imagesLoading()

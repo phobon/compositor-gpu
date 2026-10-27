@@ -1,3 +1,12 @@
+import { type BakedSvg, viewBoxMap } from '../assets/vector_file'
+import {
+  ellipsePath,
+  flattenPathData,
+  type PathSink,
+  polyPath,
+  rectPath,
+  replayTape
+} from '../paths/path_data'
 import type {
   LineCap,
   LineJoin,
@@ -58,7 +67,7 @@ function warnOnce(el: Element, reason: string): void {
 }
 
 /** Points and subpaths being flattened, in path space. */
-class Flat {
+class Flat implements PathSink {
   pts: number[] = []
   contours: number[] = []
   private start = -1
@@ -107,7 +116,14 @@ class Flat {
     this.start = -1
   }
 
-  quadTo(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number) {
+  quadTo(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ) {
     const s = this.scale
     const dd = Math.hypot(x0 - 2 * x1 + x2, y0 - 2 * y1 + y2) * s
     const n = Math.max(1, Math.ceil(Math.sqrt((0.25 * dd) / this.tol)))
@@ -202,268 +218,6 @@ function minScale(m: Affine): number {
   return Math.sqrt(Math.max(0, (s1 - disc) / 2))
 }
 
-// --- Path data -------------------------------------------------------------
-
-const NUM = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/y
-
-/** Flatten an svg path `d` into `f`. Malformed data stops at the error,
- * as browsers do. */
-function flattenPathData(d: string, f: Flat): void {
-  let i = 0
-  const skip = (): void => {
-    while (i < d.length && /[\s,]/.test(d[i] ?? '')) {
-      i++
-    }
-  }
-  const num = (): number | null => {
-    skip()
-    NUM.lastIndex = i
-    const m = NUM.exec(d)
-    if (!m) {
-      return null
-    }
-    i = NUM.lastIndex
-    return Number(m[0])
-  }
-  const flag = (): number | null => {
-    skip()
-    const c = d[i]
-    if (c === '0' || c === '1') {
-      i++
-      return c === '1' ? 1 : 0
-    }
-    return null
-  }
-  const nums = (n: number): number[] | null => {
-    const out: number[] = []
-    for (let k = 0; k < n; k++) {
-      const v = num()
-      if (v === null) {
-        return null
-      }
-      out.push(v)
-    }
-    return out
-  }
-  let x = 0
-  let y = 0
-  let sx = 0
-  let sy = 0
-  // Reflection points for S and T.
-  let cx = 0
-  let cy = 0
-  let qx = 0
-  let qy = 0
-  let prev = ''
-  let cmd = ''
-  for (;;) {
-    skip()
-    if (i >= d.length) {
-      break
-    }
-    const c = d[i] ?? ''
-    if (/[a-zA-Z]/.test(c)) {
-      cmd = c
-      i++
-    } else if (!cmd || cmd === 'z' || cmd === 'Z') {
-      break
-    }
-    const rel = cmd === cmd.toLowerCase()
-    const ox = rel ? x : 0
-    const oy = rel ? y : 0
-    switch (cmd.toUpperCase()) {
-      case 'M': {
-        const v = nums(2)
-        if (!v) {
-          return
-        }
-        x = ox + (v[0] ?? 0)
-        y = oy + (v[1] ?? 0)
-        sx = x
-        sy = y
-        f.moveTo(x, y)
-        // Further pairs are implicit linetos.
-        cmd = rel ? 'l' : 'L'
-        break
-      }
-      case 'L': {
-        const v = nums(2)
-        if (!v) {
-          return
-        }
-        x = ox + (v[0] ?? 0)
-        y = oy + (v[1] ?? 0)
-        f.lineTo(x, y)
-        break
-      }
-      case 'H': {
-        const v = num()
-        if (v === null) {
-          return
-        }
-        x = ox + v
-        f.lineTo(x, y)
-        break
-      }
-      case 'V': {
-        const v = num()
-        if (v === null) {
-          return
-        }
-        y = oy + v
-        f.lineTo(x, y)
-        break
-      }
-      case 'C':
-      case 'S': {
-        const s = cmd.toUpperCase() === 'S'
-        const v = nums(s ? 4 : 6)
-        if (!v) {
-          return
-        }
-        let x1: number
-        let y1: number
-        let k = 0
-        if (s) {
-          const smooth = /[CcSs]/.test(prev)
-          x1 = smooth ? 2 * x - cx : x
-          y1 = smooth ? 2 * y - cy : y
-        } else {
-          x1 = ox + (v[k++] ?? 0)
-          y1 = oy + (v[k++] ?? 0)
-        }
-        const x2 = ox + (v[k++] ?? 0)
-        const y2 = oy + (v[k++] ?? 0)
-        const x3 = ox + (v[k++] ?? 0)
-        const y3 = oy + (v[k++] ?? 0)
-        f.lineTo(x, y)
-        f.cubicTo(x, y, x1, y1, x2, y2, x3, y3)
-        cx = x2
-        cy = y2
-        x = x3
-        y = y3
-        break
-      }
-      case 'Q':
-      case 'T': {
-        const t = cmd.toUpperCase() === 'T'
-        const v = nums(t ? 2 : 4)
-        if (!v) {
-          return
-        }
-        let x1: number
-        let y1: number
-        let k = 0
-        if (t) {
-          const smooth = /[QqTt]/.test(prev)
-          x1 = smooth ? 2 * x - qx : x
-          y1 = smooth ? 2 * y - qy : y
-        } else {
-          x1 = ox + (v[k++] ?? 0)
-          y1 = oy + (v[k++] ?? 0)
-        }
-        const x2 = ox + (v[k++] ?? 0)
-        const y2 = oy + (v[k++] ?? 0)
-        f.lineTo(x, y)
-        f.quadTo(x, y, x1, y1, x2, y2)
-        qx = x1
-        qy = y1
-        x = x2
-        y = y2
-        break
-      }
-      case 'A': {
-        const r = nums(3)
-        const large = r ? flag() : null
-        const sweep = large !== null ? flag() : null
-        const end = sweep !== null ? nums(2) : null
-        if (!r || large === null || sweep === null || !end) {
-          return
-        }
-        const x2 = ox + (end[0] ?? 0)
-        const y2 = oy + (end[1] ?? 0)
-        f.lineTo(x, y)
-        arcTo(f, x, y, r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, large, sweep, x2, y2)
-        x = x2
-        y = y2
-        break
-      }
-      case 'Z': {
-        f.end(true)
-        x = sx
-        y = sy
-        break
-      }
-      default:
-        return
-    }
-    prev = cmd
-  }
-  f.end(false)
-}
-
-/** SVG elliptical arc (endpoint form, SVG 1.1 F.6.5) from (x1, y1). */
-function arcTo(
-  f: Flat,
-  x1: number,
-  y1: number,
-  rxIn: number,
-  ryIn: number,
-  angle: number,
-  large: number,
-  sweep: number,
-  x2: number,
-  y2: number
-): void {
-  let rx = Math.abs(rxIn)
-  let ry = Math.abs(ryIn)
-  if ((x1 === x2 && y1 === y2) || rx === 0 || ry === 0) {
-    f.lineTo(x2, y2)
-    return
-  }
-  const phi = (angle * Math.PI) / 180
-  const cp = Math.cos(phi)
-  const sp = Math.sin(phi)
-  const dx = (x1 - x2) / 2
-  const dy = (y1 - y2) / 2
-  const x1p = cp * dx + sp * dy
-  const y1p = -sp * dx + cp * dy
-  const lam = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
-  if (lam > 1) {
-    const k = Math.sqrt(lam)
-    rx *= k
-    ry *= k
-  }
-  const num =
-    rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
-  const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
-  let co = Math.sqrt(Math.max(0, num / den))
-  if (large === sweep) {
-    co = -co
-  }
-  const cxp = (co * rx * y1p) / ry
-  const cyp = (-co * ry * x1p) / rx
-  const cx = cp * cxp - sp * cyp + (x1 + x2) / 2
-  const cy = sp * cxp + cp * cyp + (y1 + y2) / 2
-  const ang = (ux: number, uy: number, vx: number, vy: number): number => {
-    const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
-    return a
-  }
-  const a0 = ang(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry)
-  let da = ang(
-    (x1p - cxp) / rx,
-    (y1p - cyp) / ry,
-    (-x1p - cxp) / rx,
-    (-y1p - cyp) / ry
-  )
-  if (!sweep && da > 0) {
-    da -= 2 * Math.PI
-  } else if (sweep && da < 0) {
-    da += 2 * Math.PI
-  }
-  f.arc(cx, cy, rx, ry, phi, a0, da)
-}
-
 // --- Shapes ----------------------------------------------------------------
 
 const len = (v: SVGAnimatedLength): number => v.animVal.value
@@ -474,72 +228,34 @@ function flattenShape(el: SVGElement, f: Flat): void {
     return
   }
   if (el instanceof SVGRectElement) {
-    const x = len(el.x)
-    const y = len(el.y)
-    const w = len(el.width)
-    const h = len(el.height)
-    if (w <= 0 || h <= 0) {
-      return
-    }
-    // rx / ry: an absent one takes the other's value; both clamp to half.
+    // rx / ry: an absent one takes the other's value.
     const hasRx = el.hasAttribute('rx')
     const hasRy = el.hasAttribute('ry')
-    let rx = hasRx ? len(el.rx) : hasRy ? len(el.ry) : 0
-    let ry = hasRy ? len(el.ry) : rx
-    rx = Math.min(Math.max(rx, 0), w / 2)
-    ry = Math.min(Math.max(ry, 0), h / 2)
-    if (rx <= 0 || ry <= 0) {
-      f.moveTo(x, y)
-      f.lineTo(x + w, y)
-      f.lineTo(x + w, y + h)
-      f.lineTo(x, y + h)
-      f.end(true)
-      return
-    }
-    const q = Math.PI / 2
-    f.moveTo(x + rx, y)
-    f.lineTo(x + w - rx, y)
-    f.arc(x + w - rx, y + ry, rx, ry, 0, -q, q)
-    f.lineTo(x + w, y + h - ry)
-    f.arc(x + w - rx, y + h - ry, rx, ry, 0, 0, q)
-    f.lineTo(x + rx, y + h)
-    f.arc(x + rx, y + h - ry, rx, ry, 0, q, q)
-    f.lineTo(x, y + ry)
-    f.arc(x + rx, y + ry, rx, ry, 0, Math.PI, q)
-    f.end(true)
+    const rx = hasRx ? len(el.rx) : hasRy ? len(el.ry) : 0
+    const ry = hasRy ? len(el.ry) : rx
+    rectPath(f, len(el.x), len(el.y), len(el.width), len(el.height), rx, ry)
     return
   }
-  if (el instanceof SVGCircleElement || el instanceof SVGEllipseElement) {
-    const circle = el instanceof SVGCircleElement
-    const cx = len(el.cx)
-    const cy = len(el.cy)
-    const rx = circle ? len(el.r) : len((el as SVGEllipseElement).rx)
-    const ry = circle ? len(el.r) : len((el as SVGEllipseElement).ry)
-    if (rx <= 0 || ry <= 0) {
-      return
-    }
-    f.moveTo(cx + rx, cy)
-    f.arc(cx, cy, rx, ry, 0, 0, 2 * Math.PI)
-    f.end(true)
+  if (el instanceof SVGCircleElement) {
+    ellipsePath(f, len(el.cx), len(el.cy), len(el.r), len(el.r))
+    return
+  }
+  if (el instanceof SVGEllipseElement) {
+    ellipsePath(f, len(el.cx), len(el.cy), len(el.rx), len(el.ry))
     return
   }
   if (el instanceof SVGLineElement) {
-    f.moveTo(len(el.x1), len(el.y1))
-    f.lineTo(len(el.x2), len(el.y2))
-    f.end(false)
+    polyPath(f, [len(el.x1), len(el.y1), len(el.x2), len(el.y2)], false)
     return
   }
   if (el instanceof SVGPolylineElement || el instanceof SVGPolygonElement) {
     const pts = el.points
+    const xy: number[] = []
     for (let k = 0; k < pts.numberOfItems; k++) {
       const p = pts.getItem(k)
-      if (k === 0) {
-        f.moveTo(p.x, p.y)
-      } else {
-        f.lineTo(p.x, p.y)
-      }
+      xy.push(p.x, p.y)
     }
-    f.end(el instanceof SVGPolygonElement)
+    polyPath(f, xy, el instanceof SVGPolygonElement)
   }
 }
 
@@ -830,13 +546,26 @@ export function readSvgPaths(
   const dpr = window.devicePixelRatio || 1
   const devScale = Math.max(maxScale(xform) * dpr, 1e-3)
   const tol = TOLERANCE_PX / devScale
+  return collect(
+    el,
+    found.map((f) => () => shapeRecord(f, xform, tol, place, clip, ids))
+  )
+}
+
+/** Run each shape's record maker, in paint order, under the limits: null
+ * (draw `el` rasterised) when one hits something unsupported or the
+ * whole goes over MAX_POINTS (or MORPH_MAX_EDGES a path, morphing). */
+function collect(
+  el: Element,
+  makers: (() => PathRecord | null)[]
+): PathRecord[] | null {
   const morph = el.hasAttribute(MORPH_ATTR)
   const out: PathRecord[] = []
   let total = 0
-  for (const f of found) {
+  for (const make of makers) {
     let rec: PathRecord | null
     try {
-      rec = shapeRecord(f, xform, tol, place, clip, ids)
+      rec = make()
     } catch (err) {
       if (err instanceof Unsupported) {
         warnOnce(el, err.message)
@@ -859,6 +588,66 @@ export function readSvgPaths(
     out.push(rec)
   }
   return out
+}
+
+/**
+ * The PathRecords for an `<img data-gpu-vector>` (or data-gpu-morph)
+ * whose svg file was baked (M5f; tools/bake_svg.ts): its shapes in
+ * the img's content box, per the file's viewBox and preserveAspectRatio,
+ * flattened as an inline svg's are. Null when the img can't be drawn
+ * this way (object-fit other than fill, a slice that would crop, or
+ * paint the pass doesn't draw): the caller draws the image as before.
+ */
+export function readImgPaths(
+  el: HTMLImageElement,
+  s: CSSStyleDeclaration,
+  svg: BakedSvg,
+  place: Placement,
+  clip: Rect | null,
+  ids: () => number
+): PathRecord[] | null {
+  if (s.visibility !== 'visible') {
+    return []
+  }
+  if (s.objectFit && s.objectFit !== 'fill') {
+    warnOnce(el, `object-fit: ${s.objectFit}`)
+    return null
+  }
+  const px = (v: string): number => Number.parseFloat(v) || 0
+  const ox = px(s.borderLeftWidth) + px(s.paddingLeft)
+  const oy = px(s.borderTopWidth) + px(s.paddingTop)
+  const w = place.local.w - ox - px(s.borderRightWidth) - px(s.paddingRight)
+  const h = place.local.h - oy - px(s.borderBottomWidth) - px(s.paddingBottom)
+  if (w <= 0 || h <= 0) {
+    return []
+  }
+  const vb = viewBoxMap(svg, w, h)
+  if (!vb) {
+    warnOnce(el, 'preserveAspectRatio slice')
+    return null
+  }
+  const xform = composeAffine(place.xform, [1, 0, 0, 1, ox, oy])
+  const dpr = window.devicePixelRatio || 1
+  const devScale = Math.max(maxScale(xform) * dpr, 1e-3)
+  const tol = TOLERANCE_PX / devScale
+  return collect(
+    el,
+    svg.shapes.map((sh) => () => {
+      const p = shapePaint(sh)
+      return p
+        ? pathRecord(
+            (f) => replayTape(svg.tape, f, sh.start, sh.end),
+            composeAffine(vb, sh.m),
+            p,
+            xform,
+            tol,
+            place,
+            clip,
+            ids
+          )
+        : null
+    })
+  )
 }
 
 /** Edges the pass tests for `r`: fill edges, plus stroke edges. */
@@ -906,34 +695,111 @@ function shapeRecord(
   if (s.vectorEffect && s.vectorEffect !== 'none') {
     throw new Unsupported('vector-effect')
   }
-  const opacity = Number.parseFloat(s.opacity)
-  let fill = paint(ps.fill, 'fill')
-  let stroke = paint(ps.stroke, 'stroke')
-  const sw = Number.parseFloat(ps.strokeWidth) || 0
-  if (stroke && sw <= 0) {
+  const p = shapePaint({
+    fill: ps.fill,
+    stroke: ps.stroke,
+    opacity: Number.parseFloat(s.opacity),
+    fillOpacity: Number.parseFloat(ps.fillOpacity),
+    strokeOpacity: Number.parseFloat(ps.strokeOpacity),
+    strokeWidth: Number.parseFloat(ps.strokeWidth) || 0,
+    cap: CAPS[ps.strokeLinecap] ?? 0,
+    join: JOINS[ps.strokeLinejoin] ?? 0,
+    miterLimit: Number.parseFloat(ps.strokeMiterlimit) || 4,
+    evenOdd: ps.fillRule === 'evenodd'
+  })
+  if (!p) {
+    return null
+  }
+  return pathRecord(
+    (sink) => flattenShape(f.el, sink),
+    f.m,
+    p,
+    xform,
+    tol,
+    place,
+    clip,
+    ids
+  )
+}
+
+/** A shape's paint as read (computed style, or a baked svg's). */
+export interface PaintInput {
+  /** CSS paint: 'none' or a colour. */
+  fill: string
+  stroke: string
+  opacity: number
+  fillOpacity: number
+  strokeOpacity: number
+  /** User units. */
+  strokeWidth: number
+  cap: LineCap
+  join: LineJoin
+  miterLimit: number
+  evenOdd: boolean
+}
+
+interface Paint {
+  fill: RGBA | null
+  stroke: RGBA | null
+  strokeWidth: number
+  cap: LineCap
+  join: LineJoin
+  miterLimit: number
+  evenOdd: boolean
+}
+
+/** Colours with the opacities applied, null when nothing paints; throws
+ * Unsupported for paint the pass doesn't draw. */
+function shapePaint(i: PaintInput): Paint | null {
+  let fill = paint(i.fill, 'fill')
+  let stroke = paint(i.stroke, 'stroke')
+  if (stroke && i.strokeWidth <= 0) {
     stroke = null
   }
-  if (fill && stroke && opacity < 1) {
+  if (fill && stroke && i.opacity < 1) {
     throw new Unsupported('opacity on a filled and stroked shape')
   }
   if (fill) {
-    fill = alphaTimes(fill, opacity * Number.parseFloat(ps.fillOpacity))
+    fill = alphaTimes(fill, i.opacity * i.fillOpacity)
   }
   if (stroke) {
-    stroke = alphaTimes(stroke, opacity * Number.parseFloat(ps.strokeOpacity))
+    stroke = alphaTimes(stroke, i.opacity * i.strokeOpacity)
   }
   if ((!fill || fill.a <= 0) && (!stroke || stroke.a <= 0)) {
     return null
   }
+  return {
+    fill,
+    stroke,
+    strokeWidth: i.strokeWidth,
+    cap: i.cap,
+    join: i.join,
+    miterLimit: Math.max(1, i.miterLimit),
+    evenOdd: i.evenOdd
+  }
+}
+
+/** One shape's record: `outline` drawn into a Flat through `m` (user
+ * space -> path space), placed by `xform` (path space -> record space). */
+function pathRecord(
+  outline: (f: Flat) => void,
+  m: Affine,
+  p: Paint,
+  xform: Affine,
+  tol: number,
+  place: Placement,
+  clip: Rect | null,
+  ids: () => number
+): PathRecord | null {
   // A stroke's width is uniform in path space only under a uniform
   // scale.
-  const hi = maxScale(f.m)
-  const lo = minScale(f.m)
-  if (stroke && hi - lo > 0.01 * hi) {
+  const hi = maxScale(m)
+  const lo = minScale(m)
+  if (p.stroke && hi - lo > 0.01 * hi) {
     throw new Unsupported('a stroke under non-uniform scale')
   }
-  const flat = new Flat(f.m, tol)
-  flattenShape(f.el, flat)
+  const flat = new Flat(m, tol)
+  outline(flat)
   if (flat.contours.length === 0) {
     return null
   }
@@ -950,10 +816,8 @@ function shapeRecord(
     x1 = Math.max(x1, x)
     y1 = Math.max(y1, y)
   }
-  const width = stroke ? sw * hi : 0
-  const join = JOINS[ps.strokeLinejoin] ?? 0
-  const cap = CAPS[ps.strokeLinecap] ?? 0
-  const miterLimit = Math.max(1, Number.parseFloat(ps.strokeMiterlimit) || 4)
+  const width = p.stroke ? p.strokeWidth * hi : 0
+  const { join, cap, miterLimit } = p
   const pad =
     (width / 2) *
       Math.max(join === 0 ? miterLimit : 1, cap === 2 ? Math.SQRT2 : 1) +
@@ -969,9 +833,9 @@ function shapeRecord(
     points,
     contours: new Uint32Array(flat.contours),
     bounds: [x0, y0, x1, y1],
-    fill,
-    evenOdd: ps.fillRule === 'evenodd',
-    stroke,
+    fill: p.fill,
+    evenOdd: p.evenOdd,
+    stroke: p.stroke,
     strokeWidth: width,
     cap,
     join,

@@ -92,7 +92,9 @@ export interface CompositorOptions {
    * families it lists draw from the baked font files (fetched per family
    * as the page uses it) instead of parsing the @font-face sources, and a
    * page whose text is all baked never loads opentype.js. A weight or
-   * optical size the manifest lacks falls back to the runtime path. */
+   * optical size the manifest lacks falls back to the runtime path. Svg
+   * files it lists draw as vectors from `<img data-gpu-vector>` (or
+   * data-gpu-morph) whose src matches. */
   assets?: string
   /** What to do when WebGPU is unavailable. Default 'passthrough'. */
   fallback?: Fallback

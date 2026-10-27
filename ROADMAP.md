@@ -416,8 +416,36 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           `-baked-half` (test:fx bakes first). Not yet: a published
           `compositor-gpu` bin, woff2 sources, codepoints outside the
           ranges per glyph (they fall back to the atlas, not the source)
-    - [ ] SVG paths
-    - [ ] Effect-input images (KTX2 / PNG)
+    - [ ] SVG files as vectors (built 2026-10-27; headless SwiftShader:
+          each baked `<img>` equals its inline twin exactly, a morph
+          held at 0 equals the old icon at rest; test:unit 121; to check
+          on the M1 Pro). Baking inline svgs was measured first and
+          dropped: on a heavy svg (20 shapes, 15k points, warm) the DOM
+          walk is 0.2 ms, parsing `d` 0.6 ms and flattening 0.5 ms,
+          while hashing the markup to find a baked copy costs 0.1-0.4 ms,
+          and baked flattening can't follow the on-screen scale. Instead,
+          `"svgs": [{ "dir", "src" } | { "file", "src" }]` in the bake
+          config turns svg files into `.cgv` files (src/assets/
+          vector_file.ts; tools/bake_svg.ts with a small XML reader,
+          tools/xml.ts): the viewBox and preserveAspectRatio, and per
+          shape its matrix, paint (presentation attributes and style=""
+          cascaded statically, currentColor from `color`, <use>
+          inheriting) and its outline as a path tape: the sink calls
+          parsing made (src/paths/path_data.ts, now shared with
+          dom/svg_paths.ts), replayed into the runtime's Flat, so it
+          flattens at the on-screen scale exactly as an inline svg does.
+          Files the path pass can't draw (gradients, <style> rules, %
+          lengths, ...) are skipped with the reason. At runtime an
+          `<img data-gpu-vector | data-gpu-morph src>` whose src the
+          manifest lists draws as path records (readImgPaths, the img's
+          content box, object-fit: fill only; nothing while its file
+          loads, `mirrorComplete` waits), so external svgs draw sharp at
+          any scale and morph (layoutMorph pairs their shapes). Page
+          `vectors.html?baked`, shots `fx-vectors`, `-twins`,
+          `-morph-half`, `-morph-0`, `-unbaked`. Not yet: `<style>`
+          rules, an img's object-fit other than fill, css backgrounds
+          of svg files
+    - [ ] Effect-input images (PNG mip chains first; KTX2 / Basis later)
     - [ ] Distance-field masks
   - [x] Catch exceptions from author code (2026-10-26, `guarded` in
         `util/log.ts`): layer and material `update`, every frame hook,

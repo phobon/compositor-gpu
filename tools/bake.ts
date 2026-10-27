@@ -1,7 +1,8 @@
 // compositor-gpu bake (M5f; docs/EFFECTS.md, Bake CLI): turn fonts into
-// GPU-ready files (src/text/slug/baked.ts) plus a manifest pages load with
-// `createCompositor({ assets: '/gpu/manifest.json' })`. Fonts first;
-// svgs, effect-input images and distance-field masks follow.
+// GPU-ready files (src/text/slug/baked.ts), and svg files into vector
+// files (src/assets/vector_file.ts), plus a manifest pages load with
+// `createCompositor({ assets: '/gpu/manifest.json' })`. Effect-input
+// images and distance-field masks follow.
 //
 //   npm run bake [-- path/to/compositor-gpu.bake.json]
 //
@@ -20,20 +21,33 @@
 //                                          //   run uses a face only at its
 //                                          //   own, else the runtime path)
 //       "unicodeRange": "U+0020-007E, U+00A0-00FF"
-//     }]
+//     }],
+//     "svgs": [                            // <img data-gpu-vector> files
+//       { "dir": "public/icons", "src": "/icons/" },  // every *.svg in it
+//       { "file": "art/logo.svg", "src": "/logo.svg" }
+//     ]
 //   }
+//
+// `src` is the URL pages load the file from (an img's src, from the
+// site's root); the runtime matches imgs by it. An svg using something
+// the path pass can't draw is skipped with the reason (pages draw it as
+// an image, as before).
 //
 // Each (weight, opsz) is one file; the outlines come from the same code
 // the runtime parses fonts with (src/text/slug/font.ts), so a baked face
 // draws exactly as the parsed one.
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
-  type BakedFace,
-  type BakedManifest,
-  encodeBakedFont
-} from '../src/text/slug/baked'
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { BakedManifest, BakedSvgEntry } from '../src/assets/manifest'
+import { encodeBakedSvg } from '../src/assets/vector_file'
+import { type BakedFace, encodeBakedFont } from '../src/text/slug/baked'
 import {
   type FontHandle,
   type Ligature,
@@ -41,6 +55,7 @@ import {
   loadParser,
   makeInstance
 } from '../src/text/slug/font'
+import { BakeSvgError, bakeSvg } from './bake_svg'
 
 interface FontConfig {
   file: string
@@ -52,9 +67,31 @@ interface FontConfig {
   unicodeRange?: string
 }
 
+type SvgConfig = { dir: string; src: string } | { file: string; src: string }
+
 interface Config {
   out: string
   fonts?: FontConfig[]
+  svgs?: SvgConfig[]
+}
+
+/** The svg files a config lists, with the URLs pages use for them. */
+function svgFiles(root: string, list: SvgConfig[]): [string, string][] {
+  const out: [string, string][] = []
+  for (const c of list) {
+    if ('dir' in c) {
+      const dir = resolve(root, c.dir)
+      const base = c.src.endsWith('/') ? c.src : `${c.src}/`
+      for (const f of readdirSync(dir).sort()) {
+        if (f.toLowerCase().endsWith('.svg')) {
+          out.push([join(dir, f), base + f])
+        }
+      }
+    } else {
+      out.push([resolve(root, c.file), c.src])
+    }
+  }
+  return out
 }
 
 /** CSS unicode-range ("U+0020-007E, U+00??, U+20AC") as [lo, hi] pairs. */
@@ -149,7 +186,9 @@ export async function bake(
   const out = resolve(root, config.out)
   mkdirSync(out, { recursive: true })
   await loadParser()
-  const manifest: BakedManifest = { version: 1, fonts: [] }
+  const manifest: BakedManifest = { version: 1, fonts: [], svgs: [] }
+  const fonts = manifest.fonts as BakedFace[]
+  const svgs = manifest.svgs as BakedSvgEntry[]
   if ((config.fonts ?? []).length > 0) {
     say(
       '[bake] note: some font licences forbid converting the font into another format; check yours before shipping baked files.'
@@ -207,18 +246,48 @@ export async function bake(
           bytes: bytes.byteLength,
           unicodeRange: rangeText
         }
-        manifest.fonts.push(face)
+        fonts.push(face)
         say(
           `[bake] ${name}: ${glyphs} glyphs, ${(bytes.byteLength / 1024).toFixed(1)} KB`
         )
       }
     }
   }
+  if ((config.svgs ?? []).length > 0) {
+    mkdirSync(resolve(out, 'svg'), { recursive: true })
+  }
+  const names = new Set<string>()
+  for (const [file, src] of svgFiles(root, config.svgs ?? [])) {
+    let bytes: ArrayBuffer
+    let shapes: number
+    try {
+      const svg = bakeSvg(readFileSync(file, 'utf8'), basename(file))
+      bytes = encodeBakedSvg(svg)
+      shapes = svg.shapes.length
+    } catch (err) {
+      if (err instanceof BakeSvgError) {
+        console.warn(`[bake] skipped ${src}: ${err.message}`)
+        continue
+      }
+      throw err
+    }
+    let name = `svg/${slug(basename(file, '.svg'))}.cgv`
+    for (let k = 2; names.has(name); k++) {
+      name = `svg/${slug(basename(file, '.svg'))}-${k}.cgv`
+    }
+    names.add(name)
+    writeFileSync(resolve(out, name), new Uint8Array(bytes))
+    svgs.push({ src, url: name, shapes, bytes: bytes.byteLength })
+  }
+  if (svgs.length) {
+    const kb = svgs.reduce((n, f) => n + f.bytes, 0) / 1024
+    say(`[bake] ${svgs.length} svg file(s), ${kb.toFixed(1)} KB`)
+  }
   const mpath = resolve(out, 'manifest.json')
   writeFileSync(mpath, `${JSON.stringify(manifest, null, 2)}\n`)
-  const total = manifest.fonts.reduce((n, f) => n + f.bytes, 0)
+  const total = fonts.reduce((n, f) => n + f.bytes, 0)
   say(
-    `[bake] ${mpath}: ${manifest.fonts.length} font file(s), ${(total / 1024).toFixed(1)} KB (sources ${(
+    `[bake] ${mpath}: ${fonts.length} font file(s), ${(total / 1024).toFixed(1)} KB (sources ${(
       (config.fonts ?? []).reduce(
         (n, f) => n + statSync(resolve(root, f.file)).size,
         0

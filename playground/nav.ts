@@ -93,6 +93,12 @@ const PAGES: Page[] = [
     ]
   },
   {
+    file: 'vectors.html',
+    title: 'Vector images',
+    about: 'Baked svg files drawn as vectors from <img> (M5f)',
+    variants: [{ label: 'baked (npm run bake:playground)', query: '?baked' }]
+  },
+  {
     file: 'spike_morph.html',
     title: 'Morph spike',
     about: 'Segment outline morph with the wave pass (M5)',

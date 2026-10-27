@@ -616,6 +616,15 @@ Conventions each pass must follow:
   the morph engine); records over 256 edges get row bands. Path
   records take no materials (`tagBlend` skips them; a blended svg is
   rasterised).
+  An `<img data-gpu-vector>` (or data-gpu-morph) of an svg file baked
+  into the asset manifest draws the same way (M5f; `readImgPaths`): the
+  `.cgv` file (`assets/vector_file.ts`, written by `tools/bake_svg.ts`)
+  holds each shape's matrix, paint and outline as a path tape
+  (`paths/path_data.ts`: the PathSink calls parsing made), replayed into
+  Flat at the on-screen scale, so it equals the inline svg exactly.
+  `assets/vectors.ts` (VectorStore, `reader.vectors`) looks imgs up by
+  resolved src and loads files on first use (the img draws nothing
+  meanwhile; `mirrorComplete` waits).
 - **Inline SVG and SVG images.** An inline `<svg>` root becomes one
   ImageRecord (`dom/svg.ts`: cloned, computed `color`/`fill`/`stroke` baked
   in, serialised to a `data:` URL, cached by FNV-1a hash of markup+size); its

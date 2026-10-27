@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>compositor-gpu vector images playground</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px system-ui, sans-serif;
+        background: #f2efe8;
+        color: #1b1c20;
+      }
+      main { padding: 40px; display: flex; flex-direction: column; gap: 28px; }
+      .row { display: flex; gap: 28px; align-items: center; height: 104px; }
+      .row > * { flex: none; }
+      .sq { width: 96px; height: 96px; }
+      .wide { width: 180px; height: 64px; }
+      .tilt { transform: rotate(-12deg) scale(1.25); }
+      .pad { padding: 8px; border: 2px solid #d6d0c2; border-radius: 12px; }
+      .label { width: 140px; color: #6b6a64; }
+      #inline svg { display: block; }
+      #controls {
+        position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;
+        display: flex; gap: 8px; align-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <!-- Each icon twice: inline (data-gpu-vector) and as an img of the
+           same file, drawn from its baked file with ?baked. -->
+      <div class="row" id="inline"><span class="label">inline svg</span></div>
+      <div class="row" id="imgs"><span class="label">img</span></div>
+      <div class="row" id="more"><span class="label">img, transformed</span></div>
+      <div class="row" id="morph"><span class="label">img, morphing</span></div>
+    </main>
+    <div id="controls" data-gpu-ignore>
+      <button id="next" type="button">Next icon</button>
+    </div>
+    <script type="module" src="./vectors.ts"></script>
+  </body>
+</html>

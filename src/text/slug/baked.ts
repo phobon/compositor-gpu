@@ -362,7 +362,4 @@ export interface BakedFace {
   unicodeRange: string
 }
 
-export interface BakedManifest {
-  version: number
-  fonts: BakedFace[]
-}
+export type { BakedManifest } from '../../assets/manifest'

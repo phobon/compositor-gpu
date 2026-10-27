@@ -417,7 +417,9 @@ function colorOf(el: Element): number[] {
   return [(n[0] ?? 0) / 255, (n[1] ?? 0) / 255, (n[2] ?? 0) / 255, n[3] ?? 1]
 }
 
-const isSvg = (el: Element): boolean => el.tagName.toLowerCase() === 'svg'
+/** Can draw as path records: an svg root, or an img of a baked svg. */
+const isVector = (el: Element): boolean =>
+  el.tagName.toLowerCase() === 'svg' || el.tagName === 'IMG'
 
 interface ShapeTables {
   shapes: number
@@ -680,7 +682,7 @@ export function layoutMorph(
           radius: radiusOf(el, box),
           text,
           color: colorOf(el),
-          shapes: isSvg(el) ? fx.pathShapes(el) : [],
+          shapes: isVector(el) ? fx.pathShapes(el) : [],
           string: text ? (el.textContent ?? '').trim() : '',
           morph: null
         }

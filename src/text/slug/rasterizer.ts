@@ -1,3 +1,4 @@
+import { fetchManifest } from '../../assets/manifest'
 import type { Shared } from '../../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../../gpu/material'
 import { quadVerts, SkeletonTwin } from '../../gpu/skeleton'
@@ -10,7 +11,7 @@ import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlas_shader'
 import { describeFace, resolveFontBytes } from '../font_source'
 import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
 import type { TextBackend } from '../text_rasterizer'
-import { type BakedFace, type BakedManifest, decodeBakedFont } from './baked'
+import { type BakedFace, decodeBakedFont } from './baked'
 import {
   type FontHandle,
   type GlyphBands,
@@ -204,12 +205,7 @@ export class SlugText implements TextBackend {
   useAssets(url: string): void {
     const href = new URL(url, document.baseURI).href
     this.queued++
-    this.assetsLoad = fetch(href)
-      .then((r) =>
-        r.ok
-          ? (r.json() as Promise<BakedManifest>)
-          : Promise.reject(new Error(`${r.status} ${r.statusText}`))
-      )
+    this.assetsLoad = fetchManifest(href)
       .then((m) => {
         this.assets = (m.fonts ?? []).map((f) => ({
           ...f,
