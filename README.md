@@ -120,8 +120,16 @@ const file = await encodeRecording(toRecording(report, 'flight')) // .cgprof
 `compositor-gpu/devtools` puts all of this in a panel on the page
 (`mountDevtools(compositor)`): live frames, a timeline of a saved
 recording with each late frame explained, cost by element, and the
-debug toggles. `docs/PROFILER.md` has the design (DevTools tracks and
-the CLI come next).
+debug toggles. `compositor.profile.tracks(true)` (or the panel's
+Settings) writes frames, the compositor's phases, GPU time and explained
+late frames into Chrome DevTools' Performance panel as a
+"compositor-gpu" track group.
+
+`npm run profile -- <url>` profiles a site from the command line: it
+opens the page in Chrome, runs a scenario (by default, scroll down and
+back; `--scenario file.json` for clicks, hovers, marks and a budget),
+and writes the recording, a self-contained HTML report and a summary,
+exiting 1 when a budget is exceeded. `docs/PROFILER.md` has the design.
 
 GPU pass timings need the `timestamp-query` feature (Chrome rounds them to
 100 µs unless run with `--enable-webgpu-developer-features`).

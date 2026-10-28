@@ -587,10 +587,44 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         a thin alias (`mountDebugPanel` mounts the devtools). The design's
         separate Frame tab became the Timeline's lower half. Not yet: a
         real-GPU pass over it (Mac, 120 Hz), touch (pinch zoom)
-  - [ ] M6c DevTools custom tracks (`performance.measure` with
-        `detail.devtools`)
-  - [ ] M6d CLI `compositor-gpu profile <url>`: scenarios, the HTML
-        report (the standalone viewer), budgets, baselines
+  - [x] M6c DevTools custom tracks (built 2026-10-28; headless
+        Chromium 153 trace: `test:profile -- --tracks` finds frame,
+        compositor-phase, GPU, late-frame and mark entries in the
+        "compositor-gpu" group): `profile.tracks(true)` (devtools
+        Settings, `?tracks=1`), profile/tracks.ts. Frames, Compositor
+        (phases, the read labelled with its kind, size and cause) and GPU
+        (placed after the CPU work, approximate) through
+        `console.timeStamp` with a track (Chromium 133+; no buffering),
+        else `performance.measure` with `detail.devtools`, cleared at
+        once; late frames as markers 500 ms later (their long animation
+        frames in) with the hitch factors as tooltip and properties;
+        `profile.mark()` as markers. Not yet: a look in the real panel
+        (headless can't show it), the cost per frame with it on
+  - [x] M6d CLI (built 2026-10-28; headless SwiftShader on
+        layout.html: a scenario with a deliberate jank, a budget over in
+        the jank phase (exit 1), a baseline comparison, the HTML report
+        opening with no errors; --inject over a plain page; unit tests
+        144 pass): `npm run profile -- <url>` (tools/profile.ts; from a
+        site, `npx tsx <submodule>/tools/profile.ts`). Headed Chrome by
+        default (--headless: real adapter or SwiftShader, flagged), the
+        page's own compositor (`--global`, default `__gpu`) or one
+        injected (`--inject`, `--root`, `--mode`; tools/inject.ts, now
+        shared with test:site, built as one file: the library's dynamic
+        import had split the inject bundle into chunks the route didn't
+        serve). Scenarios (tools/profile/scenario.ts: wait, waitFor,
+        mark, scroll to top/bottom/y/selector at a speed, scrollBy, hover,
+        click, press, eval; a JSON file, `--steps`, `--click`, or the
+        default scroll down and back; phases from the marks, or from every
+        step when there are none). Writes recording.cgprof, report.html
+        (src/devtools/viewer.ts: the Timeline and Elements views, the
+        env, headline numbers, budget verdict, baseline lines; one
+        self-contained file) and summary.txt. Budgets
+        (tools/profile/budget.ts: droppedCompositor (frames whose
+        largest factor is the compositor or the GPU, over every late
+        frame), dropped, late, frameP95, cpuP95, readP95, gpuP95, per
+        phase) exit 1 when over; `--baseline` compares the headline
+        numbers and warns on another adapter or viewport. Not yet: a run
+        on the Mac against /duo, CI wiring
   - [ ] M6e cost by element and effect, filmstrip at hitches, baseline
         diff in the viewer
 - [ ] Framework extraction (later; not for the progressive-enhancement

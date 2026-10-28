@@ -83,7 +83,10 @@ export class Model {
     })
     const first = r.samples[0]
     const last = r.samples[r.samples.length - 1]
-    this.start = first ? first.t - first.dt - this.origin : 0
+    // From the first frame's interval, unless it follows an idle gap.
+    this.start = first
+      ? first.t - Math.min(first.dt, this.refresh * 3) - this.origin
+      : 0
     this.end = last ? last.t - this.origin : 1
   }
 

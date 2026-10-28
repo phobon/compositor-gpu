@@ -6,8 +6,8 @@
 //             long animation frames over time, the selected frame below
 //             it: why it came late (hitch factors) and what it did
 //   Elements  cost by element, GPU pass and what kept the loop running
-//   Settings  the flight recorder, the frame HUD, dials, skeleton, scene
-//             reuse, where the panel docks
+//   Settings  the flight recorder, Chrome DevTools tracks, the frame HUD,
+//             dials, skeleton, scene reuse, where the panel docks
 //
 // While mounted, the flight recorder keeps the last seconds (15 by
 // default): after a jank, Save (or Alt+Shift+S) turns them into a
@@ -19,7 +19,8 @@
 // The panel sits in a shadow root on <html> marked data-gpu-ignore,
 // outside the mirrored root. Its settings persist in localStorage
 // (`storageKey`) and the URL seeds them: `?devtools` opens it,
-// `?stats=1`, `?dials=1`, `?skeleton=1` as compositor-gpu/debug.
+// `?stats=1`, `?dials=1`, `?skeleton=1` as compositor-gpu/debug, and
+// `?tracks=1` the DevTools tracks.
 
 import { dialsShown, setDialsShown } from '../dials'
 import { SKELETON_COLORS } from '../gpu/skeleton'
@@ -49,6 +50,9 @@ export interface DevtoolsSettings {
   dials: boolean
   skeleton: boolean
   sceneReuse: boolean
+  /** Write frames into Chrome DevTools' Performance panel
+   * (compositor.profile.tracks). */
+  tracks: boolean
   dock: 'bottom' | 'right'
   /** Panel height (bottom) or width (right), CSS px. */
   size: number
@@ -87,6 +91,7 @@ const DEFAULTS: DevtoolsSettings = {
   dials: false,
   skeleton: false,
   sceneReuse: true,
+  tracks: false,
   dock: 'bottom',
   size: 340,
   tab: 'timeline',
@@ -167,7 +172,7 @@ export function mountDevtools(
     ...opts.defaults,
     ...readStored(key)
   }
-  for (const f of ['stats', 'dials', 'skeleton'] as const) {
+  for (const f of ['stats', 'dials', 'skeleton', 'tracks'] as const) {
     settings[f] = urlFlag(f) ?? settings[f]
   }
   settings.open = urlFlag('devtools') ?? settings.open
@@ -536,6 +541,7 @@ export function mountDevtools(
       profile.hud(settings.stats)
       compositor.skeleton = settings.skeleton
       compositor.sceneReuse = settings.sceneReuse
+      profile.tracks(settings.tracks)
     }
     setDialsShown(settings.dials)
     saveBtn.textContent =
@@ -549,7 +555,7 @@ export function mountDevtools(
   const renderSettings = (): void => {
     const box = h('div', { class: 'settings' })
     const toggle = (
-      k: 'stats' | 'dials' | 'skeleton' | 'sceneReuse',
+      k: 'stats' | 'dials' | 'skeleton' | 'sceneReuse' | 'tracks',
       label: string,
       hint: string,
       usable = gpu
@@ -600,6 +606,11 @@ export function mountDevtools(
         ),
         secs
       )
+    )
+    toggle(
+      'tracks',
+      'Chrome DevTools tracks',
+      'Frames, compositor phases, GPU and late frames in the Performance panel'
     )
     toggle('stats', 'Frame HUD', 'The corner graph (compositor.profile.hud)')
     toggle('dials', 'Dials', 'Effect parameter panels', true)
@@ -838,6 +849,7 @@ export function mountDevtools(
         void profile.stop()
       }
       profile.flight(false)
+      profile.tracks(false)
       host.remove()
     }
   }

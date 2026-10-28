@@ -102,6 +102,38 @@ mountDevtools(compositor, { position: 'bottom-right' })
 `compositor-gpu/debug`'s `mountDebugPanel` still works: it mounts the
 devtools.
 
+## Profiling your site
+
+From this repo (or `npx tsx <submodule>/tools/profile.ts` from the
+site), `npm run profile -- http://localhost:8000/duo?gpu=1` opens the
+page in headed Chrome, finds its compositor on `window.__gpu` (the
+provider's default `global`; `--inject` mounts one instead), records a
+scroll down and back, and writes `profile-out/<page>-<time>/` with
+`report.html` (each late frame explained), `recording.cgprof` (open it
+in the devtools: Import) and `summary.txt`. A scenario file names the
+steps, viewport and budget:
+
+```json
+{
+  "name": "duo",
+  "url": "http://localhost:8000/duo?gpu=1",
+  "dpr": 2,
+  "budget": { "droppedCompositor": 0, "phases": { "showcase": { "late": 1 } } },
+  "steps": [
+    { "wait": 1500 },
+    { "mark": "scroll" },
+    { "scroll": "bottom", "speed": 12 },
+    { "mark": "showcase" },
+    { "scroll": "[data-gpu-morph]" },
+    { "click": "[role=tab]:nth-of-type(2)" },
+    { "wait": 2000 }
+  ]
+}
+```
+
+`--budget` and `--baseline before.cgprof` work without one; `--headless`
+runs without a window (CI; SwiftShader numbers when there's no GPU).
+
 ## Measuring parity on your site
 
 `npm run test:site -- --url <url>` checks DOM-vs-GPU parity on a real page

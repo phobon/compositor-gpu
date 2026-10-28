@@ -193,7 +193,7 @@ export function renderFrame(
       'DOM read',
       s.read === 'none'
         ? 'none'
-        : `${s.read}, ${s.readElements} elements${s.cause ? ` (${s.cause})` : ''}`
+        : `${s.read}, ${s.readElements} element${s.readElements === 1 ? '' : 's'}${s.cause ? ` (${s.cause})` : ''}`
     )
   )
   const why = s.why

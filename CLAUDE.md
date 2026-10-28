@@ -187,6 +187,14 @@ canvas in a shadow root, no framework): model.ts (a report as the views
 need it; pure apart from `h()`), timeline.ts, frame_view.ts,
 elements_view.ts, live_view.ts, index.ts (shell, settings, recordings,
 keys). `compositor-gpu/debug` is an alias for it.
+`profile.tracks(true)` writes Chrome DevTools custom tracks
+(profile/tracks.ts); `npm run test:profile -- --tracks` checks a Chrome
+trace for them.
+The CLI is tools/profile.ts (`npm run profile`), with tools/profile/
+(scenario, budget, compare: pure and unit-tested in
+test/unit/profile_cli.test.ts; html: the report, building
+src/devtools/viewer_entry.ts as an IIFE cached in the OS temp dir) and
+tools/inject.ts (the inject bundle, shared with test:site).
 
 **Debug panel**: `mountDebugPanel(compositor)` (`compositor-gpu/debug`,
 `src/debug/index.ts`) puts a GPU button in a corner (bottom-right by

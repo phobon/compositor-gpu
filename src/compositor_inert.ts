@@ -15,7 +15,9 @@ const inertProfile: Profile = {
   flight() {},
   flying: false,
   save: () => Promise.resolve(null),
-  element: () => null
+  element: () => null,
+  tracks() {},
+  tracking: false
 }
 
 export function inert(): Compositor & { text: null; scene: null } {

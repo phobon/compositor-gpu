@@ -127,7 +127,7 @@ export function explain(x: ExplainInput): Factor[] {
         kind: 'read',
         ms: c.read,
         text: [
-          `${before.read} DOM read of ${before.readElements} elements`,
+          `${before.read} DOM read of ${before.readElements} element${before.readElements === 1 ? '' : 's'}`,
           before.cause ? `(${before.cause})` : '',
           where ? `in ${where}${n > 2 ? ` +${n - 2}` : ''}` : '',
           t.text ? `after ${t.text}` : ''

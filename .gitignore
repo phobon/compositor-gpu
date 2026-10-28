@@ -20,3 +20,5 @@ test/fill/out/
 test/edit/out/
 # baked playground fonts (npm run bake:playground; test:fx bakes them)
 playground/gpu/
+# profiler CLI output (npm run profile)
+profile-out/

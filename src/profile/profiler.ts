@@ -18,6 +18,7 @@ import {
   MAX_SCOPES,
   TraceBuffer
 } from './trace'
+import { DevtoolsTracks } from './tracks'
 
 export type ReadKind = 'none' | 'full' | 'partial' | 'escalated'
 
@@ -259,6 +260,12 @@ export interface Profile {
   /** The live element behind a report's element index, while it is still
    * in the document. */
   element(i: number): Element | null
+  /** Write frames, compositor phases, GPU time and late-frame markers
+   * (with their factors) into Chrome DevTools' Performance panel as
+   * custom tracks (profile/tracks.ts); false stops. */
+  tracks(on: boolean): void
+  /** The DevTools tracks are on. */
+  readonly tracking: boolean
 }
 
 const RING = 240
@@ -294,6 +301,11 @@ export class Profiler implements Profile {
   /** Flight window, ms (0: off), and its frames. */
   private flightMs = 0
   private flightFrames: FrameSample[] = []
+  private devtools: DevtoolsTracks | null = null
+  /** Late frames waiting for their long animation frames (tracks). */
+  private lateQueue: { s: FrameSample; at: number }[] = []
+  private trackRefresh = 1000 / 60
+  private trackRefreshAt = 0
 
   constructor(private readonly host: ProfileHost) {}
 
@@ -303,6 +315,16 @@ export class Profiler implements Profile {
 
   get flying(): boolean {
     return this.flightMs > 0
+  }
+
+  get tracking(): boolean {
+    return this.devtools !== null
+  }
+
+  tracks(on: boolean): void {
+    this.devtools = on ? (this.devtools ?? new DevtoolsTracks()) : null
+    this.lateQueue = []
+    this.update()
   }
 
   start(opts: ProfileOptions = {}): void {
@@ -357,9 +379,11 @@ export class Profiler implements Profile {
   }
 
   mark(label: string): void {
+    const at = performance.now()
     if (this.session || this.flying) {
-      this.marks.push({ at: performance.now(), label })
+      this.marks.push({ at, label })
     }
+    this.devtools?.mark(label, at)
   }
 
   hud(on?: boolean): boolean {
@@ -413,12 +437,62 @@ export class Profiler implements Profile {
     if (this.flying) {
       this.flightFrames.push(s)
       this.trim(s.t)
+    } else if (!this.session && this.longFrames.length > 0) {
+      // Tracks alone: long frames only for the queued hitches.
+      const keep = s.t - 5000
+      this.longFrames = this.longFrames.filter((f) => f.at + f.duration >= keep)
+    }
+    if (this.devtools) {
+      this.trackFrame(s)
     }
     this.view?.draw(this.recent(), this.opts.refreshMs)
   }
 
+  /** Write `s` to the DevTools tracks; late frames' markers wait half a
+   * second for their long animation frames. */
+  private trackFrame(s: FrameSample): void {
+    const d = this.devtools
+    if (!d) {
+      return
+    }
+    if (s.t - this.trackRefreshAt > 1000) {
+      this.trackRefreshAt = s.t
+      this.trackRefresh = this.opts.refreshMs ?? estimateRefresh(this.recent())
+    }
+    const late = missed(s, this.trackRefresh) > 0
+    d.frame(s, late)
+    if (late) {
+      this.lateQueue.push({ s, at: s.t })
+    }
+    while (
+      this.lateQueue.length > 0 &&
+      s.t - (this.lateQueue[0]?.at ?? 0) > 500
+    ) {
+      const q = this.lateQueue.shift()
+      if (!q) {
+        break
+      }
+      const frames = this.recent()
+      const i = frames.indexOf(q.s)
+      if (i > 0) {
+        d.hitch(
+          q.s,
+          hitchAt(
+            frames,
+            i,
+            this.trackRefresh,
+            0,
+            this.longFrames,
+            (k) => this.registry.paths[k]
+          )
+        )
+      }
+    }
+  }
+
   destroy(): void {
     this.session = null
+    this.devtools = null
     this.flightMs = 0
     this.flightFrames = []
     this.view?.destroy()
@@ -466,7 +540,8 @@ export class Profiler implements Profile {
   }
 
   private update(): void {
-    const sampling = this.session !== null || this.flying
+    const sampling =
+      this.session !== null || this.flying || this.devtools !== null
     this.active = sampling || this.view !== null
     const gpu = this.active && this.opts.gpu !== false
     if (gpu !== this.gpuOn) {
@@ -496,6 +571,7 @@ export class Profiler implements Profile {
       }
       if (s.id === t.frame) {
         s.gpu = t
+        this.devtools?.gpu(s)
         return
       }
     }

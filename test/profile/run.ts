@@ -46,6 +46,9 @@
 //   --explain      the profiler's recorder core instead
 //                  (test/profile/explain.ts): jank perf.html on purpose
 //                  under the flight recorder and check save() explains it.
+//   --tracks       the DevTools tracks instead (test/profile/tracks.ts):
+//                  record a Chrome trace with them on and check it holds
+//                  their entries.
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -71,6 +74,7 @@ import {
   recordMorph,
   verdict
 } from './morph'
+import { checkTracks } from './tracks'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
@@ -389,6 +393,22 @@ async function main(): Promise<void> {
     }
     const reports: [string, ProfileReport][] = []
     let run: RunInfo | null = null
+    if (flag('tracks')) {
+      await page.goto(`${base}layout.html?vr`, { waitUntil: 'load' })
+      await untilReady(page, 'window.__gpu !== undefined')
+      await requireActive(page)
+      await page.evaluate(() => window.__gpu?.ready)
+      await describeRun()
+      await page.waitForTimeout(1000)
+      const checks = await checkTracks(browser, page)
+      for (const c of checks) {
+        console.log(`[tracks] ${c.ok ? 'ok  ' : 'FAIL'} ${c.name}: ${c.note}`)
+      }
+      if (checks.some((c) => !c.ok)) {
+        process.exitCode = 1
+      }
+      return
+    }
     if (flag('explain')) {
       // A light page (perf.html takes seconds a frame on SwiftShader).
       await page.goto(`${base}layout.html?vr`, { waitUntil: 'load' })

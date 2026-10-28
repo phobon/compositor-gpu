@@ -15,20 +15,17 @@
 //                                                          # itself; expects
 //                                                          # window.__site
 //   npm run test:site -- --parity-max 8                   # gate (optional)
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
 import type { Browser, Page } from 'playwright'
 import { PNG } from 'pngjs'
-import { build, createServer, type ViteDevServer } from 'vite'
+import { createServer, type ViteDevServer } from 'vite'
+import {
+  ensureInjectBundle as ensureBundle,
+  injectBundle
+} from '../../tools/inject'
 import { launchWithFallback } from '../lib/browser'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -82,80 +79,9 @@ function parseArgs(argv: string[]): Args {
   }
 }
 
-// --- bundle for injection ---------------------------------------------
+// --- bundle for injection (tools/inject.ts) ----------------------------
 
-const BUNDLE_ROUTE = '/__compositor-gpu-inject__.js'
-
-function newestMtimeMs(dir: string): number {
-  let max = 0
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = resolve(dir, entry.name)
-    max = Math.max(
-      max,
-      entry.isDirectory() ? newestMtimeMs(p) : statSync(p).mtimeMs
-    )
-  }
-  return max
-}
-
-/** A self-contained ES-module build of `src/index.ts` (typegpu and
- * opentype.js bundled in, unlike the library build's externals) — an
- * injected page needs no other script tags to resolve it. Cached by mtime:
- * rebuilt only when a file under `src/` is newer than the last bundle. */
-async function ensureInjectBundle(): Promise<string> {
-  const bundlePath = resolve(outDir, 'compositor-gpu.inject.js')
-  const srcMtime = newestMtimeMs(resolve(root, 'src'))
-  if (existsSync(bundlePath) && statSync(bundlePath).mtimeMs > srcMtime) {
-    console.log(`[site] using cached inject bundle (${bundlePath})`)
-    return bundlePath
-  }
-  console.log('[site] building self-contained inject bundle...')
-  await build({
-    root,
-    configFile: false,
-    logLevel: 'warn',
-    resolve: { alias: { '@': resolve(root, 'src') } },
-    // typegpu reads `globalThis.process.env.NODE_ENV` directly (not the bare
-    // `process.env.NODE_ENV` Vite's own define matches) — bundled in for
-    // injection, that throws on a page with no Node `process` global.
-    define: {
-      'globalThis.process.env.NODE_ENV': JSON.stringify('production'),
-      'process.env.NODE_ENV': JSON.stringify('production')
-    },
-    build: {
-      lib: {
-        entry: resolve(root, 'src/index.ts'),
-        formats: ['es'],
-        fileName: () => 'compositor-gpu.inject.js'
-      },
-      outDir,
-      emptyOutDir: false,
-      rollupOptions: { external: [] },
-      sourcemap: false,
-      target: 'esnext'
-    }
-  })
-  return bundlePath
-}
-
-/** Route `BUNDLE_ROUTE` on `page` to the built bundle (same-origin, so a
- * default `script-src 'self'` CSP still allows it) and load it as a module,
- * exposing `createCompositor` on `window`. */
-async function injectBundle(page: Page, bundlePath: string): Promise<void> {
-  await page.route(`**${BUNDLE_ROUTE}`, (route) =>
-    route.fulfill({ path: bundlePath, contentType: 'text/javascript' })
-  )
-  await page.addScriptTag({
-    type: 'module',
-    content: `
-      const mod = await import(${JSON.stringify(BUNDLE_ROUTE)})
-      window.__createCompositor = mod.createCompositor
-    `
-  })
-  await page.waitForFunction(() => Boolean(window.__createCompositor), null, {
-    timeout: 30_000
-  })
-}
+const ensureInjectBundle = (): Promise<string> => ensureBundle(outDir, 'site')
 
 // --- page helpers -------------------------------------------------------
 

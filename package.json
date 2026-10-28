@@ -63,6 +63,7 @@
     "test:edit": "tsx test/edit/run.ts",
     "test:round": "bash test/round.sh",
     "test:unit": "tsx --test test/unit/*.test.ts",
+    "profile": "tsx tools/profile.ts",
     "bake": "tsx tools/bake.ts",
     "bake:playground": "tsx tools/bake.ts playground/compositor-gpu.bake.json"
   },
