@@ -22,6 +22,8 @@
 //                                          //   run uses a face only at its
 //                                          //   own, else the runtime path)
 //       "unicodeRange": "U+0020-007E, U+00A0-00FF"
+//       // or "instances": [[400, 14], [700, 32]]: exact pairs instead of
+//       // weights x opsz
 //     }],
 //     "svgs": [                            // <img data-gpu-vector> files
 //       { "dir": "public/icons", "src": "/icons/" },  // every *.svg in it
@@ -92,6 +94,9 @@ interface FontConfig {
   weight?: number
   italic?: boolean
   opsz?: number[]
+  /** Instead of weights x opsz: the exact [weight, opsz] pairs to bake
+   * (opsz null for a font without the axis), e.g. what a page measured. */
+  instances?: [number, number | null][]
   unicodeRange?: string
 }
 
@@ -302,7 +307,7 @@ export async function bake(
       ? (f.weights ?? [wght.def])
       : [f.weight ?? f.weights?.[0] ?? 400]
     const opszAxis = handle.opsz
-    if (opszAxis && !f.opsz) {
+    if (opszAxis && !f.opsz && !f.instances) {
       console.warn(
         `[bake] ${basename(file)} has an opsz axis (${opszAxis.min}-${opszAxis.max}) and no "opsz" listed: baking ${opszAxis.def} only (runs at other optical sizes use the runtime path)`
       )
@@ -312,39 +317,54 @@ export async function bake(
           Math.max(opszAxis.min, Math.min(opszAxis.max, Math.round(o)))
         )
       : [null]
-    for (const weight of weights) {
-      for (const opsz of [...new Set(sizes)]) {
-        const w = wght ? Math.max(wght.min, Math.min(wght.max, weight)) : weight
-        const coords =
-          wght || opszAxis
-            ? {
-                ...(wght ? { wght: w } : {}),
-                ...(opsz !== null ? { opsz } : {})
-              }
-            : undefined
-        const { bytes, glyphs } = bakeInstance(handle, ranges, coords)
-        const name = `${slug(f.family)}-${w}${italic ? 'i' : ''}${
-          opsz === null ? '' : `-o${opsz}`
-        }.cgf`
-        writeFileSync(resolve(out, name), new Uint8Array(bytes))
-        const face: BakedFace = {
-          family: f.family,
-          weight: w,
-          italic,
-          opsz,
-          opszRange: opszAxis ? [opszAxis.min, opszAxis.max] : null,
-          opszDefault: opszAxis ? opszAxis.def : null,
-          wghtRange: wght ? [wght.min, wght.max] : null,
-          url: name,
-          glyphs,
-          bytes: bytes.byteLength,
-          unicodeRange: rangeText
-        }
-        fonts.push(face)
-        say(
-          `[bake] ${name}: ${glyphs} glyphs, ${(bytes.byteLength / 1024).toFixed(1)} KB`
+    const clampO = (o: number | null): number | null =>
+      opszAxis && o !== null
+        ? Math.max(opszAxis.min, Math.min(opszAxis.max, Math.round(o)))
+        : opszAxis
+          ? opszAxis.def
+          : null
+    const pairs: [number, number | null][] = f.instances
+      ? f.instances.map(([w, o]) => [w, clampO(o)])
+      : weights.flatMap((w) =>
+          [...new Set(sizes)].map((o): [number, number | null] => [w, o])
         )
+    const seen = new Set<string>()
+    for (const [weight, opsz] of pairs) {
+      const w = wght ? Math.max(wght.min, Math.min(wght.max, weight)) : weight
+      const pairKey = `${w}|${opsz}`
+      if (seen.has(pairKey)) {
+        continue
       }
+      seen.add(pairKey)
+      const coords =
+        wght || opszAxis
+          ? {
+              ...(wght ? { wght: w } : {}),
+              ...(opsz !== null ? { opsz } : {})
+            }
+          : undefined
+      const { bytes, glyphs } = bakeInstance(handle, ranges, coords)
+      const name = `${slug(f.family)}-${w}${italic ? 'i' : ''}${
+        opsz === null ? '' : `-o${opsz}`
+      }.cgf`
+      writeFileSync(resolve(out, name), new Uint8Array(bytes))
+      const face: BakedFace = {
+        family: f.family,
+        weight: w,
+        italic,
+        opsz,
+        opszRange: opszAxis ? [opszAxis.min, opszAxis.max] : null,
+        opszDefault: opszAxis ? opszAxis.def : null,
+        wghtRange: wght ? [wght.min, wght.max] : null,
+        url: name,
+        glyphs,
+        bytes: bytes.byteLength,
+        unicodeRange: rangeText
+      }
+      fonts.push(face)
+      say(
+        `[bake] ${name}: ${glyphs} glyphs, ${(bytes.byteLength / 1024).toFixed(1)} KB`
+      )
     }
   }
   if ((config.svgs ?? []).length > 0) {
