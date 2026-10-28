@@ -50,6 +50,8 @@ export function inert(): Compositor & { text: null; scene: null } {
       skippedFrames: 0,
       groups: 0,
       groupPasses: 0,
+      groupCacheHits: 0,
+      groupCacheMisses: 0,
       sceneReused: false,
       readElements: 0,
       partialReads: 0,

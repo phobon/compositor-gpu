@@ -345,6 +345,9 @@ function hookScriptAnimations(): void {
   }
 }
 
+/** Video events that need a frame (they don't bubble: captured). */
+const MEDIA_EVENTS = ['playing', 'seeked', 'loadeddata'] as const
+
 export class DomSync {
   private dirty: number = Dirty.ALL
   readonly diag: SyncDiagnostics = {
@@ -551,6 +554,17 @@ export class DomSync {
     }
   }
 
+  // A video starting, seeking or getting its first frame changes no DOM:
+  // wake the loop (the compositor redraws it from its frames while it
+  // plays on the canvas, compositor.ts mediaState).
+  private onMedia = (e: Event): void => {
+    const t = e.target
+    if (t instanceof HTMLVideoElement && !isIgnored(t)) {
+      this.trace?.('video', t, e.type)
+      this.onInvalidate()
+    }
+  }
+
   private onAnimStart = (e: Event): void => {
     const t = e.target
     // Hole elements animate their own hole; anything deeper is unwatched.
@@ -715,6 +729,9 @@ export class DomSync {
     window.addEventListener('resize', this.onResize, { passive: true })
     // <img> load doesn't bubble; capture it to mirror images once decoded.
     this.root.addEventListener('load', this.onLoad, true)
+    for (const type of MEDIA_EVENTS) {
+      this.root.addEventListener(type, this.onMedia, true)
+    }
     this.root.addEventListener('focusin', this.onFocus, true)
     this.root.addEventListener('focusout', this.onFocus, true)
     document.addEventListener('selectionchange', this.onSelection)
@@ -744,6 +761,9 @@ export class DomSync {
     window.removeEventListener('resize', this.onResize)
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
     this.root.removeEventListener('load', this.onLoad, true)
+    for (const type of MEDIA_EVENTS) {
+      this.root.removeEventListener(type, this.onMedia, true)
+    }
     this.root.removeEventListener('focusin', this.onFocus, true)
     this.root.removeEventListener('focusout', this.onFocus, true)
     document.removeEventListener('selectionchange', this.onSelection)

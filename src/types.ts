@@ -125,6 +125,11 @@ export interface CompositorOptions {
    * one pass instead of a texture and pass each. Default true; false for
    * comparing. */
   groupAtlas?: boolean
+  /** Keep an opacity group's texture between frames while nothing it
+   * draws changed (its records, placement, filters), instead of
+   * re-rendering it every frame the band is drawn (gpu/group_cache.ts).
+   * Default true; false for comparing. */
+  groupCache?: boolean
   /** After a partial read, replace the re-read records in place when the
    * edit kept their structure (same records, counts, clips; no stacking
    * context), instead of rebuilding the scene, and re-pack only changed
@@ -243,6 +248,10 @@ export interface CompositorStats {
   /** Render passes those groups' textures took (CompositorOptions
    * .groupAtlas shares one among leaf groups). */
   groupPasses: number
+  /** Groups drawn from their kept texture (CompositorOptions.groupCache)
+   * and rendered afresh, last frame. */
+  groupCacheHits: number
+  groupCacheMisses: number
   /** The last frame ran the post chain on the previous frame's scene
    * instead of redrawing it (nothing feeding the scene had changed). */
   sceneReused: boolean

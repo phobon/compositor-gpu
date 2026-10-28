@@ -30,6 +30,7 @@ import {
   type RegionHandler
 } from './graph'
 import { downFactor, GroupBlur } from './group_blur'
+import { type CacheContext, cacheKey, GroupCache } from './group_cache'
 import {
   type GroupPlace,
   type LevelPlan,
@@ -138,6 +139,7 @@ export class Renderer {
       return
     }
     this.shared.skeleton = on
+    this.groupCache.clear()
     this.planner.invalidate()
     this.sceneKey = null
   }
@@ -160,6 +162,7 @@ export class Renderer {
   /** Frames rendered (GpuFrameTiming.frame refers to it). */
   frames = 0
   private readonly composite: GroupCompositor
+  private readonly groupCache: GroupCache
   /** CSS `filter: blur()` on groups (made on first use). */
   private groupBlur: GroupBlur | null = null
   /** CSS `backdrop-filter` draws (made on first use). */
@@ -184,6 +187,19 @@ export class Renderer {
   /** Render leaf groups into one shared texture and pass
    * (CompositorOptions.groupAtlas). */
   groupAtlas = true
+  /** Keep opacity-group textures between frames while their content is
+   * unchanged (group_cache.ts; CompositorOptions.groupCache). */
+  cacheGroups = true
+  /** Set by the compositor each frame: the mirror is complete (fonts,
+   * images, compiles), so a group's texture is final and can be kept. */
+  cacheReady = true
+  /** Image records change without new records (image fades running). */
+  imagesVolatile = false
+  /** Glyphs move without new records (CompositorOptions.onGlyph). */
+  textVolatile = false
+  /** Groups drawn from a kept texture / rendered, last frame. */
+  lastGroupHits = 0
+  lastGroupMisses = 0
   /** ms the last frame spent recomputing culled runs; 0 when cached
    * (stats().cullMs). */
   lastCullMs = 0
@@ -292,6 +308,7 @@ export class Renderer {
       skeleton: false
     }
     this.composite = new GroupCompositor(this.shared)
+    this.groupCache = new GroupCache((t) => this.composite.release(t))
   }
 
   /** Forget material `id`'s cached pipelines in every pass. */
@@ -538,6 +555,7 @@ export class Renderer {
         this.lastGroupPasses = 0
         this.lastUploads = 0
         this.lastUploadMs = 0
+        this.lastUploadByLayer = {}
         this.lastEncodeMs = 0
         this.lastCullMs = 0
         return
@@ -635,6 +653,15 @@ export class Renderer {
       scene.groups.length * (1 + extra.length + (strip ? 1 : 0))
     )
     this.groupBlur?.begin()
+    this.groupCache.begin()
+    const cacheOn = this.cacheGroups && this.cacheReady && !this.shared.skeleton
+    const cacheCtx: CacheContext = {
+      scene,
+      list: scene.batches,
+      dpr,
+      imagesVolatile: this.imagesVolatile,
+      textVolatile: this.textVolatile
+    }
     if (scene.backdrops.length > 0) {
       this.backdrop ??= new BackdropPass(this.shared)
       let ops = 0
@@ -771,6 +798,29 @@ export class Renderer {
           continue
         }
         const m = step.place
+        // An unchanged group draws from the texture it was kept with.
+        const g = scene.groups[step.group]
+        const key = g ? cacheKey(g) : undefined
+        const sig =
+          cacheOn && g && key && step.label === 'group' && !step.region
+            ? this.groupCache.signature(
+                cacheCtx,
+                g,
+                step.i,
+                step.j,
+                m,
+                step.blur,
+                step.shadows
+              )
+            : null
+        const kept = key && sig !== null ? this.groupCache.get(key, sig) : null
+        if (kept) {
+          const child = this.finishGroup(m, kept, 0, 0, slot, ctx)
+          slot++
+          child.group = step.group
+          plan.set(step.i, child)
+          continue
+        }
         const child = this.finishGroup(
           m,
           this.composite.acquire(m.w, m.h),
@@ -797,6 +847,9 @@ export class Renderer {
         }
         for (const sh of step.shadows) {
           this.shadowGroup(encoder, child, sh)
+        }
+        if (key && sig !== null && child.pooled) {
+          this.groupCache.put(key, sig, child.pooled)
         }
         if (step.region && child.pooled) {
           const g = scene.groups[step.group]
@@ -951,6 +1004,9 @@ export class Renderer {
     }
     this.composite.flush()
     this.backdrop?.flush()
+    this.lastGroupHits = this.groupCache.hits
+    this.lastGroupMisses = this.groupCache.misses
+    this.groupCache.sweep()
     const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
     readback?.()
@@ -1658,6 +1714,7 @@ export class Renderer {
     for (const f of this.groupFrames) {
       f.buffer.destroy()
     }
+    this.groupCache.clear()
     this.composite.destroy()
     this.releaseScene()
     this.releaseKept()

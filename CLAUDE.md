@@ -707,7 +707,17 @@ Conventions each pass must follow:
   band, a leaf, or its own texture with blur / drop shadows / a region
   pass, plus the leaves' packing); the renderer plans a target's children
   once its pooled texture is acquired, then encodes;
-  `stats().groupPasses` counts the passes. The main pass is split only at a
+  `stats().groupPasses` counts the passes. A group rendered into its own
+  texture keeps it between frames while its signature matches
+  (`gpu/group_cache.ts`: keyed by element via `cacheKey`, a hash of its
+  `GroupPlace`, blur, shadows and the identity of every record and nested
+  push inside; records are replaced on change, so identity is enough).
+  Anything that changes without a new record makes a group uncacheable
+  (dynamic images, materials, extras, nested xf/region, viewport space,
+  image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,
+  faces, vectors, images and material pipelines loaded). Kept textures
+  are `GroupTarget.held`, out of the pool; `groupCache: false` disables.
+  The main pass is split only at a
   backdrop (below). Records
   therefore carry `opacity = 1`; passes stay unaware. A context with a
   CSS `filter` is a group too (`scene/filter.ts`): its colour functions

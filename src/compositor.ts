@@ -116,6 +116,8 @@ export async function createCompositor(
   renderer.reuseScene = options.sceneReuse ?? true
   renderer.cullDraws = options.cullDraws ?? true
   renderer.groupAtlas = options.groupAtlas ?? true
+  renderer.cacheGroups = options.groupCache ?? true
+  renderer.textVolatile = Boolean(options.onGlyph)
   // A viewport-pinned canvas has no margins to keep.
   renderer.canvasFill = pinned ? 'full' : (options.canvasFill ?? 'band')
   renderer.reanchorStrips = options.reanchorStrips ?? true
@@ -295,6 +297,50 @@ export async function createCompositor(
   }
   place(window.scrollX, window.scrollY, viewW(), viewH(), true)
 
+  /** Each video's last frame (decoded-frame count, else currentTime). */
+  const videoFrames = new WeakMap<HTMLVideoElement, number>()
+  /** The scene's live media: a canvas (redrawn every frame), a video
+   * playing on the canvas region, and whether one showed a new frame
+   * since the last look. */
+  const mediaState = (): MediaState => {
+    const m = { canvas: false, playing: false, changed: false }
+    const x0 = anchorX
+    const y0 = anchorY
+    const x1 = anchorX + canvasW
+    const y1 = anchorY + canvasH
+    for (const r of scene.images) {
+      if (!r.dynamic) {
+        continue
+      }
+      const src = r.source
+      if (!(src instanceof HTMLVideoElement)) {
+        m.canvas = true
+        continue
+      }
+      const ox = r.space === 'viewport' ? window.scrollX : 0
+      const oy = r.space === 'viewport' ? window.scrollY : 0
+      const b = r.rect
+      if (
+        b.x + ox >= x1 ||
+        b.x + b.width + ox <= x0 ||
+        b.y + oy >= y1 ||
+        b.y + b.height + oy <= y0
+      ) {
+        continue
+      }
+      const q = src.getVideoPlaybackQuality?.().totalVideoFrames
+      const key = q === undefined || q === 0 ? src.currentTime : q
+      if (videoFrames.get(src) !== key) {
+        videoFrames.set(src, key)
+        m.changed = true
+      }
+      if (!src.paused && !src.ended) {
+        m.playing = true
+      }
+    }
+    return m
+  }
+
   const isScrolling = (): boolean =>
     performance.now() - lastScrollAt < SCROLL_SETTLE_MS
 
@@ -433,7 +479,11 @@ export async function createCompositor(
     }
     // A live <video>/<canvas> changes without a DOM mutation: re-upload just the
     // image layer (which re-copies its texture) and keep the loop running.
-    if (scene.hasDynamic || imagePass?.fades.active) {
+    // A video only when it shows a new frame and is on the canvas (a 30 fps
+    // video at 120 Hz otherwise redraws the page four times a frame of it,
+    // and one scrolled away forever); a canvas every frame.
+    const media = scene.hasDynamic ? mediaState() : NO_MEDIA
+    if (media.canvas || media.changed || imagePass?.fades.active) {
       scene.markDirty('images')
     }
     const onFrame = options.onFrame
@@ -448,7 +498,8 @@ export async function createCompositor(
     if (canvas.width === 0 || canvas.height === 0) {
       if (
         animating ||
-        scene.hasDynamic ||
+        media.canvas ||
+        media.playing ||
         cssAnimating ||
         isScrolling() ||
         hooksAlive()
@@ -462,6 +513,14 @@ export async function createCompositor(
     while ((frameTimes[0] ?? time) <= time - 1000) {
       frameTimes.shift()
     }
+    // Group textures are kept only once what they draw is final.
+    renderer.cacheReady =
+      fontsPending === 0 &&
+      !text?.facesPending &&
+      (reader.vectors?.pending ?? 0) === 0 &&
+      (imagePass?.pending ?? 0) === 0 &&
+      materialPipelinesPending() === 0
+    renderer.imagesVolatile = imagePass?.fades.active ?? false
     renderer.render(scene, ctx, dpr)
     if (handoffAt !== null) {
       const complete = mirrorComplete()
@@ -487,7 +546,8 @@ export async function createCompositor(
     // A re-anchor's rows not yet drawn (reanchorStrips) also keep it.
     continued =
       animating ||
-      scene.hasDynamic ||
+      media.canvas ||
+      media.playing ||
       (imagePass?.fades.active ?? false) ||
       cssAnimating ||
       isScrolling() ||
@@ -505,8 +565,11 @@ export async function createCompositor(
       if (animating) {
         alive.push(options.onGlyph ? 'onGlyph' : 'onFrame')
       }
-      if (scene.hasDynamic) {
-        alive.push('video/canvas')
+      if (media.canvas) {
+        alive.push('canvas')
+      }
+      if (media.playing) {
+        alive.push('video')
       }
       if (imagePass?.fades.active) {
         alive.push('image fades')
@@ -1274,6 +1337,8 @@ export async function createCompositor(
       skippedFrames: renderer.skippedFrames,
       groups: renderer.lastGroups,
       groupPasses: renderer.lastGroupPasses,
+      groupCacheHits: renderer.lastGroupHits,
+      groupCacheMisses: renderer.lastGroupMisses,
       sceneReused: renderer.lastReused,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
@@ -1378,6 +1443,13 @@ function pageBackground(): string {
   }
   return '#fff'
 }
+
+interface MediaState {
+  canvas: boolean
+  playing: boolean
+  changed: boolean
+}
+const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
 
 function fullReadCause(flags: number, last: string): string {
   const names: string[] = []

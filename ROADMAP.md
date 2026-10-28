@@ -655,13 +655,48 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         a frame). Wide blurs now run at 1/2–1/4 resolution
         (group_blur.ts `downFactor`); test:visual drop-shadow, filters
         and backdrop within 3/255 of before
-  - [ ] The page-pinned canvas at dpr 3: main + copy ~6 ms a frame with
-        only the auto-advance progress bar changing (the 'copy' pass
-        writes the whole kept texture, viewport plus a viewport of
-        margin above and below, 1170 × 7596 px, into the swapchain every
-        frame). Measure `?margin=0` against the default, then decide: a
-        device-pixel cap on the margin, or a viewport-sized canvas at
-        high dpr
+  - [x] Second runs (M6 submodule): mobile 17 → 4 dropped, GPU p95
+        9.4 → 7.24 ms (within budget). `?margin=0` saves ~1 ms GPU p50
+        (6.09 → 5.13) and its 4 drops are a 49 ms long frame at the
+        Closed → Open click either way: the margin stays as it is
+  - [x] The hero's autoplaying video kept the loop running at 120 Hz on
+        every frame of both runs (`alive: video/canvas` 2040 / 2040),
+        redrawing the band and copying the canvas each frame for a
+        ~30 fps video, and on forever after it scrolled away. A video now
+        redraws only when it shows a new frame (decoded-frame count) and
+        lies on the canvas region; `playing`, `seeked` and `loadeddata`
+        wake the loop (compositor.ts mediaState, DomSync onMedia); a
+        <canvas> still redraws every frame. Checked headless on a 10 fps
+        clip: 23 of 135 frames drawn while playing, none paused or
+        scrolled away, playing again resumes; test:visual canvas parity
+        unchanged
+  - [ ] Desktop (1440 × 900 @2): 516 dropped, GPU p50 8–13.5 ms. Every
+        drawn frame re-renders every visible opacity group's texture
+        (9 drop-shadow filter, 4 group, 6 layer, ~5 fx:blur and region
+        passes a scroll frame): group textures aren't kept between
+        frames
+    - [x] Groups with their own texture (filter, drop shadow, nested
+          content) keep it between frames (gpu/group_cache.ts): keyed by
+          element, signed by a hash of the placement, scale, blur and
+          shadows, and each record drawn inside (records are replaced,
+          not mutated, on a change), nested groups' alpha/filter/blend
+          and backdrops. Not kept: video/canvas images, materials, extra
+          layers, nested transforms or regions, viewport-space members or
+          backdrops, image fades, onGlyph, or while fonts, images or
+          vectors still load.
+          Kept textures are held out of the pool, dropped on a mismatch,
+          240 frames unused, or past 64M px (LRU). `groupCache: false`
+          turns it off; `stats().groupCacheHits/Misses`. Headless with a
+          spinner forcing band redraws: 2 hits a frame, edits re-render;
+          test:visual the same on and off (backdrop's 3.26% in a full run,
+          1.17% alone, is the same either way; its GPU image is
+          pixel-identical). Desktop rerun pending
+    - [ ] Atlas leaves and transformed ('layer') groups: leaves share a
+          texture per frame, and groups under gsap scroll scaling reuse
+          theirs only when just the affine changed (see the open item
+          below)
+  - [ ] The lightbox: a 64 ms full read (body[style] from the scroll lock
+        and a font load in the same frame, 271 elements)
   - [x] Hitches with no GPU timing for their frame (readbacks in flight
         are capped) were unattributed: `hitchAt` passes the frames
         around's GPU times and a busy GPU reads "GPU likely"

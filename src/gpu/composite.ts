@@ -117,6 +117,9 @@ export interface GroupTarget {
   /** A group atlas: composites still to draw from it; it stays in use
    * until the last (absent: one group's own texture). */
   refs?: number
+  /** Kept between frames by the group cache (group_cache.ts): never
+   * handed out or evicted while set. */
+  held?: boolean
 }
 
 export class GroupCompositor {
@@ -238,7 +241,7 @@ export class GroupCompositor {
     }
     for (let i = this.pool.length - 1; i >= 0; i--) {
       const t = this.pool[i]
-      if (t && this.frame - t.lastUsed > EVICT_FRAMES) {
+      if (t && !t.held && this.frame - t.lastUsed > EVICT_FRAMES) {
         t.texture.destroy()
         this.pool.splice(i, 1)
       }
@@ -249,7 +252,7 @@ export class GroupCompositor {
   acquire(w: number, h: number): GroupTarget {
     let best: GroupTarget | null = null
     for (const t of this.pool) {
-      if (t.inUse || t.width < w || t.height < h) {
+      if (t.inUse || t.held || t.width < w || t.height < h) {
         continue
       }
       if (!best || t.width * t.height < best.width * best.height) {
