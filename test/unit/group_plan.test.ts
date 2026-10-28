@@ -12,7 +12,8 @@ import {
   type PlanInput,
   type PlanParent,
   packGroups,
-  planLevel
+  planLevel,
+  stepUp
 } from '../../src/gpu/group_plan'
 import { layerAffine } from '../../src/gpu/layer_geometry'
 import type { DrawBatch } from '../../src/scene/batches'
@@ -336,4 +337,13 @@ describe('packGroups', () => {
     assert.deepEqual(p.at[0], [0, 0])
     assert.equal(p.at[1], null)
   })
+})
+
+test('stepUp: a scale rounded up to an eighth of an octave', () => {
+  assert.equal(stepUp(1, 8), 1)
+  assert.equal(stepUp(2, 8), 2)
+  const k = stepUp(1.03, 8)
+  assert.ok(Math.abs(k - 2 ** (1 / 8)) < 1e-9)
+  assert.equal(stepUp(1.05, 8), k)
+  assert.ok(stepUp(0.95, 8) >= 0.95 && stepUp(0.95, 8) <= 1)
 })

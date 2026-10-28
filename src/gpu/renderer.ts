@@ -30,18 +30,15 @@ import {
   type RegionHandler
 } from './graph'
 import { downFactor, GroupBlur } from './group_blur'
-import {
-  type CacheContext,
-  cacheKey,
-  GroupCache,
-  type Rendered
-} from './group_cache'
+
+import { type CacheContext, GroupCache, type Rendered } from './group_cache'
 import {
   type GroupPlace,
   type LevelPlan,
   type PlanInput,
   planLevel,
-  popOf
+  popOf,
+  stepUp
 } from './group_plan'
 import {
   type Affine,
@@ -55,6 +52,15 @@ import {
 import { materialPipelinesSettled } from './material'
 import { addRows, clamp, hullRows, meet } from './rows'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
+
+/** Scale steps an octave for transformed groups' textures (kept ones
+ * re-render once a step during a scale animation). */
+const SCALE_STEPS = 8
+/** Frames a transformed group's scale holds before it renders at it
+ * exactly (until then, rounded up to a step). */
+const SCALE_SETTLE = 4
+/** Parent device px a transformed group's cut is rounded out to. */
+const CLIP_GRID = 256
 
 interface FrameSlot {
   buffer: GPUBuffer
@@ -209,6 +215,14 @@ export class Renderer {
    * (the profiler's FrameWhy.groups). */
   lastGroupWhy: Record<string, number> = {}
   lastGroupRendered: Rendered[] = []
+  /** Transformed groups' scales last frame, by cache key (scaleOf). */
+  private lastScale = new Map<
+    object,
+    { kx: number; ky: number; held: number }
+  >()
+  /** Last frame drew a transformed group at a rounded scale: draw again
+   * (the compositor asks for a frame; the layers' rows count as live). */
+  scaleSettling = false
   /** ms the last frame spent recomputing culled runs; 0 when cached
    * (stats().cullMs). */
   lastCullMs = 0
@@ -534,7 +548,8 @@ export class Renderer {
       chain: chain !== null,
       backdrop: scene.backdrops.length > 0,
       content: fx.content,
-      layers: fx.layers,
+      // A group drawn at a rounded scale is drawn again at its own.
+      layers: this.scaleSettling ? { ...fx.layers, live: true } : fx.layers,
       fixed: () => this.fixedRows(scene)
     }
     // The post chain over last frame's scene texture: nothing feeding it
@@ -566,6 +581,7 @@ export class Renderer {
         this.lastGroupMisses = 0
         this.lastGroupWhy = {}
         this.lastGroupRendered = []
+        this.scaleSettling = false
         this.lastUploads = 0
         this.lastUploadMs = 0
         this.lastUploadByLayer = {}
@@ -786,6 +802,41 @@ export class Renderer {
       return rp
     }
 
+    // A transformed group's scale: exact once it has held SCALE_SETTLE
+    // frames, rounded up to a step while it changes (a kept texture lasts
+    // the step).
+    const lastScale = this.lastScale
+    const nextScale = new Map<
+      object,
+      { kx: number; ky: number; held: number }
+    >()
+    let stepped = false
+    this.lastScale = nextScale
+    const scaleOf = (
+      g: OpacityGroup,
+      kx: number,
+      ky: number
+    ): [number, number] => {
+      const key = this.groupCache.keyOf(g)
+      if (!key) {
+        return [kx, ky]
+      }
+      const was = lastScale.get(key)
+      const held =
+        was && was.kx === kx && was.ky === ky ? Math.min(was.held + 1, 99) : 0
+      nextScale.set(key, { kx, ky, held })
+      if (held >= SCALE_SETTLE) {
+        return [kx, ky]
+      }
+      const q: [number, number] = [
+        stepUp(kx, SCALE_STEPS),
+        stepUp(ky, SCALE_STEPS)
+      ]
+      if (q[0] !== kx || q[1] !== ky) {
+        stepped = true
+      }
+      return q
+    }
     const planInput: PlanInput = {
       list,
       groups: scene.groups,
@@ -794,7 +845,9 @@ export class Renderer {
       extents,
       ctx,
       maxTexture: this.device.limits.maxTextureDimension2D,
-      groupAtlas: this.groupAtlas
+      groupAtlas: this.groupAtlas,
+      scaleOf: cacheOn ? scaleOf : undefined,
+      clipGrid: cacheOn ? CLIP_GRID : 0
     }
     /** Render the groups `level` (group_plan.ts) places in `parent`:
      * children before parents, each in its own pass; leaves share one
@@ -813,9 +866,9 @@ export class Renderer {
         const m = step.place
         // An unchanged group draws from the texture it was kept with.
         const g = scene.groups[step.group]
-        const key = g ? cacheKey(g) : undefined
+        const key = g ? this.groupCache.keyOf(g) : undefined
         const sig =
-          cacheOn && g && key && step.label === 'group' && !step.region
+          cacheOn && g && key && !step.region
             ? this.groupCache.signature(
                 cacheCtx,
                 g,
@@ -826,6 +879,7 @@ export class Renderer {
                 step.shadows
               )
             : null
+        const place = this.groupCache.lastPlace
         const kept = key && sig !== null ? this.groupCache.get(key, sig) : null
         if (!kept) {
           this.groupCache.note(
@@ -834,11 +888,9 @@ export class Renderer {
               ? this.cacheGroups
                 ? 'loading'
                 : 'off'
-              : step.label === 'layer'
-                ? 'transformed'
-                : step.region
-                  ? 'region'
-                  : this.groupCache.reason
+              : step.region
+                ? 'region'
+                : this.groupCache.reason
           )
         }
         if (kept) {
@@ -876,7 +928,7 @@ export class Renderer {
           this.shadowGroup(encoder, child, sh)
         }
         if (key && sig !== null && child.pooled) {
-          this.groupCache.put(key, sig, child.pooled)
+          this.groupCache.put(key, sig, child.pooled, place)
         }
         if (step.region && child.pooled) {
           const g = scene.groups[step.group]
@@ -892,14 +944,44 @@ export class Renderer {
      * pass, the rest get their own. */
     const renderLeaves = (level: LevelPlan): void => {
       const { leaves, packed } = level
-      const shared = packed
-        ? leaves.filter((_, k) => packed.at[k] !== null).length
-        : 0
+      // A leaf unchanged since last frame gets a texture of its own and
+      // keeps it (one that changes every frame stays in the atlas).
+      const keep: { sig: number; place: number }[] = []
+      const own: (GroupTarget | 'render' | null)[] = leaves.map((l, k) => {
+        const lg = scene.groups[l.group]
+        const key = lg ? this.groupCache.keyOf(lg) : undefined
+        if (!cacheOn) {
+          this.groupCache.note(key, this.cacheGroups ? 'loading' : 'off')
+          return null
+        }
+        const sig =
+          lg && key
+            ? this.groupCache.signature(cacheCtx, lg, l.i, l.j, l.m, 0, [])
+            : null
+        if (!key || sig === null) {
+          this.groupCache.note(key, key ? this.groupCache.reason : 'leaf')
+          return null
+        }
+        keep[k] = { sig, place: this.groupCache.lastPlace }
+        const kept = this.groupCache.get(key, sig)
+        if (kept) {
+          return kept
+        }
+        this.groupCache.note(key, this.groupCache.reason)
+        return this.groupCache.steady(key, sig) ? 'render' : null
+      })
+      const inAtlas = leaves.map((_, k) => Boolean(packed?.at[k]) && !own[k])
+      const shared = inAtlas.filter(Boolean).length
       for (let k = 0; k < leaves.length; k++) {
         const l = leaves[k] as (typeof leaves)[number]
-        const lg = scene.groups[l.group]
-        this.groupCache.note(lg ? cacheKey(lg) : undefined, 'leaf')
-        if (shared > 1 && packed?.at[k]) {
+        const o = own[k]
+        if (o && o !== 'render') {
+          const child = this.finishGroup(l.m, o, 0, 0, slot++, ctx)
+          child.group = l.group
+          plan.set(l.i, child)
+          continue
+        }
+        if (shared > 1 && inAtlas[k]) {
           continue
         }
         const child = this.finishGroup(
@@ -920,6 +1002,13 @@ export class Renderer {
           l.j,
           'group'
         ).end()
+        const lg = scene.groups[l.group]
+        const key = lg ? this.groupCache.keyOf(lg) : undefined
+        const kk = keep[k]
+        // Rendered on its own anyway (or steady): keep it.
+        if (key && kk && child.pooled) {
+          this.groupCache.put(key, kk.sig, child.pooled, kk.place)
+        }
       }
       if (!packed || shared < 2) {
         return
@@ -940,7 +1029,7 @@ export class Renderer {
       for (let k = 0; k < leaves.length; k++) {
         const l = leaves[k] as (typeof leaves)[number]
         const at = packed.at[k]
-        if (!at) {
+        if (!at || !inAtlas[k]) {
           continue
         }
         const child = this.finishGroup(l.m, atlas, at[0], at[1], slot++, ctx)
@@ -963,6 +1052,7 @@ export class Renderer {
     }
     main.scissor = reach
     renderLevel(planLevel(main, 0, list.length, planInput), main)
+    this.scaleSettling = stepped
     main.scissor = band
     const first = this.beginPass(encoder, main, mainLoad, 'main')
     if (mainLoad === 'load') {

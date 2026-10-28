@@ -700,14 +700,35 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           unchanged element's records (481 in the run) no longer looks
           like a change; and each frame records why each group was
           rendered afresh (FrameWhy.groups; the report's "group textures
-          a frame" line with the elements rendered most). Rerun to see
-          which reasons are left. Per-label GPU ms on the M1 (filter
-          50 ms p50 in a 7.6 ms frame, `alone` 0) overlap: count passes
-          there, not ms
-    - [ ] Atlas leaves and transformed ('layer') groups: leaves share a
-          texture per frame, and groups under gsap scroll scaling reuse
-          theirs only when just the affine changed (see the open item
-          below)
+          a frame" line with the elements rendered most). Per-label
+          GPU ms on the M1 (filter 50 ms p50 in a 7.6 ms frame, `alone`
+          0) overlap: count passes there, not ms
+    - [x] Rerun (11:28): 0 kept, 14.4 rendered a frame: transformed 6.0
+          (DuoBento__Card and __Screen, under layer transforms, with the
+          drop shadows behind the 12 filter passes), leaf 5.5 (headings
+          and zoom badges in the atlas), region 2.8. Now kept too:
+          transformed groups (their texture is in local space; the
+          transform applies at composite, so it's signed by placement
+          and scale, not the affine; the cut to the parent rounds out to
+          256 device px so a small move keeps it), with a changing scale
+          rounded up to an eighth of an octave (`stepUp`) and drawn
+          exactly once it has held 4 frames (`renderer.scaleSettling`
+          asks for those frames and marks the layers' rows live); and
+          atlas leaves unchanged since last frame, which move to a
+          texture of their own and stay (`GroupCache.steady`). Two
+          groups of one element in a frame (a layout morph's held
+          snapshot and the live element) get separate keys
+          (`GroupCache.keyOf`). Headless: a card translating, one
+          scaling, one rotating: 23 renders in 93 frames (312 off),
+          pixel-identical once settled, softer by up to 1/8 octave of
+          resampling mid-scale; test:fx OK with only the mid-morph
+          `fx-layout-half` shots (resampling, max 68/255) and the
+          real-clock `fx-reduced` ones differing from a cache-off run;
+          test:visual group sections unchanged. Desktop rerun pending
+    - [ ] Regions (2.8 a frame): a group under a region pass (an fx
+          effect: blur, displace, the layout morph) is rendered afresh
+          every frame; its texture could be kept when only the pass's
+          uniforms change
   - [ ] The lightbox: a 64 ms full read (body[style] from the scroll lock
         and a font load in the same frame, 271 elements)
   - [x] Hitches with no GPU timing for their frame (readbacks in flight

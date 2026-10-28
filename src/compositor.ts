@@ -552,7 +552,8 @@ export async function createCompositor(
       cssAnimating ||
       isScrolling() ||
       hooksAlive() ||
-      renderer.pendingRowCount > 0
+      renderer.pendingRowCount > 0 ||
+      renderer.scaleSettling
     if (continued) {
       scheduler.request()
     }
@@ -587,6 +588,9 @@ export async function createCompositor(
       }
       if (renderer.pendingRowCount > 0) {
         alive.push('canvas rows')
+      }
+      if (renderer.scaleSettling) {
+        alive.push('group scale settling')
       }
       const partial = read === 'partial' || read === 'escalated'
       profiler.push(

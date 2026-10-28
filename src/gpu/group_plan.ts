@@ -121,6 +121,15 @@ export interface PlanInput {
   maxTexture: number
   /** Leaves share an atlas (CompositorOptions.groupAtlas). */
   groupAtlas: boolean
+  /** The scale to render a transformed group's texture at, given its
+   * transform's (default: that one). The renderer rounds a changing
+   * scale up to a step so a scale animation re-renders a kept texture
+   * once a step rather than every frame (group_cache.ts). */
+  scaleOf?: (g: OpacityGroup, kx: number, ky: number) => [number, number]
+  /** Round where a transformed group is cut to its parent out to this
+   * many parent device px (0: exactly), so a small move doesn't change a
+   * kept texture's extent. */
+  clipGrid?: number
 }
 
 /** Index of the pop matching the push of `group` at `i`. */
@@ -229,7 +238,17 @@ export function planLevel(
     }
     const place =
       g && g.alpha * tAlpha > 0
-        ? measureGroup(g, parent, ctx, pad, xf, extent(), input.maxTexture)
+        ? measureGroup(
+            g,
+            parent,
+            ctx,
+            pad,
+            xf,
+            extent(),
+            input.maxTexture,
+            input.scaleOf,
+            input.clipGrid
+          )
         : null
     if (!g || !place) {
       steps.push({ kind: 'skip', i, j })
@@ -258,7 +277,7 @@ export function planLevel(
 
 /** Where `g`'s texture sits in `parent` and at what scale; null when
  * nothing of it can land. `pad`: CSS px around the extent (a region
- * pass's reach); `xf`: its layer transform. */
+ * pass's reach); `xf`: its layer transform; `scaleOf`: PlanInput's. */
 export function measureGroup(
   g: OpacityGroup,
   parent: PlanParent,
@@ -266,7 +285,9 @@ export function measureGroup(
   pad: number,
   xf: Affine | null,
   extent: Box4 | null,
-  maxTexture: number
+  maxTexture: number,
+  scaleOf?: PlanInput['scaleOf'],
+  clipGrid = 0
 ): GroupPlace | null {
   if (!extent) {
     return null
@@ -303,7 +324,15 @@ export function measureGroup(
         return null
       }
     }
-    const [ix0, iy0, ix1, iy1] = mapRect(inv, px0, py0, px1, py1)
+    let [ix0, iy0, ix1, iy1] = mapRect(inv, px0, py0, px1, py1)
+    if (clipGrid > 0) {
+      const gx = clipGrid / parent.sx
+      const gy = clipGrid / parent.sy
+      ix0 = parent.ox + Math.floor((ix0 - parent.ox) / gx) * gx
+      iy0 = parent.oy + Math.floor((iy0 - parent.oy) / gy) * gy
+      ix1 = parent.ox + Math.ceil((ix1 - parent.ox) / gx) * gx
+      iy1 = parent.oy + Math.ceil((iy1 - parent.oy) / gy) * gy
+    }
     const max = maxTexture
     x0 = Math.floor((Math.max(bx0 - p, ix0) - parent.ox) * parent.sx)
     y0 = Math.floor((Math.max(by0 - p, iy0) - parent.oy) * parent.sy)
@@ -331,6 +360,9 @@ export function measureGroup(
   if (inv && xf) {
     const max = maxTexture
     ;[kx, ky] = axisScales(xf)
+    if (scaleOf) {
+      ;[kx, ky] = scaleOf(g, kx, ky)
+    }
     kx = Math.min(kx, max / (x1 - x0))
     ky = Math.min(ky, max / (y1 - y0))
   }
@@ -389,4 +421,12 @@ export function packGroups(
     shelf = Math.max(shelf, m.h)
   }
   return { w: Math.max(1, used), h: Math.max(1, y + shelf), at }
+}
+
+/** `k` rounded up to a power of 2^(1/steps). */
+export function stepUp(k: number, steps: number): number {
+  if (!(k > 0)) {
+    return k
+  }
+  return 2 ** (Math.ceil(Math.log2(k) * steps - 1e-6) / steps)
 }

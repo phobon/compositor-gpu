@@ -715,6 +715,15 @@ Conventions each pass must follow:
   `id` and `z` are left out, so a re-read rebuilding an unchanged element
   matches). Each frame notes why each group was rendered afresh
   (`FrameWhy.groups`, the report's "group textures a frame" line).
+  Transformed groups are kept too: their texture is in local space, so
+  it's signed by `GroupPlace` (incl. `kx/ky`), not the affine; while a
+  scale changes, `PlanInput.scaleOf` rounds it up to 1/8 octave
+  (`stepUp`) and it's drawn exactly after holding SCALE_SETTLE frames
+  (`scaleSettling` keeps the loop and the layers' rows live until then);
+  `clipGrid` rounds the cut to the parent out to 256 device px. A leaf
+  unchanged two frames running leaves the atlas for a kept texture
+  (`steady`). Keys are per frame unique (`keyOf`: a second group of the
+  same element gets its reader node).
   Anything that changes without a new record makes a group uncacheable
   (dynamic images, materials, extras, nested xf/region, viewport space,
   image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,

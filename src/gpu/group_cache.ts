@@ -76,6 +76,11 @@ export class GroupCache {
   private readonly entries = new Map<object, Entry>()
   private readonly ids = new WeakMap<object, number>()
   private readonly hashes = new WeakMap<object, number>()
+  /** This frame's keys by group, and the keys taken (keyOf). */
+  private readonly keys = new Map<OpacityGroup, object | undefined>()
+  private readonly used = new Set<object>()
+  /** Leaves' signatures by frame (steady()). */
+  private seen = new Map<object, { sig: number; frame: number }>()
   private nextId = 1
   private frame = 0
   /** Prefix sums of glyphs per run (text batches index glyphs), for the
@@ -100,6 +105,27 @@ export class GroupCache {
     this.misses = 0
     this.why = {}
     this.rendered = []
+    this.keys.clear()
+    this.used.clear()
+  }
+
+  /** `g`'s key this frame: its element (cacheKey), unless another group
+   * already has that this frame (a layout morph's held snapshot and the
+   * live element), then its reader node. The same for every call with
+   * `g` in a frame. */
+  keyOf(g: OpacityGroup): object | undefined {
+    if (this.keys.has(g)) {
+      return this.keys.get(g)
+    }
+    let k = cacheKey(g)
+    if (k && this.used.has(k)) {
+      k = g.key && !this.used.has(g.key) ? g.key : undefined
+    }
+    if (k) {
+      this.used.add(k)
+    }
+    this.keys.set(g, k)
+    return k
   }
 
   /** A group rendered afresh (FrameWhy.groups). */
@@ -213,9 +239,6 @@ export class GroupCache {
     if (g.vbounds || g.space === 'viewport') {
       return no('viewport')
     }
-    if (m.xf) {
-      return no('transformed')
-    }
     let h = 0x811c9dc5
     const mix = (v: number): void => {
       // FNV-1a over the value's 32-bit pieces.
@@ -229,6 +252,8 @@ export class GroupCache {
     mix(m.sy)
     mix(m.ox)
     mix(m.oy)
+    mix(m.kx)
+    mix(m.ky)
     mix(c.dpr)
     this.place = h
     mix(blur)
@@ -382,8 +407,22 @@ export class GroupCache {
     return e.target
   }
 
-  /** Keep `target` (the group's finished texture) for `key`. */
-  put(key: object, sig: number, target: GroupTarget): void {
+  /** The placement hash of the last signature() (for put()). */
+  get lastPlace(): number {
+    return this.place
+  }
+
+  /** Whether `key` had signature `sig` last frame too (a leaf worth a
+   * texture of its own); notes it for the next frame. */
+  steady(key: object, sig: number): boolean {
+    const s = this.seen.get(key)
+    this.seen.set(key, { sig, frame: this.frame })
+    return s !== undefined && s.sig === sig && s.frame === this.frame - 1
+  }
+
+  /** Keep `target` (the group's finished texture) for `key`; `place`:
+   * the placement hash its signature() call left (lastPlace). */
+  put(key: object, sig: number, target: GroupTarget, place = this.place): void {
     const old = this.entries.get(key)
     if (old && old.target !== target) {
       this.drop(key, old)
@@ -391,7 +430,7 @@ export class GroupCache {
     target.held = true
     this.entries.set(key, {
       sig,
-      place: this.place,
+      place,
       target,
       used: this.frame
     })
@@ -400,6 +439,11 @@ export class GroupCache {
   /** Let go of entries unused for EVICT frames, then the least recently
    * used while over MAX_AREA. */
   sweep(): void {
+    for (const [k, s] of this.seen) {
+      if (s.frame < this.frame) {
+        this.seen.delete(k)
+      }
+    }
     let area = 0
     for (const [k, e] of this.entries) {
       if (this.frame - e.used > EVICT) {

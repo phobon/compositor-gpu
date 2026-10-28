@@ -122,20 +122,8 @@ test('what changes without a new record keeps a group from being kept', () => {
   const m = setup()
   m.list[1] = { layer: 'boxes', first: 0, count: 2, material: 3 }
   assert.equal(m.cache.signature(m.ctx, m.g, 0, 2, place(), 0, []), null)
-  // Under a layer transform, or viewport-space members.
+  // Viewport-space members.
   const t = setup()
-  assert.equal(
-    t.cache.signature(
-      t.ctx,
-      t.g,
-      0,
-      2,
-      place({ xf: [1, 0, 0, 1, 0, 0] }),
-      0,
-      []
-    ),
-    null
-  )
   assert.equal(
     t.cache.signature(
       t.ctx,
@@ -213,13 +201,31 @@ test('rendered afresh: why, a move told from a change', () => {
   const c = cache.signature(ctx, g, 0, 2, place({ oy: 30 }), 0, []) as number
   assert.equal(cache.get(key, c), null)
   assert.equal(cache.reason, 'changed')
-  assert.equal(
+  // Under a layer transform: kept; a new scale step is a move.
+  assert.notEqual(
     cache.signature(ctx, g, 0, 2, place({ xf: [1, 0, 0, 1, 0, 0] }), 0, []),
     null
   )
-  assert.equal(cache.reason, 'transformed')
+  const d = cache.signature(ctx, g, 0, 2, place({ oy: 30, kx: 1.09 }), 0, [])
+  assert.notEqual(d, c)
+  assert.notEqual(d, null)
   cache.note(key, 'changed')
   cache.note(undefined, 'leaf')
   assert.deepEqual(cache.why, { changed: 1, leaf: 1 })
   assert.equal(cache.rendered.length, 2)
+})
+
+test('a leaf is steady once it signs the same two frames running', () => {
+  const { cache } = setup()
+  const key = {}
+  cache.begin()
+  assert.equal(cache.steady(key, 5), false)
+  cache.begin()
+  assert.equal(cache.steady(key, 5), true)
+  cache.begin()
+  assert.equal(cache.steady(key, 6), false)
+  cache.begin()
+  cache.sweep()
+  cache.begin()
+  assert.equal(cache.steady(key, 6), false)
 })
