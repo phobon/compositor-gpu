@@ -279,6 +279,21 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         frame for per-draw costs. The `overlay` timer label on the
         transition's layer pass reads n/a in reports (not inside the timed
         span?); fix with it
+  - [x] Layout morph under scroll (2026-10-28; /duo's showcase,
+        auto-advancing as it scrolled into view, faded and slid the whole
+        viewport): the pass reads the snapshot and old boxes shifted by
+        the document scroll since they were taken and the new boxes by
+        the scroll since settled() (`anchor` param, `fx.page_scroll`),
+        the svg shapes layer likewise (`fx.scroll`), each frame in the
+        shaders; old boxes measured before the snapshot frame move into
+        its coordinates. `scroll: 'follow'` (option) applies it from
+        capture() rather than settled(); `morph.settled(t, el, follow)`.
+        SwiftShader: the fx-layout goldens' exact checks hold, and the new
+        fx-layout-scroll-follow (held at 0, scrolled 120 px: the old page
+        moved up exactly) passes; mid-morph (0.5) scrolled 120 px equals
+        the unscrolled frame shifted, 0 px differ. Not yet: the hold
+        between capture() and settled() under 'follow' still shows the
+        snapshot unshifted (a jump of the hold's scroll at settled())
   - [ ] Path pass follow-ups: re-flatten when a layer transform scales an
         svg up (flattened for its read-time scale); gradients, dashes,
         clip-path, symbol / nested svg; materials on path records

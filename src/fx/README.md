@@ -1005,8 +1005,8 @@ layer draws nothing).
   out from whatever `el` draws and a glow fading over `glow` px past it,
   from the element's distance field (`spread` defaults to room for both),
   drawn under the element. `width` 0 or `glow` 0 turns either off.
-- `layoutMorph(fx, { root = document, timeout = 1500, shockwave = null
-  })` returns `{ capture(), settled(), progress, play(ms = 700, ease),
+- `layoutMorph(fx, { root = document, timeout = 1500, shockwave = null,
+  scroll = 'stay' })` returns `{ capture(), settled(), progress, play(ms = 700, ease),
   end(), destroy(), keys, pass }`. A keyed layout morph between two DOM
   states: `capture()` measures every `[data-gpu-morph]` element and holds
   the page; swap the DOM; `settled()` waits for the incoming mirror and
@@ -1037,8 +1037,14 @@ layer draws nothing).
   cross-fade (150 ms). Elements with a CSS transform pair by their
   bounding boxes. A swap that scrolls (a route change back to the top)
   works: the old page is held as it was on screen and the new boxes are
-  measured where they are after the swap; a scroll during the morph
-  moves the new side with the page.
+  measured where they are after the swap. A scroll while the morph
+  plays (after `settled()`) moves both pages with it: the snapshot, the
+  old and new boxes, the svg shapes and the text morphs are all shifted
+  by the scroll in the shaders each frame (where the snapshot doesn't
+  reach, the live page shows). `scroll: 'follow'` moves the old page
+  with a scroll between `capture()` and `settled()` too (a change on a
+  page the reader may be scrolling, such as one set off by scrolling it
+  into view); during the hold itself it stays put.
 - `morph(fx, el, { pieces = 16, spread = 0.5, arc = 0.2, spin = 0.4,
   swap = 0.5, soft = 0.5, shockwave = null })` returns `{ capture(),
   settled(timeout = 1500), progress, play(ms = 1100, ease), end(),
@@ -1054,9 +1060,10 @@ layer draws nothing).
   their centroid. Progress 0 and 1 are the two texts exactly; `end()`
   hands back to the live text. `shockwave` plays from the element when
   `play()` starts. Under reduced motion the glyphs cross-fade.
-  `capture(el)` copies another element's text, `settled(timeout, el)`
-  takes the new text from another element (a replaced one; both hidden
-  until `end()`), `showLive = true` shows the live text meanwhile, and
+  `capture(el)` copies another element's text, `settled(timeout, el,
+  follow = false)` takes the new text from another element (a replaced
+  one; both hidden until `end()`; `follow`: a scroll since `capture()`
+  moves the old text with the page instead of keeping it on screen), `showLive = true` shows the live text meanwhile, and
   `ready` says whether the last `settled()` built the pieces
   (layoutMorph reuses morphs this way). Instead of a change, after
   `capture()`: `assemble({ distance = 120, spin = 2.5 })` breaks the text

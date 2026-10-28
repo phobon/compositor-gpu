@@ -37,6 +37,14 @@ import type { Shockwave } from './shockwave'
 // Elements with a CSS transform pair by their bounding boxes. Under
 // reduced motion nothing moves: the pages cross-fade (play() in 150 ms).
 //
+// The page may scroll while a morph plays: the snapshot and the old
+// boxes, and the new boxes, are read shifted by the scroll since
+// settled(), so the outgoing page moves with the incoming one (where the
+// snapshot doesn't reach, the live page shows). A scroll between
+// capture() and settled() leaves the outgoing page where it was on
+// screen (a route change back to the top), or with `scroll: 'follow'`
+// moves it too.
+//
 // A keyed svg drawn as vectors on both sides (data-gpu-morph opts it into
 // the path pass) morphs its shapes instead (M5d-3): shapes pair by paint
 // order and their subpaths by order, each resampled to MORPH_POINTS and
@@ -89,6 +97,10 @@ const schema = {
   n: table,
   r: table,
   c: table,
+  // The document scroll (CSS px) the snapshot and old boxes (o) were
+  // taken at, and the new boxes (n) measured at: each frame they're read
+  // shifted by the scroll since, so they move with the page.
+  anchor: { type: 'vec4', default: [0, 0, 0, 0] },
   // Diagnostics (test/profile --morph --diagnose): parts of the fragment
   // to skip, bits: 2 the outgoing page's holes, 4 the pair loop, 8 the
   // overlay (text morphs and svg shapes), 16 everything (the live page);
@@ -104,6 +116,23 @@ fn lm_o(i : u32) -> vec4f { return params.o[i]; }
 fn lm_n(i : u32) -> vec4f { return params.n[i]; }
 fn lm_r(i : u32) -> vec4f { return params.r[i]; }
 fn lm_c(i : u32) -> vec4f { return params.c[i]; }
+
+// Scroll since the snapshot (xy) and since the new boxes (zw), uv.
+fn lm_shift() -> vec4f {
+  let css = fx.viewport / fx.dpr;
+  let s = fx.page_scroll;
+  return vec4f((s - params.anchor.xy) / css, (s - params.anchor.zw) / css);
+}
+
+// The outgoing page at the viewport's uv (the snapshot scrolled with the
+// page); where the snapshot doesn't reach (scrolled in since), live.
+fn lm_prev(uv : vec2f, live : vec4f) -> vec4f {
+  let q = uv + lm_shift().xy;
+  if (any(q < vec2f(0.0)) || any(q > vec2f(1.0))) {
+    return live;
+  }
+  return prev(q);
+}
 
 fn lm_in(uv : vec2f, r : vec4f) -> bool {
   return all(uv >= r.xy) && all(uv < r.xy + r.zw);
@@ -172,15 +201,19 @@ fn lm_holes(first : u32, n : u32, q : vec2f, px : vec4f, fill : vec4f,
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
   let t = clamp(params.progress, 0.0, 1.0);
   // Exact at either end (mix may round).
+  let live = sample(uv);
   if (t <= 0.0) {
-    return prev(uv);
+    return lm_prev(uv, live);
   }
   if (t >= 1.0) {
-    return sample(uv);
+    return live;
   }
   let css = fx.viewport / fx.dpr;
   let p = uv * css;
-  let live = sample(uv);
+  // uv in the snapshot (old boxes, holes and the old page are there).
+  let shift = lm_shift();
+  let sh = shift.xy;
+  let us = uv + sh;
   let skip = u32(params.skip);
   if ((skip & 16u) != 0u) {
     return live;
@@ -189,25 +222,27 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
     (skip & 4u) != 0u);
   // The outgoing page with the pairs' old elements taken out (they
   // travel on their own).
-  var old = prev(uv);
+  var old = lm_prev(uv, live);
   if ((skip & 2u) == 0u) {
-    old = lm_holes(0u, n, uv, old, live, css);
+    old = lm_holes(0u, n, us, old, live, css);
   }
   var col = mix(old, live, t);
   var ov_done = false;
   // Pairs in DOM order (a nested pair after its parent, so on top).
   for (var i = 0u; i < n; i++) {
+    // Its old box in the snapshot, and where that is in the viewport now.
     let o = lm_o(i);
-    let nb = lm_n(i);
+    let oc = vec4f(o.xy - sh, o.zw);
+    let nb = vec4f(lm_n(i).xy - shift.zw, lm_n(i).zw);
     // Outside both boxes (and the 16 px svg shapes may reach past them):
     // the box between can't hold p.
     let m = 16.0 / css;
-    let lo = min(o.xy, nb.xy) - m;
-    let hi = max(o.xy + o.zw, nb.xy + nb.zw) + m;
+    let lo = min(oc.xy, nb.xy) - m;
+    let hi = max(oc.xy + oc.zw, nb.xy + nb.zw) + m;
     if (any(uv < lo) || any(uv > hi)) {
       continue;
     }
-    let r = o * (1.0 - t) + nb * t;
+    let r = oc * (1.0 - t) + nb * t;
     let rr = lm_r(i);
     let cov = lm_cov(p, r * vec4f(css, css), rr.x * (1.0 - t) + rr.y * t);
     if (rr.z > 2.5) {
@@ -266,14 +301,20 @@ fn vertex(i : u32, corner : vec2f) -> Quad {
     return q;
   }
   let b = mix(data4(i + 6u, 0u), data4(i + 7u, 0u), params.progress);
-  q.pos = mix(b.xy, b.zw, corner);
-  q.uv = q.pos;
+  // The rows are where the shapes were (old with the snapshot, new at
+  // settled()); a point between moves with the mix of the scrolls since.
+  let a = params.anchor;
+  let off = fx.scroll - mix(a.xy, a.zw, params.progress);
+  q.uv = mix(b.xy, b.zw, corner);
+  q.pos = q.uv - off;
   return q;
 }
 `
 
 const shapesSchema = {
   progress: { type: 'f32', default: 0 },
+  // As the pass's anchor (the old and new shapes' document scrolls).
+  anchor: { type: 'vec4', default: [0, 0, 0, 0] },
   shapes: { type: 'f32', default: 0 }
 } as const
 
@@ -366,6 +407,11 @@ export interface LayoutMorphOptions {
   /** Changed text in text-only pairs morphs as glyph segments with these
    * morph options (presets/morph.ts); false: it cross-fades. Default {}. */
   text?: Omit<MorphOptions, 'shockwave' | 'name'> | false
+  /** A scroll between capture() and settled(): 'stay' (default) keeps the
+   * outgoing page where it was on screen (a route change scrolling to
+   * the top); 'follow' moves it with the page (a change on a page the
+   * reader may be scrolling). From settled() on it follows either way. */
+  scroll?: 'stay' | 'follow'
   name?: string
 }
 
@@ -389,6 +435,25 @@ export interface LayoutMorph {
   readonly pass: Transition<LayoutMorphSchema>
   /** The layer drawing morphing svg shapes (for the pass's overlay). */
   readonly shapes: Layer<typeof shapesSchema>
+}
+
+/** Old boxes and shapes measured `dx`, `dy` CSS px of scroll before the
+ * snapshot, into its viewport coordinates. */
+function shiftOlds(olds: Iterable<Old>, dx: number, dy: number): void {
+  if (dx === 0 && dy === 0) {
+    return
+  }
+  for (const o of olds) {
+    o.box = { ...o.box, x: o.box.x - dx, y: o.box.y - dy }
+    for (const sh of o.shapes) {
+      for (const c of sh.contours) {
+        for (let k = 0; k < c.length; k += 2) {
+          c[k] = (c[k] ?? 0) - dx
+          c[k + 1] = (c[k + 1] ?? 0) - dy
+        }
+      }
+    }
+  }
 }
 
 const mixBox = (a: Box, b: Box, t: number): Box => ({
@@ -671,46 +736,41 @@ export function layoutMorph(
     shapesLayer.count = 0
   }
 
-  // Scroll at settled(): new boxes are measured then; a scroll after it
-  // moves them (the page) but not the old ones (the snapshot).
+  // Scroll at capture() and settled(): the old boxes and the snapshot are
+  // taken at the one, the new boxes at the other. The shaders shift them
+  // by the scroll since (their anchor); the transforms here likewise.
+  const follow = opts.scroll === 'follow'
+  // The scroll the snapshot (and the old boxes) sit at: capture()'s, or
+  // under 'stay' settled()'s (the old page held where it was on screen
+  // across the swap).
+  let capturedAt: [number, number] = [0, 0]
   let settledAt: [number, number] = [0, 0]
-  let lastShift: [number, number] = [0, 0]
-  /** Where the new boxes are now, viewport CSS px. */
-  const shiftNow = (): [number, number] => {
-    const sx = window.scrollX - settledAt[0]
-    const sy = window.scrollY - settledAt[1]
-    if (sx !== lastShift[0] || sy !== lastShift[1]) {
-      lastShift = [sx, sy]
-      const vw = document.documentElement.clientWidth
-      const vh = document.documentElement.clientHeight
-      const n = new Float32Array(4 * MAX_PAIRS)
-      pairs.forEach((q, i) => {
-        n.set(
-          [
-            (q.now.x - sx) / vw,
-            (q.now.y - sy) / vh,
-            q.now.w / vw,
-            q.now.h / vh
-          ],
-          i * 4
-        )
-      })
-      p.n = Array.from(n)
-    }
-    return lastShift
+  const anchor = (): void => {
+    const a = [...capturedAt, ...settledAt]
+    p.anchor = a
+    sp.anchor = a
   }
 
   // Each pair's layer transform puts its new box at the box between,
   // relative to its paired ancestor's (whose transform already applies).
   const place = (t: number): void => {
-    const [sx, sy] = shiftNow()
+    const sx = window.scrollX - settledAt[0]
+    const sy = window.scrollY - settledAt[1]
+    const ox0 = window.scrollX - capturedAt[0]
+    const oy0 = window.scrollY - capturedAt[1]
     const nowOf = (q: Pair): Box => ({
       x: q.now.x - sx,
       y: q.now.y - sy,
       w: q.now.w,
       h: q.now.h
     })
-    const at = pairs.map((q) => mixBox(q.old, nowOf(q), t))
+    const oldOf = (q: Pair): Box => ({
+      x: q.old.x - ox0,
+      y: q.old.y - oy0,
+      w: q.old.w,
+      h: q.old.h
+    })
+    const at = pairs.map((q) => mixBox(oldOf(q), nowOf(q), t))
     pairs.forEach((q, i) => {
       const tf = q.tf
       const r = at[i]
@@ -786,9 +846,20 @@ export function layoutMorph(
         }
       }
       p.progress = 0
+      const measured: [number, number] = [window.scrollX, window.scrollY]
       // The snapshot first (with the live text), then the copies (which
       // hide it).
       await pass.capture()
+      // The snapshot is the viewport at the frame it was taken (resolved
+      // within it): what was measured before moves into its coordinates.
+      capturedAt = [window.scrollX, window.scrollY]
+      shiftOlds(
+        olds.values(),
+        capturedAt[0] - measured[0],
+        capturedAt[1] - measured[1]
+      )
+      settledAt = capturedAt
+      anchor()
       if (
         opts.text !== false &&
         !fx.reducedMotion &&
@@ -806,6 +877,12 @@ export function layoutMorph(
     },
     async settled() {
       await pass.settled()
+      const at: [number, number] = [window.scrollX, window.scrollY]
+      if (!follow) {
+        capturedAt = at
+      }
+      settledAt = at
+      anchor()
       clearPairs()
       if (fx.reducedMotion) {
         return
@@ -829,7 +906,12 @@ export function layoutMorph(
         }
         seen.add(key)
         const now = boxOf(el)
-        if (!near(was.box, vw, vh) || !near(now, vw, vh)) {
+        const wasNow = {
+          ...was.box,
+          x: was.box.x - (window.scrollX - capturedAt[0]),
+          y: was.box.y - (window.scrollY - capturedAt[1])
+        }
+        if (!near(wasNow, vw, vh) || !near(now, vw, vh)) {
           continue
         }
         if (pairs.length >= MAX_PAIRS) {
@@ -914,7 +996,7 @@ export function layoutMorph(
       }
       await Promise.all(
         texts.map(async ([i, m, el]) => {
-          await m.settled(1500, el)
+          await m.settled(1500, el, follow)
           const q = pairs[i]
           if (q && m.ready) {
             q.morph = m
@@ -936,8 +1018,6 @@ export function layoutMorph(
       }
       sp.shapes = st.shapes
       p.count = pairs.length
-      settledAt = [window.scrollX, window.scrollY]
-      lastShift = [0, 0]
       place(p.progress)
     },
     get progress() {

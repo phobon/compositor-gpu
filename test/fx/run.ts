@@ -121,7 +121,8 @@
 //   fx-layout-1  progress 1: equal to fx-layout-b exactly
 //   fx-layout-scroll-a, -0, -half, -1, -b  the same on layout.html?scroll,
 //                scrolled 380 px, the swap back at the top: -0 equal to -a
-//                and -1 to -b exactly
+//                and -1 to -b exactly; -follow: scrolled 120 px while held
+//                at 0, the old page moved up with it exactly
 //   fx-sdf, fx-sdf-off  playground/sdf.html?vr: glow (outline and glow
 //                from each element's distance field) on a heading, a card,
 //                a vector svg and an image; then all destroyed, which must
@@ -1475,6 +1476,24 @@ async function main(): Promise<void> {
         const sa = await shot('fx-layout-scroll-a')
         await p.evaluate(() => window.__layout?.hold(1, 0, 380))
         exact('fx-layout-scroll-0', sa, await shot('fx-layout-scroll-0'))
+        // Scrolled while held (after settled()): the old page moves with
+        // the page, `DY` px up; what scrolls in below is the live page.
+        const DY = 120
+        await p.evaluate((d) => window.scrollBy(0, d), DY)
+        await frames(4)
+        const moved = PNG.sync.read(await p.screenshot({ clip }))
+        const rows = (png: PNG, y: number, h: number): PNG => {
+          const out = new PNG({ width: png.width, height: h })
+          PNG.bitblt(png, out, 0, y, png.width, h, 0, 0)
+          return out
+        }
+        const kept = sa.height - DY
+        exact(
+          'fx-layout-scroll-follow',
+          rows(sa, DY, kept),
+          rows(moved, 0, kept)
+        )
+        await p.evaluate(() => window.scrollTo(0, 0))
         await p.evaluate(() => window.__layout?.at(0.5))
         await shot('fx-layout-scroll-half')
         await p.evaluate(() => window.__layout?.at(1))

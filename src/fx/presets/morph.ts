@@ -383,8 +383,11 @@ export interface Morph {
    * pieces are built (or after `timeout` ms, default 1500, with no
    * morph: the new text shows at end()). Then drive `progress`. `el`:
    * the element holding the new text, when the change replaced it (a
-   * route swap); its text is hidden too until end(). */
-  settled(timeout?: number, el?: Element): Promise<void>
+   * route swap); its text is hidden too until end(). `follow`: a scroll
+   * since capture() moves the old text with the page (under a snapshot
+   * that scrolls too, presets/layout_morph.ts); by default it stays
+   * where it was on screen. */
+  settled(timeout?: number, el?: Element, follow?: boolean): Promise<void>
   /** False hides the live text (the default from capture() until end());
    * true shows it while the morph draws (a caller compositing the morph
    * itself, at its ends). */
@@ -906,7 +909,7 @@ export function morph(
         await nextFrame()
       }
     },
-    async settled(timeout = 1500, el?: Element) {
+    async settled(timeout = 1500, el?: Element, follow = false) {
       if (!a) {
         return
       }
@@ -947,7 +950,7 @@ export function morph(
       // top): the old text stays where it was on screen.
       const dx = window.scrollX - scrolled[0]
       const dy = window.scrollY - scrolled[1]
-      if (dx !== 0 || dy !== 0) {
+      if (!follow && (dx !== 0 || dy !== 0)) {
         a = shiftSide(a, dx, dy)
       }
       b = sideOf(ghost, a.ghost.count)
