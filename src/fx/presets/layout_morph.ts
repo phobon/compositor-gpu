@@ -1,5 +1,6 @@
 import { PATH_WGSL } from '../../paths/path_wgsl'
 import type { Effects } from '../effects'
+import type { Layer } from '../layer'
 import {
   align,
   centroid,
@@ -39,7 +40,8 @@ import type { Shockwave } from './shockwave'
 // A keyed svg drawn as vectors on both sides (data-gpu-morph opts it into
 // the path pass) morphs its shapes instead (M5d-3): shapes pair by paint
 // order and their subpaths by order, each resampled to MORPH_POINTS and
-// aligned (winding direction, least-travel start); the pass fills and
+// aligned (winding direction, least-travel start); a layer (one quad per
+// shape over its bounds, drawn into the pass's overlay) fills and
 // strokes the points in between, colours and stroke widths mixed, while
 // the live svg is hidden. A shape or subpath on one side only grows from
 // or shrinks to its centroid, fading.
@@ -64,43 +66,40 @@ export const MAX_CONTOURS = 24
 
 const M = MORPH_POINTS
 
+// The svg shapes' layer data, in vec4 rows: per shape (HEAD rows each,
+// the first MAX_SHAPES * HEAD rows) its first subpath and subpaths,
+// even-odd; fill old, new; stroke old, new; stroke widths (old, new);
+// bounds old, new (x0 y0 x1 y1, viewport CSS px, grown for strokes and
+// anti-aliasing); then per subpath (from SUB0) a row with closed and M
+// rows of points (old x y, new x y).
+const HEAD = 8
+const SUB0 = MAX_SHAPES * HEAD
+
 const table = { type: 'vec4', default: [0, 0, 0, 0], count: MAX_PAIRS } as const
-const shapeTable = {
-  type: 'vec4',
-  default: [0, 0, 0, 0],
-  count: MAX_SHAPES
-} as const
 
 const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
   count: { type: 'f32', default: 0 },
   // Per pair: old and new boxes (uv: x, y, w, h over the viewport); radii
-  // (CSS px: old, new) and the kind (0 box, 1 text keyed out of the
-  // snapshot by its colour, 2 svg shapes, 3 text morphing as segments);
+  // (CSS px: old, new), the kind (0 box, 1 text keyed out of the
+  // snapshot by its colour, 2 svg shapes, 3 text morphing as segments) and
+  // the index past its last nested pair;
   // the old text colour (sRGB, alpha).
   o: table,
   n: table,
   r: table,
   c: table,
-  shapes: { type: 'f32', default: 0 },
-  // Per shape: pair, first subpath, subpaths, even-odd; fill (f0 old, f1
-  // new) and stroke (s0, s1) colours (sRGB, alpha; alpha 0 for none); stroke widths
-  // (CSS px: old, new).
-  sh: shapeTable,
-  f0: shapeTable,
-  f1: shapeTable,
-  s0: shapeTable,
-  s1: shapeTable,
-  sw: shapeTable,
-  // Per subpath: closed. Points: old x y, new x y; M per subpath.
-  ct: { type: 'vec4', default: [0, 0, 0, 0], count: MAX_CONTOURS },
-  pt: { type: 'vec4', default: [0, 0, 0, 0], count: MAX_CONTOURS * M }
+  // Diagnostics (test/profile --morph --diagnose): parts of the fragment
+  // to skip, bits: 2 the outgoing page's holes, 4 the pair loop, 8 the
+  // overlay (text morphs and svg shapes), 16 everything (the live page);
+  // and 32: no text morphs (changed text cross-fades; read at capture()),
+  // 64: no layer transforms (pairs don't move; read at settled()).
+  skip: { type: 'f32', default: 0 }
 } as const
 
 export type LayoutMorphSchema = typeof schema
 
 const FRAGMENT = /* wgsl */ `
-${PATH_WGSL}
 fn lm_o(i : u32) -> vec4f { return params.o[i]; }
 fn lm_n(i : u32) -> vec4f { return params.n[i]; }
 fn lm_r(i : u32) -> vec4f { return params.r[i]; }
@@ -170,49 +169,6 @@ fn lm_holes(first : u32, n : u32, q : vec2f, px : vec4f, fill : vec4f,
   return o;
 }
 
-// Over col: pair i's shapes at t (p in CSS px, apx CSS px per device px).
-fn lm_shapes(i : u32, p : vec2f, t : f32, apx : f32, col0 : vec4f) -> vec4f {
-  var col = col0;
-  let ns = min(u32(params.shapes), ${MAX_SHAPES}u);
-  for (var s = 0u; s < ns; s++) {
-    let h = params.sh[s];
-    if (u32(h.x) != i) {
-      continue;
-    }
-    let first = u32(h.y);
-    let last = min(first + u32(h.z), ${MAX_CONTOURS}u);
-    var wind = 0;
-    var acc = vec3f(1e20);
-    var ds = 1e20;
-    for (var c = first; c < last; c++) {
-      let base = c * ${M}u;
-      let closed = params.ct[c].x > 0.5;
-      let e = params.pt[base + ${M - 1}u];
-      var v0 = mix(e.xy, e.zw, t);
-      for (var j = 0u; j < ${M}u; j++) {
-        let q = params.pt[base + j];
-        let v1 = mix(q.xy, q.zw, t);
-        wind += path_wind(p, v0, v1);
-        acc = path_fill_acc(acc, p, v0, v1);
-        if (j > 0u || closed) {
-          ds = min(ds, path_seg_dist(p, v0, v1));
-        }
-        v0 = v1;
-      }
-    }
-    let fc = mix(params.f0[s], params.f1[s], t);
-    let fa = fc.a * clamp(path_fill_sd(wind, acc, h.w > 0.5) / apx + 0.5,
-      0.0, 1.0);
-    col = vec4f(fc.rgb * fa, fa) + col * (1.0 - fa);
-    let w = params.sw[s];
-    let sc = mix(params.s0[s], params.s1[s], t);
-    let sa = sc.a * clamp((0.5 * mix(w.x, w.y, t) - ds) / apx + 0.5, 0.0,
-      1.0);
-    col = vec4f(sc.rgb * sa, sa) + col * (1.0 - sa);
-  }
-  return col;
-}
-
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
   let t = clamp(params.progress, 0.0, 1.0);
   // Exact at either end (mix may round).
@@ -225,30 +181,54 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
   let css = fx.viewport / fx.dpr;
   let p = uv * css;
   let live = sample(uv);
-  let n = min(u32(params.count), ${MAX_PAIRS}u);
+  let skip = u32(params.skip);
+  if ((skip & 16u) != 0u) {
+    return live;
+  }
+  let n = select(min(u32(params.count), ${MAX_PAIRS}u), 0u,
+    (skip & 4u) != 0u);
   // The outgoing page with the pairs' old elements taken out (they
   // travel on their own).
-  let old = lm_holes(0u, n, uv, prev(uv), live, css);
+  var old = prev(uv);
+  if ((skip & 2u) == 0u) {
+    old = lm_holes(0u, n, uv, old, live, css);
+  }
   var col = mix(old, live, t);
+  var ov_done = false;
   // Pairs in DOM order (a nested pair after its parent, so on top).
   for (var i = 0u; i < n; i++) {
     let o = lm_o(i);
-    let r = o * (1.0 - t) + lm_n(i) * t;
+    let nb = lm_n(i);
+    // Outside both boxes (and the 16 px svg shapes may reach past them):
+    // the box between can't hold p.
+    let m = 16.0 / css;
+    let lo = min(o.xy, nb.xy) - m;
+    let hi = max(o.xy + o.zw, nb.xy + nb.zw) + m;
+    if (any(uv < lo) || any(uv > hi)) {
+      continue;
+    }
+    let r = o * (1.0 - t) + nb * t;
     let rr = lm_r(i);
     let cov = lm_cov(p, r * vec4f(css, css), rr.x * (1.0 - t) + rr.y * t);
     if (rr.z > 2.5) {
-      // Text morphing as segments: drawn by its layer (the overlay).
+      // Text morphing as segments: drawn by its layer (the overlay, over
+      // everything below).
       continue;
     }
     if (rr.z > 1.5) {
-      // Svg shapes, drawn here (the live svg is hidden in flight); only
-      // near the box between (shapes stay inside their svg's box, with
-      // room for strokes past it).
+      // Svg shapes: drawn by the shapes layer into the overlay (the live
+      // svg is hidden in flight), composited here in paint order near
+      // the box between (shapes stay inside their svg's box, with room
+      // for strokes past it); once per pixel.
       let g = r * vec4f(css, css) + vec4f(-16.0, -16.0, 32.0, 32.0);
-      if (lm_in(p, g)) {
-        col = lm_shapes(i, p, t, 1.0 / fx.dpr, col);
+      if (!ov_done && (skip & 8u) == 0u && lm_in(p, g)) {
+        let ov = overlay(uv);
+        col = ov + col * (1.0 - ov.a);
+        ov_done = true;
       }
-    } else if (cov > 0.0) {
+      continue;
+    }
+    if (cov > 0.0) {
       // The same point of the old box: the old element, moved.
       let q = o.xy + (uv - r.xy) * o.zw / max(r.zw, vec2f(1e-6));
       let po = prev(q);
@@ -258,14 +238,83 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
         let ot = lm_text(i, po, lm_bg(i, css)) * (1.0 - t) * cov;
         col = ot + col * (1.0 - ot.a);
       } else {
-        let pk = lm_holes(i + 1u, n, q, po, live, css);
+        // Only its own nested pairs can hold q (they follow it in DOM
+        // order, up to rr.w).
+        let pk = lm_holes(i + 1u, min(u32(rr.w), n), q, po, live, css);
         col = mix(col, mix(pk, live, t), cov);
       }
     }
   }
-  // Text morphs, whole over the blend.
+  // Text morphs (and shapes outside their svg's box), whole over the
+  // blend.
+  if ((skip & 8u) != 0u || ov_done) {
+    return col;
+  }
   let ov = overlay(uv);
   return ov + col * (1.0 - ov.a);
+}
+`
+
+// The svg shapes, one quad per shape over its bounds at t (the rows past
+// a shape's first are empty quads), drawn for the pass's overlay: fill
+// by winding and stroke by distance over the points between old and new
+// (paths/path_wgsl.ts), colours and stroke widths mixed.
+const SHAPES_VERTEX = /* wgsl */ `
+fn vertex(i : u32, corner : vec2f) -> Quad {
+  var q : Quad;
+  if (i % ${HEAD}u != 0u || i / ${HEAD}u >= u32(params.shapes)) {
+    return q;
+  }
+  let b = mix(data4(i + 6u, 0u), data4(i + 7u, 0u), params.progress);
+  q.pos = mix(b.xy, b.zw, corner);
+  q.uv = q.pos;
+  return q;
+}
+`
+
+const shapesSchema = {
+  progress: { type: 'f32', default: 0 },
+  shapes: { type: 'f32', default: 0 }
+} as const
+
+const SHAPES_FRAGMENT = /* wgsl */ `
+${PATH_WGSL}
+fn fragment(q : Quad, i : u32) -> vec4f {
+  let t = params.progress;
+  let p = q.uv;
+  let h = data4(i, 0u);
+  let first = u32(h.x);
+  let nc = u32(h.y);
+  var wind = 0;
+  var acc = vec3f(1e20);
+  var ds = 1e20;
+  for (var c = 0u; c < nc; c++) {
+    let base = ${SUB0}u + (first + c) * ${M + 1}u;
+    let closed = data(base, 0u) > 0.5;
+    let e = data4(base + ${M}u, 0u);
+    var v0 = mix(e.xy, e.zw, t);
+    for (var j = 1u; j <= ${M}u; j++) {
+      let r = data4(base + j, 0u);
+      let v1 = mix(r.xy, r.zw, t);
+      wind += path_wind(p, v0, v1);
+      acc = path_fill_acc(acc, p, v0, v1);
+      if (j > 1u || closed) {
+        ds = min(ds, path_seg_dist(p, v0, v1));
+      }
+      v0 = v1;
+    }
+  }
+  let apx = 1.0 / max(fx.dpr, 1e-3);
+  let fc = mix(data4(i + 1u, 0u), data4(i + 2u, 0u), t);
+  let fa = fc.a * clamp(path_fill_sd(wind, acc, h.z > 0.5) / apx + 0.5,
+    0.0, 1.0);
+  var col = vec4f(fc.rgb * fa, fa);
+  let w = data4(i + 5u, 0u);
+  let sc = mix(data4(i + 3u, 0u), data4(i + 4u, 0u), t);
+  let sa = sc.a * clamp((0.5 * mix(w.x, w.y, t) - ds) / apx + 0.5, 0.0,
+    1.0);
+  col = vec4f(sc.rgb * sa, sa) + col * (1.0 - sa);
+  return col;
 }
 `
 
@@ -338,6 +387,8 @@ export interface LayoutMorph {
   /** Keys paired by the last settled(). */
   readonly keys: readonly string[]
   readonly pass: Transition<LayoutMorphSchema>
+  /** The layer drawing morphing svg shapes (for the pass's overlay). */
+  readonly shapes: Layer<typeof shapesSchema>
 }
 
 const mixBox = (a: Box, b: Box, t: number): Box => ({
@@ -409,13 +460,16 @@ const radiusOf = (el: Element, b: Box): number => {
   return v.endsWith('%') ? (n / 100) * Math.min(b.w, b.h) : n
 }
 
-/** The computed text colour as [r, g, b, a] (0..1). */
-function colorOf(el: Element): number[] {
-  const m = /rgba?\(([^)]+)\)/.exec(getComputedStyle(el).color)
-  const v = (m?.[1] ?? '0,0,0').split(/[\s,/]+/).filter(Boolean)
+/** A computed rgb() / rgba() colour as [r, g, b, a] (0..1). */
+function rgbaOf(css: string): number[] {
+  const m = /rgba?\(([^)]+)\)/.exec(css)
+  const v = (m?.[1] ?? '0,0,0,0').split(/[\s,/]+/).filter(Boolean)
   const n = v.map((x) => Number.parseFloat(x))
   return [(n[0] ?? 0) / 255, (n[1] ?? 0) / 255, (n[2] ?? 0) / 255, n[3] ?? 1]
 }
+
+/** The computed text colour as [r, g, b, a] (0..1). */
+const colorOf = (el: Element): number[] => rgbaOf(getComputedStyle(el).color)
 
 /** Can draw as path records: an svg root, or an img of a baked svg. */
 const isVector = (el: Element): boolean =>
@@ -424,28 +478,18 @@ const isVector = (el: Element): boolean =>
 interface ShapeTables {
   shapes: number
   contours: number
-  sh: Float32Array
-  f0: Float32Array
-  f1: Float32Array
-  s0: Float32Array
-  s1: Float32Array
-  sw: Float32Array
-  ct: Float32Array
-  pt: Float32Array
+  rows: Float32Array
 }
 
 const newTables = (): ShapeTables => ({
   shapes: 0,
   contours: 0,
-  sh: new Float32Array(4 * MAX_SHAPES),
-  f0: new Float32Array(4 * MAX_SHAPES),
-  f1: new Float32Array(4 * MAX_SHAPES),
-  s0: new Float32Array(4 * MAX_SHAPES),
-  s1: new Float32Array(4 * MAX_SHAPES),
-  sw: new Float32Array(4 * MAX_SHAPES),
-  ct: new Float32Array(4 * MAX_CONTOURS),
-  pt: new Float32Array(4 * MAX_CONTOURS * M)
+  rows: new Float32Array(4 * (SUB0 + MAX_CONTOURS * (M + 1)))
 })
+
+/** Rows the layer draws for `t` (its instance count). */
+const rowsOf = (t: ShapeTables): number =>
+  t.shapes > 0 ? SUB0 + t.contours * (M + 1) : 0
 
 /** A colour, or the other side's at alpha 0 (none: fades in or out). */
 const paint = (c: number[] | null, other: number[] | null): number[] =>
@@ -465,7 +509,6 @@ const carry = (p: [number, number], from: Box, to: Box): [number, number] => [
  */
 function addShapes(
   t: ShapeTables,
-  pair: number,
   a: PathShape[],
   b: PathShape[],
   ba: Box,
@@ -483,15 +526,29 @@ function addShapes(
     const sa = a[k]
     const sb = b[k]
     const s = t.shapes++
+    const head = 4 * HEAD * s
     const nc = Math.max(sa?.contours.length ?? 0, sb?.contours.length ?? 0)
-    t.sh.set([pair, t.contours, nc, (sa ?? sb)?.evenOdd ? 1 : 0], 4 * s)
-    t.f0.set(paint(sa?.fill ?? null, sb?.fill ?? null), 4 * s)
-    t.f1.set(paint(sb?.fill ?? null, sa?.fill ?? null), 4 * s)
-    t.s0.set(paint(sa?.stroke ?? null, sb?.stroke ?? null), 4 * s)
-    t.s1.set(paint(sb?.stroke ?? null, sa?.stroke ?? null), 4 * s)
+    t.rows.set([t.contours, nc, (sa ?? sb)?.evenOdd ? 1 : 0, 0], head)
+    t.rows.set(paint(sa?.fill ?? null, sb?.fill ?? null), head + 4)
+    t.rows.set(paint(sb?.fill ?? null, sa?.fill ?? null), head + 8)
+    t.rows.set(paint(sa?.stroke ?? null, sb?.stroke ?? null), head + 12)
+    t.rows.set(paint(sb?.stroke ?? null, sa?.stroke ?? null), head + 16)
     const wa = sa?.stroke ? sa.strokeWidth : (sb?.strokeWidth ?? 0)
     const wb = sb?.stroke ? sb.strokeWidth : (sa?.strokeWidth ?? 0)
-    t.sw.set([wa, wb, 0, 0], 4 * s)
+    t.rows.set([wa, wb, 0, 0], head + 20)
+    // Bounds of each side's points, grown by half the stroke and 2 px.
+    const lo = [
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY
+    ]
+    const hi = [
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY
+    ]
     for (let j = 0; j < nc; j++) {
       const ca = sa?.contours[j]
       const cb = sb?.contours[j]
@@ -506,19 +563,37 @@ function addShapes(
         rb = align(ra, rb, closed)
       }
       const c = t.contours++
-      t.ct.set([closed ? 1 : 0, 0, 0, 0], 4 * c)
+      const base = 4 * (SUB0 + c * (M + 1))
+      t.rows.set([closed ? 1 : 0, 0, 0, 0], base)
       for (let i = 0; i < M; i++) {
-        t.pt.set(
-          [
-            ra[2 * i] ?? 0,
-            ra[2 * i + 1] ?? 0,
-            rb[2 * i] ?? 0,
-            rb[2 * i + 1] ?? 0
-          ],
-          4 * (c * M + i)
-        )
+        const v = [
+          ra[2 * i] ?? 0,
+          ra[2 * i + 1] ?? 0,
+          rb[2 * i] ?? 0,
+          rb[2 * i + 1] ?? 0
+        ]
+        t.rows.set(v, base + 4 * (i + 1))
+        v.forEach((x, k) => {
+          lo[k] = Math.min(lo[k] ?? x, x)
+          hi[k] = Math.max(hi[k] ?? x, x)
+        })
       }
     }
+    const ga = wa / 2 + 2
+    const gb = wb / 2 + 2
+    t.rows.set(
+      [
+        (lo[0] ?? 0) - ga,
+        (lo[1] ?? 0) - ga,
+        (hi[0] ?? 0) + ga,
+        (hi[1] ?? 0) + ga,
+        (lo[2] ?? 0) - gb,
+        (lo[3] ?? 0) - gb,
+        (hi[2] ?? 0) + gb,
+        (hi[3] ?? 0) + gb
+      ],
+      head + 24
+    )
   }
   return true
 }
@@ -543,6 +618,17 @@ export function layoutMorph(
     timeout: opts.timeout
   })
   const p = pass.params
+  const shapesLayer = fx.layer({
+    name: `${opts.name ?? 'layout-morph'}-shapes`,
+    count: 0,
+    stride: 4,
+    space: 'viewport',
+    params: shapesSchema,
+    vertex: SHAPES_VERTEX,
+    fragment: SHAPES_FRAGMENT
+  })
+  pass.addLayer(shapesLayer)
+  const sp = shapesLayer.params
   const root = opts.root ?? document
   let olds = new Map<string, Old>()
   let pairs: Pair[] = []
@@ -575,7 +661,8 @@ export function layoutMorph(
     }
     pairs = []
     p.count = 0
-    p.shapes = 0
+    sp.shapes = 0
+    shapesLayer.count = 0
   }
 
   // Scroll at settled(): new boxes are measured then; a scroll after it
@@ -662,6 +749,7 @@ export function layoutMorph(
 
   const handle: LayoutMorph = {
     pass,
+    shapes: shapesLayer,
     get keys() {
       return pairs.map((q) => q.key)
     },
@@ -695,11 +783,16 @@ export function layoutMorph(
       // The snapshot first (with the live text), then the copies (which
       // hide it).
       await pass.capture()
-      if (opts.text !== false && !fx.reducedMotion) {
+      if (
+        opts.text !== false &&
+        !fx.reducedMotion &&
+        (Math.trunc(p.skip) & 32) === 0
+      ) {
         await Promise.all(
           texts.map(async ([old, el], k) => {
             const m = morphOf(k, el)
-            await m.capture(el)
+            // The snapshot holds the page: no frame to wait for.
+            await m.capture(el, { held: true })
             old.morph = m
           })
         )
@@ -753,7 +846,7 @@ export function layoutMorph(
         const nowShapes = was.shapes.length > 0 ? fx.pathShapes(el) : []
         let shapes = false
         if (nowShapes.length > 0) {
-          shapes = addShapes(st, i, was.shapes, nowShapes, was.box, now)
+          shapes = addShapes(st, was.shapes, nowShapes, was.box, now)
           if (!shapes) {
             console.warn(
               `[compositor-gpu] layoutMorph: "${key}" has more shapes than fit (${MAX_SHAPES} shapes, ${MAX_CONTOURS} subpaths in all); it cross-fades`
@@ -776,7 +869,10 @@ export function layoutMorph(
           now,
           org: { x: b.x, y: b.y },
           parent,
-          tf: fx.transform(el, { originX: 0, originY: 0 }),
+          tf:
+            (Math.trunc(p.skip) & 64) === 0
+              ? fx.transform(el, { originX: 0, originY: 0 })
+              : null,
           shapes,
           morph: null
         })
@@ -789,6 +885,22 @@ export function layoutMorph(
         r.set([was.radius, radiusOf(el, now), kind, 0], i * 4)
         c.set(was.color, i * 4)
       }
+      // Past each pair's last nested pair (pairs nest in DOM order, so a
+      // pair's nested ones follow it).
+      pairs.forEach((_, i) => {
+        let end = i + 1
+        while (end < pairs.length) {
+          let a = pairs[end]?.parent ?? -1
+          while (a > i) {
+            a = pairs[a]?.parent ?? -1
+          }
+          if (a !== i) {
+            break
+          }
+          end++
+        }
+        r[i * 4 + 3] = end
+      })
       // Copies of text that didn't pair, or didn't change, go.
       for (const was of olds.values()) {
         was.morph?.end()
@@ -810,15 +922,13 @@ export function layoutMorph(
       p.n = Array.from(nw)
       p.r = Array.from(r)
       p.c = Array.from(c)
-      p.shapes = st.shapes
-      p.sh = Array.from(st.sh)
-      p.f0 = Array.from(st.f0)
-      p.f1 = Array.from(st.f1)
-      p.s0 = Array.from(st.s0)
-      p.s1 = Array.from(st.s1)
-      p.sw = Array.from(st.sw)
-      p.ct = Array.from(st.ct)
-      p.pt = Array.from(st.pt)
+      const rows = rowsOf(st)
+      shapesLayer.count = rows
+      if (rows > 0) {
+        shapesLayer.data.set(st.rows.subarray(0, 4 * rows))
+        shapesLayer.markDirty()
+      }
+      sp.shapes = st.shapes
       p.count = pairs.length
       settledAt = [window.scrollX, window.scrollY]
       lastShift = [0, 0]
@@ -830,6 +940,7 @@ export function layoutMorph(
     set progress(v: number) {
       const t = Math.min(1, Math.max(0, v))
       p.progress = t
+      sp.progress = t
       place(t)
     },
     play(ms = 700, ease = (t) => t) {
@@ -866,6 +977,7 @@ export function layoutMorph(
         m.destroy()
       }
       morphs.length = 0
+      shapesLayer.destroy()
       pass.destroy()
     }
   }

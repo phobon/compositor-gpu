@@ -204,7 +204,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       into `rgba8unorm`). Untested on hardware. Fix candidates: detect
       via the IHDR bit depth when fetching, or redraw through a 2D canvas.
 
-- [ ] M5 — morph (planned 2026-10-26, spec `docs/EFFECTS.md` "Morph";
+- [x] M5 — morph (planned 2026-10-26, spec `docs/EFFECTS.md` "Morph";
       spike `playground/spike_morph.*`, record
       `docs/rd/experiments/2026-10-26-segment-morph.md`: 16 segments
       per string x 6 strings + the wave pass at +0.46-0.66 ms gpu total p95
@@ -249,6 +249,36 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         rasterised). Shared WGSL in `paths/path_wgsl.ts` for the morph
         engine. Playground section `vector` (new goldens). Not done:
         SVG-to-SVG morph interpolation (M5d, with the engine)
+  - [x] M5 budget check (Q20; built 2026-10-27, met 2026-10-28 on the M1
+        Pro, headed, dpr 2, 120 Hz): `npm run test:budget` (test:profile
+        --morph --headed --dpr 2; test/profile/morph.ts) plays 20 morphs per
+        scenario on morph.html (text, text + shockwave, assemble, scatter)
+        and layout.html (swap, swap + shockwave) through their `run()`
+        hooks and scores the frames while each plays: 0 dropped (frames the
+        profiler puts outside the compositor shown, not counted), capture()
+        p95 at most 12 ms, cpu total p95 at most 2 ms, and gpu total p95 at
+        most +1.5 ms over the page's -idle scenario (a continuous layer
+        drawing one transparent px, so the page redraws as in a morph) for
+        text morphs, at most 7.5 ms in all for layout morphs (amended: they
+        redraw the moving page and run a full-screen pass each frame);
+        exits 1 when over. `--diagnose` adds the layout morph by part (its
+        fragment's `skip` bits, the shapes layer off). Measured: text
+        morphs +0.74-0.90 ms, capture() 9.4-11.6 ms, 0 dropped; layout
+        morphs 6.3-7.0 ms total (was 17.8: the svg shapes moved from the
+        pass's 26 KB uniform into a layer drawn over their own bounds, which
+        also took most of the pass's cost with it), capture() 10.3-11.7 ms
+        (was 36: text morphs no longer wait a frame when the snapshot holds
+        the page, `capture(el, { held: true })`), 0 dropped. Idle varies
+        2.2-4.0 ms run to run. Tried and dropped: a DOM backdrop colour per
+        text pair instead of sampling the snapshot (broke keying under the
+        heading, cause not found)
+  - [ ] Layout morph GPU cost: with nothing moving, the morph pass costs
+        about 2.4 ms and its layers (text-morph glyphs, svg shapes) about
+        2.7 ms at 2560 x 1800, far more than their ALU work suggests; needs
+        a Metal frame capture (Xcode / Instruments) of one layout-morph
+        frame for per-draw costs. The `overlay` timer label on the
+        transition's layer pass reads n/a in reports (not inside the timed
+        span?); fix with it
   - [ ] Path pass follow-ups: re-flatten when a layer transform scales an
         svg up (flattened for its read-time scale); gradients, dashes,
         clip-path, symbol / nested svg; materials on path records
@@ -389,7 +419,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         35 levels at some absolute positions (top 72, 74, 76 px) with
         identical instances and draws. Harness comparisons between text
         on the page and in a group can fail under SwiftShader only
-  - [ ] M5f `compositor-gpu bake` + manifest loader
+  - [x] M5f `compositor-gpu bake` + manifest loader
     - [x] Fonts (built 2026-10-27; headless SwiftShader: morph.html
           baked equals parsed exactly at rest and in flight, opentype.js
           never loaded, the sdf page's unbaked weight falls back and
@@ -472,7 +502,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           tiling samplers (fract in WGSL for now), KTX2 / Basis for big
           textures, textures in transitions' snapshot passes or a layer's
           `simulate`
-    - [ ] Distance-field masks (built 2026-10-27; headless SwiftShader:
+    - [x] Distance-field masks (built 2026-10-27; headless SwiftShader:
           masks.html, the baked star's field against a live field of the
           same star within 12 px of its edge: mean 0.23 CSS px, p95 0.5;
           the live glow page unchanged; test:unit 131; to check on the M1

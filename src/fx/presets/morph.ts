@@ -375,8 +375,10 @@ export interface Morph {
    * is hidden from here until end()). Resolves once the copy is taken:
    * change the text then. `el`: copy this element's text instead of the
    * morph's own (presets/layout_morph.ts reuses morphs across keyed
-   * elements). */
-  capture(el?: Element): Promise<void>
+   * elements). It waits a frame so the copy is drawn before the change;
+   * `held: true` skips that when the page is held anyway (a transition's
+   * snapshot), so the change can follow at once. */
+  capture(el?: Element, opts?: { held?: boolean }): Promise<void>
   /** After the change: resolves once the new text has been drawn and the
    * pieces are built (or after `timeout` ms, default 1500, with no
    * morph: the new text shows at end()). Then drive `progress`. `el`:
@@ -876,7 +878,7 @@ export function morph(
       showLive = v
       hidersOn()
     },
-    async capture(el?: Element) {
+    async capture(el?: Element, o: { held?: boolean } = {}) {
       release()
       target = el ? fx.target(el) : own
       let ghost = fx.glyphGhost(target)
@@ -898,8 +900,11 @@ export function morph(
       layer.enabled = true
       hiding = true
       hideToo(target)
-      // One frame so the copy is drawn before the page changes the text.
-      await nextFrame()
+      // One frame so the copy is drawn before the page changes the text
+      // (unless the page is held: then nothing shows the change early).
+      if (!o.held) {
+        await nextFrame()
+      }
     },
     async settled(timeout = 1500, el?: Element) {
       if (!a) {

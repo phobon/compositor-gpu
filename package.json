@@ -54,6 +54,7 @@
     "test:fx": "tsx test/fx/run.ts",
     "test:site": "tsx test/site/run.ts",
     "test:profile": "tsx test/profile/run.ts",
+    "test:budget": "tsx test/profile/run.ts --morph --headed --dpr 2",
     "test:atlas": "tsx test/atlas/run.ts",
     "test:edit": "tsx test/edit/run.ts",
     "test:round": "bash test/round.sh",

@@ -35,6 +35,14 @@
 //                  opacity 1 (default 48)
 //   --ballast N    perf.html?ballast=N: N rounds of extra fragment work
 //                  per main-pass pixel (headroom sweep)
+//   --morph        the M5 budget instead (test/profile/morph.ts): morphs
+//                  on morph.html and layout.html scored against Q20;
+//                  --morphs N per scenario (default 20), --ms play time
+//                  (default 800), --only morph-text,layout-swap ...
+//                  Exits 1 when a measured number is over budget. Run it
+//                  `--headed --dpr 2` on the machine the budget is for.
+//                  --diagnose adds the layout morph's GPU time by part
+//                  (its fragment run with parts skipped).
 //
 // SwiftShader (no GPU) numbers only mean something for the CPU columns.
 // Each report records the run's adapter and browser (`run`); --baseline
@@ -52,6 +60,13 @@ import {
   type ProfileReport
 } from '../../src/profile/profiler'
 import { launchWithFallback } from '../lib/browser'
+import {
+  diagnoseLayout,
+  MORPH_SCENARIOS,
+  type MorphResult,
+  recordMorph,
+  verdict
+} from './morph'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
@@ -370,6 +385,59 @@ async function main(): Promise<void> {
     }
     const reports: [string, ProfileReport][] = []
     let run: RunInfo | null = null
+    if (flag('morph')) {
+      const count = Number(arg('morphs') ?? 20)
+      const ms = Number(arg('ms') ?? 800)
+      const results: MorphResult[] = []
+      let open = ''
+      for (const sc of MORPH_SCENARIOS) {
+        if (only && !only.includes(sc.name)) {
+          continue
+        }
+        if (open !== sc.page) {
+          open = sc.page
+          await page.goto(`${base}${sc.page}`, { waitUntil: 'load' })
+          await untilReady(page, 'window.__gpu !== undefined')
+          await requireActive(page)
+          await page.evaluate(() => window.__gpu?.ready)
+          run ??= await describeRun()
+          await showHud()
+          await page.waitForTimeout(1000)
+        }
+        console.log(`[profile] ${sc.name}`)
+        const r = await recordMorph(page, sc, count, ms, 3000)
+        if (!r) {
+          console.log('[profile]   no report')
+          continue
+        }
+        console.log(
+          `[profile]   ${r.report.frames} frames, ${r.summary.frames} counted`
+        )
+        results.push(r)
+        const saved: SavedReport = run ? { ...r.report, run } : r.report
+        writeFileSync(resolve(outDir, `${sc.name}.json`), JSON.stringify(saved))
+        console.log(formatReport(r.summary, `${sc.name} (counted frames)`))
+        console.log('')
+      }
+      if (flag('diagnose')) {
+        // Where the layout morph's GPU time goes, by the parts skipped.
+        await page.goto(`${base}layout.html`, { waitUntil: 'load' })
+        await untilReady(page, 'window.__gpu !== undefined')
+        await page.evaluate(() => window.__gpu?.ready)
+        run ??= await describeRun()
+        await page.waitForTimeout(1000)
+        console.log(
+          `[profile] layout morph by part (${Math.min(count, 6)} swaps each)\n${await diagnoseLayout(page, Math.min(count, 6), ms)}\n`
+        )
+      }
+      const v = verdict(results, run?.software ?? usedSwiftshader)
+      console.log(`[profile] M5 budget (docs/EFFECTS.md, Q20)\n${v.table}`)
+      console.log(`\n[profile] reports in ${outDir}`)
+      if (!v.ok) {
+        process.exitCode = 1
+      }
+      return
+    }
     if (url) {
       await page.goto(url, { waitUntil: 'load' })
       await untilReady(page, 'window.__gpu !== undefined')

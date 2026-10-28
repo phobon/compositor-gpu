@@ -115,6 +115,31 @@ window.__morph = {
   },
   end() {
     m.end()
+  },
+  async run(kind, playMs) {
+    // One morph as Next / Assemble / Scatter play it, timed for the M5
+    // budget (test/profile/run.ts --morph).
+    const t0 = performance.now()
+    await m.capture()
+    const captureMs = performance.now() - t0
+    if (kind === 'text' || kind === 'text-wave') {
+      at = (at + 1) % STRINGS.length
+      word.innerHTML = STRINGS[at] ?? ''
+      await m.settled()
+    }
+    const start = performance.now()
+    if (kind === 'assemble' || kind === 'scatter') {
+      if (kind === 'assemble') {
+        m.assemble()
+      } else {
+        m.scatter()
+      }
+    }
+    if (kind === 'text-wave') {
+      wave.play(word)
+    }
+    await m.play(playMs)
+    return { captureMs, start, end: performance.now() }
   }
 }
 Object.assign(window, { __gpu: compositor, __fx: fx })

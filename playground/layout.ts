@@ -142,6 +142,21 @@ window.__layout = {
   },
   end() {
     m.end()
+  },
+  async run(withWave, playMs) {
+    // One swap as Next plays it, timed for the M5 budget
+    // (test/profile/run.ts --morph).
+    const t0 = performance.now()
+    await m.capture()
+    const captureMs = performance.now() - t0
+    show(1 - state)
+    await m.settled()
+    const start = performance.now()
+    if (withWave) {
+      wave.play()
+    }
+    await m.play(playMs, ease)
+    return { captureMs, start, end: performance.now() }
   }
 }
 Object.assign(window, { __gpu: compositor, __fx: fx })

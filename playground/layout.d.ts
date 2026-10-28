@@ -14,6 +14,12 @@ declare global {
       at(progress: number): void
       /** End the held morph (the live page shows). */
       end(): void
+      /** Play one swap (with or without the shockwave): capture()'s ms
+       * and the played span (performance.now). */
+      run(
+        wave: boolean,
+        ms: number
+      ): Promise<{ captureMs: number; start: number; end: number }>
     }
   }
 }

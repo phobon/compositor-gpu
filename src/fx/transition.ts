@@ -221,6 +221,7 @@ export class Snapshot {
       this.overlayTex = this.create(w, h)
     }
     const rp = frame.encoder.beginRenderPass({
+      ...timed(this.d.timer, 'overlay'),
       label: 'fx:transition-layer',
       colorAttachments: [
         {

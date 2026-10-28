@@ -382,7 +382,9 @@ change is noted.
   comes later.
 - **Budget (Q20).** M1 Pro, headed, dpr 2, 120 Hz: 0 dropped frames over
   20 morphs; gpu total p95 at most 1.5 ms above the same page with the
-  loop running and nothing drawn; `capture()` p95 at most 12 ms;
+  loop running and nothing drawn (text morphs; layout morphs, which
+  redraw the moving page and run a full-screen pass each frame: at most
+  7.5 ms in all, amended 2026-10-28); `capture()` p95 at most 12 ms;
   compositor CPU p95 at most 2 ms per morph frame. The spike measured
   +0.07-0.20 ms (morph, 8-32 segments per string, 6 strings) and
   +0.46-0.66 ms (with the wave pass) at p95. An active extra layer turns scene
