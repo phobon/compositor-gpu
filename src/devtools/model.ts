@@ -64,6 +64,7 @@ export class Model {
   readonly start: number
   readonly end: number
   private hitchCache = new Map<number, Hitch>()
+  private images = new Map<number, HTMLImageElement>()
 
   constructor(
     readonly recording: Recording,
@@ -88,6 +89,39 @@ export class Model {
       ? first.t - Math.min(first.dt, this.refresh * 3) - this.origin
       : 0
     this.end = last ? last.t - this.origin : 1
+  }
+
+  /** Filmstrip picture k as an image (loading; `onload` once it is). */
+  image(k: number, onload?: () => void): HTMLImageElement | null {
+    const f = this.report.filmstrip?.[k]
+    if (!f) {
+      return null
+    }
+    let img = this.images.get(k)
+    if (!img) {
+      img = new Image()
+      if (onload) {
+        img.onload = onload
+      }
+      img.src = f.src
+      this.images.set(k, img)
+    }
+    return img
+  }
+
+  /** The filmstrip pictures nearest before and after time `t`. */
+  picturesAround(t: number): { before: number; after: number } {
+    const film = this.report.filmstrip ?? []
+    let before = -1
+    let after = -1
+    film.forEach((f, k) => {
+      if (f.at <= t) {
+        before = k
+      } else if (after < 0) {
+        after = k
+      }
+    })
+    return { before, after }
   }
 
   /** ms after origin of sample i. */
@@ -203,6 +237,41 @@ export class Model {
     return [...by.values()].sort((a, b) => b.totalMs - a.totalMs)
   }
 
+  /** Per effect (pass, layer, material, trail): frames it kept the loop
+   * running (FrameWhy.alive) and its own GPU passes' time (labels
+   * `fx:<name>` and `fx:<name>#k`). Busiest first. */
+  effectCosts(): EffectCost[] {
+    const by = new Map<string, EffectCost>()
+    const get = (kind: string, name: string): EffectCost => {
+      let e = by.get(name)
+      if (!e) {
+        e = { kind, name, frames: 0, gpuMs: 0, gpuFrames: 0 }
+        by.set(name, e)
+      }
+      return e
+    }
+    for (const s of this.samples) {
+      for (const a of s.why?.alive ?? []) {
+        const m =
+          /^(pass|layer|material|trail) (.+?)( \((busy|pointer)\))?$/.exec(a)
+        if (m?.[1] && m[2]) {
+          get(m[1], m[2]).frames++
+        }
+      }
+    }
+    for (const c of this.gpuCosts()) {
+      const m = /^fx:(.+?)(#\d+)?$/.exec(c.label)
+      if (m?.[1] && m[1] !== 'snapshot') {
+        const e = get(by.get(m[1])?.kind ?? 'pass', m[1])
+        e.gpuMs += c.totalMs
+        e.gpuFrames = Math.max(e.gpuFrames, c.frames)
+      }
+    }
+    return [...by.values()].sort(
+      (a, b) => b.gpuMs - a.gpuMs || b.frames - a.frames
+    )
+  }
+
   /** What kept the loop running, by name: frames it was named in. */
   aliveCosts(): [string, number][] {
     const by = new Map<string, number>()
@@ -224,6 +293,16 @@ export interface ElementCost {
   /** Invalidations aimed at it, and by kind. */
   events: number
   kinds: Record<string, number>
+}
+
+export interface EffectCost {
+  kind: string
+  name: string
+  /** Frames it kept the loop running. */
+  frames: number
+  gpuMs: number
+  /** Frames its passes ran in. */
+  gpuFrames: number
 }
 
 export interface LabelCost {

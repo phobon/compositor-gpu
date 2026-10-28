@@ -2,8 +2,8 @@
 // docs/PROFILER.md, M6d): one self-contained file that opens anywhere,
 // the standalone viewer (src/devtools/viewer.ts, built once into a
 // script and cached until src/ changes) with the recording gzipped and
-// base64-encoded inside it, and the budget's verdict and the baseline
-// comparison beside it.
+// base64-encoded inside it (and the baseline, for the Compare tab), and
+// the budget's verdict beside it.
 
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -51,18 +51,20 @@ const esc = (s: string): string =>
     c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'
   )
 
-/** The report page: `gz` is the encoded recording (encodeRecording). */
+/** The report page: `gz` is the encoded recording (encodeRecording);
+ * `baseline` another, for the Compare tab. */
 export async function reportHtml(
   title: string,
   gz: Uint8Array,
   budget: BudgetRow[] | null,
-  baseline: string[] | null
+  baseline: { gz: Uint8Array; label: string } | null
 ): Promise<string> {
   const script = await viewerScript()
   const data = Buffer.from(gz).toString('base64')
+  const base = baseline ? Buffer.from(baseline.gz).toString('base64') : ''
   const opts = JSON.stringify({
     budget: budget ?? undefined,
-    baseline: baseline ?? undefined
+    baselineLabel: baseline?.label
   }).replace(/</g, '\\u003c')
   return `<!doctype html>
 <html lang="en">
@@ -74,14 +76,18 @@ export async function reportHtml(
 </head>
 <body>
 <script id="recording" type="application/octet-stream">${data}</script>
+<script id="baseline" type="application/octet-stream">${base}</script>
 <script id="options" type="application/json">${opts}</script>
 <script>${script.replace(/<\/script/gi, '<\\/script')}</script>
 <script>
 (async () => {
-  const b64 = document.getElementById('recording').textContent.trim()
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const bytes = (id) =>
+    Uint8Array.from(atob(document.getElementById(id).textContent.trim()), (c) => c.charCodeAt(0))
   const opts = JSON.parse(document.getElementById('options').textContent)
-  const rec = await CompositorGpuViewer.decodeRecording(bytes)
+  const rec = await CompositorGpuViewer.decodeRecording(bytes('recording'))
+  if (document.getElementById('baseline').textContent.trim()) {
+    opts.baseline = await CompositorGpuViewer.decodeRecording(bytes('baseline'))
+  }
   CompositorGpuViewer.mountViewer(document.body, rec, opts)
 })().catch((e) => {
   document.body.textContent = 'Could not open the recording: ' + e.message

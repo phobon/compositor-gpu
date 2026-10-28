@@ -76,6 +76,25 @@ export function renderElements(
       )
     )
   }
+  const fx = m.effectCosts()
+  if (fx.length > 0) {
+    root.append(
+      h('h3', { text: 'Effects' }),
+      h('p', {
+        class: 'dim',
+        text: 'Frames each effect kept the loop running, and its own GPU passes (fx:<name>; layers and materials draw inside the shared passes).'
+      }),
+      table(
+        ['effect', 'kept running', 'GPU total', 'GPU per frame'],
+        fx.map((e) => [
+          `${e.kind} ${e.name}`,
+          `${e.frames} frame${e.frames === 1 ? '' : 's'}`,
+          e.gpuMs > 0 ? fmtMs(e.gpuMs) : '—',
+          e.gpuFrames > 0 ? fmtMs(e.gpuMs / e.gpuFrames, 2) : '—'
+        ])
+      )
+    )
+  }
   const alive = m.aliveCosts()
   if (alive.length > 0) {
     root.append(

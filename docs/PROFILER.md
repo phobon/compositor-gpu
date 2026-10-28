@@ -11,7 +11,7 @@ URL).
 Everything shares one data model, the **recording**, and one viewer, so
 a recording taken in the page, by the CLI or in CI opens the same way.
 
-Status: 1 to 4 built 2026-10-28 (ROADMAP M6a to M6d); 5 to come. The
+Status: 1 to 5 built 2026-10-28 (ROADMAP M6a to M6e). The
 CLI is `npm run profile` (tools/profile.ts) rather than a package bin:
 it runs from the source with tsx, like the bake tool. The panel puts the Frame view under the
 Timeline rather than in a tab of its own.

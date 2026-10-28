@@ -142,3 +142,13 @@ test('scenario steps: validated, described, the default scroll', () => {
   assert.throws(() => validateSteps([{ jump: 1 }]), /step 1/)
   assert.throws(() => validateSteps({}), /must be an array/)
 })
+
+test('the comparison covers phases both runs have and GPU labels', async () => {
+  const { compareReports: compare } = await import('../../src/profile/compare')
+  const a = report()
+  const c = compare(a, report())
+  assert.deepEqual(c.warnings, [])
+  assert.ok(c.rows.some((r) => r.scope === 'a' && r.metric === 'late frames'))
+  assert.ok(c.rows.some((r) => r.scope === 'b'))
+  assert.ok(c.rows.every((r) => r.scope !== 'gpu'))
+})

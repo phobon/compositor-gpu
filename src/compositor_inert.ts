@@ -17,7 +17,9 @@ const inertProfile: Profile = {
   save: () => Promise.resolve(null),
   element: () => null,
   tracks() {},
-  tracking: false
+  tracking: false,
+  filmstrip() {},
+  filming: false
 }
 
 export function inert(): Compositor & { text: null; scene: null } {

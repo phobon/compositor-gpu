@@ -35,6 +35,7 @@ export {
   toRecording
 } from './profile/recording'
 export type { FrameWhy, TraceEvent } from './profile/trace'
+export type { FilmFrame, FilmstripOptions } from './profile/filmstrip'
 export type {
   BoxRecord,
   Glyph,

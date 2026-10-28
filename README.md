@@ -129,7 +129,9 @@ late frames into Chrome DevTools' Performance panel as a
 opens the page in Chrome, runs a scenario (by default, scroll down and
 back; `--scenario file.json` for clicks, hovers, marks and a budget),
 and writes the recording, a self-contained HTML report and a summary,
-exiting 1 when a budget is exceeded. `docs/PROFILER.md` has the design.
+exiting 1 when a budget is exceeded. Recordings carry small pictures of
+the page (the filmstrip) and compare against a baseline in the panel or
+the report. `docs/PROFILER.md` has the design.
 
 GPU pass timings need the `timestamp-query` feature (Chrome rounds them to
 100 µs unless run with `--enable-webgpu-developer-features`).

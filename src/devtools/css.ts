@@ -144,6 +144,12 @@ input[type="number"] { width: 56px; height: 22px; background: #18181b;
   color: inherit; border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; font: inherit; }
 .note { color: var(--bad); padding: 6px 8px; }
 
+td.better { color: #34d399; } td.worse { color: var(--bad); }
+.shots { display: flex; gap: 10px; flex-wrap: wrap; }
+.shots figure { margin: 0; }
+.shots img { display: block; width: 240px; height: auto; border-radius: 4px;
+  border: 1px solid var(--line); image-rendering: auto; }
+.shots figcaption { color: var(--dim); font-size: 11px; margin-top: 2px; }
 .outline { position: fixed; z-index: 2147483645; pointer-events: none;
   border: 2px solid var(--accent); background: rgba(56,189,248,0.12);
   border-radius: 2px; }

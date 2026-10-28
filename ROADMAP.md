@@ -546,7 +546,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         `util/log.ts`): layer and material `update`, every frame hook,
         `onGlyph`, `onFrame`; logged once per label and message, the
         frame carries on (a throw used to stop the frame loop)
-- [ ] M6 — profiler (planned 2026-10-28, design `docs/PROFILER.md`):
+- [x] M6 — profiler (planned and built 2026-10-28, design `docs/PROFILER.md`):
       a first-class tool for "why did this site jank", on any site that
       mounts the library; one recording format and one viewer
   - [x] M6a recorder core (built 2026-10-28; headless SwiftShader:
@@ -625,8 +625,24 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         phase) exit 1 when over; `--baseline` compares the headline
         numbers and warns on another adapter or viewport. Not yet: a run
         on the Mac against /duo, CI wiring
-  - [ ] M6e cost by element and effect, filmstrip at hitches, baseline
-        diff in the viewer
+  - [x] M6e (built 2026-10-28; headless SwiftShader: the filmstrip
+        captures the canvas (in the frame's task, the viewport's part,
+        over the page background), the report's and the panel's Compare
+        tabs and the Elements effects table render with no errors; unit
+        tests 146 pass). Filmstrip: `profile.filmstrip({ width, interval
+        })` (profile/filmstrip.ts; on in the devtools by default, the
+        CLI's `--no-filmstrip` turns it off), report `filmstrip` (WebP
+        data URLs), a "screen" lane on the Timeline and the pictures
+        before and after the selected frame. Effects: Elements gains a
+        table per effect (frames it kept the loop running, its own
+        `fx:<name>` GPU passes; layers and materials draw in shared
+        passes, so they show no GPU time of their own). Compare:
+        src/profile/compare.ts (the run, each phase both have, GPU by
+        label; warnings for another adapter or viewport), the devtools'
+        Compare tab (against another open recording) and the report's
+        (the CLI embeds `--baseline`'s recording); the CLI prints the same
+        rows. Not yet: per-element GPU cost (needs per-draw timing),
+        the filmstrip's cost on the real GPU
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

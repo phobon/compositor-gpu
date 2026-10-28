@@ -10,6 +10,7 @@
 
 import { missed } from '../profile/profiler'
 import type { Recording } from '../profile/recording'
+import { renderCompare } from './compare_view'
 import { CSS } from './css'
 import { renderElements } from './elements_view'
 import { type FrameActions, renderFrame } from './frame_view'
@@ -27,8 +28,10 @@ export interface BudgetRow {
 
 export interface ViewerOptions {
   budget?: BudgetRow[]
-  /** Lines comparing against a baseline (tools/profile/compare.ts). */
-  baseline?: string[]
+  /** A baseline recording: a Compare tab shows this one against it. */
+  baseline?: Recording
+  /** The baseline's name (its file). */
+  baselineLabel?: string
 }
 
 const VIEWER_CSS = `
@@ -145,12 +148,6 @@ export function mountViewer(
       t
     )
   }
-  if (opts.baseline?.length) {
-    header.append(
-      h('h3', { text: 'Against the baseline' }),
-      h('pre', { text: opts.baseline.join('\n') })
-    )
-  }
 
   // Tabs.
   const tabs = h('div', { class: 'tabs', role: 'tablist' })
@@ -158,10 +155,17 @@ export function mountViewer(
   const bar = h('div', { class: 'bar' }, tabs, h('span', { class: 'spacer' }))
   const timelineView = h('div', { class: 'view' })
   const elementsView = h('div', { class: 'view' })
+  const compareView = h('div', { class: 'view' })
   const timelineBox = h('div')
   const frameBox = h('div')
   timelineView.append(timelineBox, frameBox)
-  const body = h('div', { class: 'vbody' }, timelineView, elementsView)
+  const body = h(
+    'div',
+    { class: 'vbody' },
+    timelineView,
+    elementsView,
+    compareView
+  )
   root.append(header, bar, status, body)
 
   let selected = -1
@@ -182,9 +186,11 @@ export function mountViewer(
     timeline.select(selected)
     renderFrame(frameBox, m, selected, actions)
   }
-  const show = (which: 'timeline' | 'elements'): void => {
+  type Tab = 'timeline' | 'elements' | 'compare'
+  const show = (which: Tab): void => {
     timelineView.hidden = which !== 'timeline'
     elementsView.hidden = which !== 'elements'
+    compareView.hidden = which !== 'compare'
     for (const b of tabs.children) {
       b.setAttribute(
         'aria-selected',
@@ -192,10 +198,20 @@ export function mountViewer(
       )
     }
   }
-  for (const [id, label] of [
+  const tabList: [Tab, string][] = [
     ['timeline', 'Timeline'],
     ['elements', 'Elements']
-  ] as const) {
+  ]
+  if (opts.baseline) {
+    tabList.push(['compare', 'Compare'])
+    renderCompare(
+      compareView,
+      rep,
+      opts.baseline.report,
+      opts.baselineLabel ?? 'the baseline'
+    )
+  }
+  for (const [id, label] of tabList) {
     const b = h('button', {
       class: 'tab',
       type: 'button',

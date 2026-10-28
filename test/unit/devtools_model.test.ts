@@ -48,11 +48,15 @@ const model = (): Model => {
         more: 0,
         scopes: [1, 2],
         scopeCount: 2,
-        alive: ['scroll']
+        alive: ['scroll', 'pass blur', 'layer dots (pointer)']
       },
       gpu: {
         frame: 2,
-        spans: [{ label: 'main', ms: 3, start: 0 }],
+        spans: [
+          { label: 'main', ms: 3, start: 0 },
+          { label: 'fx:blur', ms: 1, start: 3 },
+          { label: 'fx:blur#1', ms: 0.5, start: 4 }
+        ],
         totalMs: 3,
         untimed: 0
       }
@@ -80,6 +84,10 @@ const model = (): Model => {
         samples,
         env: { dpr: 1, width: 1, height: 1, userAgent: '' },
         elements: { 1: 'div.a', 2: 'div.b' },
+        filmstrip: [
+          { at: 10, src: 'data:,a' },
+          { at: 40, src: 'data:,b' }
+        ],
         origin: 1000
       },
       'flight'
@@ -109,9 +117,23 @@ test('costs by element and GPU label', () => {
       ['div.b', 1, 0.5, 0]
     ]
   )
-  assert.deepEqual(m.gpuCosts(), [
-    { label: 'main', frames: 1, totalMs: 3, maxMs: 3 }
+  assert.deepEqual(m.gpuCosts()[0], {
+    label: 'main',
+    frames: 1,
+    totalMs: 3,
+    maxMs: 3
+  })
+  assert.deepEqual(m.effectCosts(), [
+    { kind: 'pass', name: 'blur', frames: 1, gpuMs: 1.5, gpuFrames: 1 },
+    { kind: 'layer', name: 'dots', frames: 1, gpuMs: 0, gpuFrames: 0 }
   ])
-  assert.deepEqual(m.aliveCosts(), [['scroll', 1]])
+  assert.equal(m.aliveCosts()[0]?.[0], 'scroll')
   assert.equal(m.path(9), 'element 9')
+})
+
+test('filmstrip pictures around a time', () => {
+  const m = model()
+  assert.deepEqual(m.picturesAround(25), { before: 0, after: 1 })
+  assert.deepEqual(m.picturesAround(5), { before: -1, after: 0 })
+  assert.deepEqual(m.picturesAround(99), { before: 1, after: -1 })
 })

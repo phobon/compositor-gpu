@@ -5,7 +5,9 @@
 //   Timeline  a recording's frames, compositor and GPU work and the page's
 //             long animation frames over time, the selected frame below
 //             it: why it came late (hitch factors) and what it did
-//   Elements  cost by element, GPU pass and what kept the loop running
+//   Elements  cost by element, effect, GPU pass and what kept the loop
+//             running
+//   Compare   the open recording against another (a baseline)
 //   Settings  the flight recorder, Chrome DevTools tracks, the frame HUD,
 //             dials, skeleton, scene reuse, where the panel docks
 //
@@ -33,6 +35,7 @@ import {
   toRecording
 } from '../profile/recording'
 import type { Compositor } from '../types'
+import { renderCompare } from './compare_view'
 import { CSS } from './css'
 import { renderElements } from './elements_view'
 import { type FrameActions, renderFrame } from './frame_view'
@@ -40,7 +43,12 @@ import { LiveView } from './live_view'
 import { h, Model } from './model'
 import { Timeline } from './timeline'
 
-export type DevtoolsTab = 'live' | 'timeline' | 'elements' | 'settings'
+export type DevtoolsTab =
+  | 'live'
+  | 'timeline'
+  | 'elements'
+  | 'compare'
+  | 'settings'
 
 export interface DevtoolsSettings {
   /** Flight recorder window, s (0: off). */
@@ -53,6 +61,9 @@ export interface DevtoolsSettings {
   /** Write frames into Chrome DevTools' Performance panel
    * (compositor.profile.tracks). */
   tracks: boolean
+  /** Small pictures of the page for recordings
+   * (compositor.profile.filmstrip). */
+  film: boolean
   dock: 'bottom' | 'right'
   /** Panel height (bottom) or width (right), CSS px. */
   size: number
@@ -92,6 +103,7 @@ const DEFAULTS: DevtoolsSettings = {
   skeleton: false,
   sceneReuse: true,
   tracks: false,
+  film: true,
   dock: 'bottom',
   size: 340,
   tab: 'timeline',
@@ -102,6 +114,7 @@ const TABS: [DevtoolsTab, string][] = [
   ['live', 'Live'],
   ['timeline', 'Timeline'],
   ['elements', 'Elements'],
+  ['compare', 'Compare'],
   ['settings', 'Settings']
 ]
 
@@ -292,8 +305,57 @@ export function mountDevtools(
     live: h('div', { class: 'view' }, liveView.root),
     timeline: h('div', { class: 'view' }),
     elements: h('div', { class: 'view' }),
+    compare: h('div', { class: 'view' }),
     settings: h('div', { class: 'view' })
   }
+  // Compare: the open recording against another one.
+  const basePicker = h('select', { 'aria-label': 'Baseline' })
+  const compareBox = h('div')
+  views.compare.append(
+    h(
+      'div',
+      { class: 'bar' },
+      h('span', { class: 'dim', text: 'Baseline' }),
+      basePicker
+    ),
+    compareBox
+  )
+  let baseline: Entry | null = null
+  const renderCompareTab = (): void => {
+    const others = entries.filter((e) => e !== current)
+    if (baseline && !others.includes(baseline)) {
+      baseline = null
+    }
+    baseline ??= others[0] ?? null
+    basePicker.replaceChildren(
+      ...(others.length === 0
+        ? [h('option', { text: 'Save or import another recording', value: '' })]
+        : others.map((e) =>
+            h('option', {
+              value: String(entries.indexOf(e)),
+              text: e.label,
+              selected: e === baseline
+            })
+          ))
+    )
+    basePicker.disabled = others.length === 0
+    if (!current) {
+      compareBox.replaceChildren(
+        h('p', { class: 'empty', text: 'No recording open.' })
+      )
+      return
+    }
+    renderCompare(
+      compareBox,
+      current.recording.report,
+      baseline?.recording.report ?? null,
+      baseline?.label ?? ''
+    )
+  }
+  basePicker.addEventListener('change', () => {
+    baseline = entries[Number(basePicker.value)] ?? null
+    renderCompareTab()
+  })
   const frameBox = h('div', { class: 'frame' })
   const timelineBox = h('div')
   views.timeline.append(timelineBox, frameBox)
@@ -421,6 +483,7 @@ export function mountDevtools(
     }
     select(worst >= 0 ? worst : model.samples.length - 1)
     renderElements(views.elements, model, actions)
+    renderCompareTab()
     refreshPicker()
     status.textContent = hint()
   }
@@ -542,6 +605,9 @@ export function mountDevtools(
       compositor.skeleton = settings.skeleton
       compositor.sceneReuse = settings.sceneReuse
       profile.tracks(settings.tracks)
+      if (profile.filming !== settings.film) {
+        profile.filmstrip(settings.film)
+      }
     }
     setDialsShown(settings.dials)
     saveBtn.textContent =
@@ -555,7 +621,7 @@ export function mountDevtools(
   const renderSettings = (): void => {
     const box = h('div', { class: 'settings' })
     const toggle = (
-      k: 'stats' | 'dials' | 'skeleton' | 'sceneReuse' | 'tracks',
+      k: 'stats' | 'dials' | 'skeleton' | 'sceneReuse' | 'tracks' | 'film',
       label: string,
       hint: string,
       usable = gpu
@@ -611,6 +677,11 @@ export function mountDevtools(
       'tracks',
       'Chrome DevTools tracks',
       'Frames, compositor phases, GPU and late frames in the Performance panel'
+    )
+    toggle(
+      'film',
+      'Filmstrip',
+      'Pictures of the page four times a second, kept with recordings'
     )
     toggle('stats', 'Frame HUD', 'The corner graph (compositor.profile.hud)')
     toggle('dials', 'Dials', 'Effect parameter panels', true)
@@ -692,6 +763,9 @@ export function mountDevtools(
     }
     if (t === 'settings') {
       renderSettings()
+    }
+    if (t === 'compare') {
+      renderCompareTab()
     }
     if (t === 'live' && !loop) {
       loop = requestAnimationFrame(tick)
@@ -850,6 +924,7 @@ export function mountDevtools(
       }
       profile.flight(false)
       profile.tracks(false)
+      profile.filmstrip(false)
       host.remove()
     }
   }

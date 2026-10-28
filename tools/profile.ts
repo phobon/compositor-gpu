@@ -32,6 +32,9 @@
 //   --viewport WxH    1280x900; --dpr (1; a Retina display is 2)
 //   --out dir         profile-out/<name>-<time>
 //   --title text      the report's title
+//   --no-filmstrip    no pictures of the page in the report
+//   --baseline file   compare with an earlier recording (printed, and the
+//                     report's Compare tab)
 // From another project: `npx tsx path/to/compositor-gpu/tools/profile.ts`.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -256,11 +259,25 @@ async function main(): Promise<void> {
     await page.waitForTimeout(Number(arg('wait') ?? 1500))
 
     // Record the scenario.
-    await page.evaluate((g) => {
-      ;(window as unknown as Record<string, { profile: { start(): void } }>)[
-        g
-      ]?.profile.start()
-    }, global)
+    await page.evaluate(
+      ({ g, film }) => {
+        const p = (
+          window as unknown as Record<
+            string,
+            {
+              profile: {
+                start(): void
+                filmstrip?(on: boolean): void
+              }
+            }
+          >
+        )[g]?.profile
+        // Pictures of the page for the report (older builds lack it).
+        p?.filmstrip?.(film)
+        p?.start()
+      },
+      { g: global, film: !flag('no-filmstrip') }
+    )
     await runSteps(page, steps, global, (s) => log(`  ${s}`))
     const report = (await page.evaluate(
       (g) =>
@@ -285,14 +302,21 @@ async function main(): Promise<void> {
     writeFileSync(resolve(outDir, 'recording.cgprof'), gz)
     const rows: BudgetRow[] | null = budget ? checkBudget(report, budget) : null
     let baseline: string[] | null = null
+    let baseGz: Uint8Array | null = null
     const basePath = arg('baseline')
     if (basePath) {
-      const base = await decodeRecording(readFileSync(resolve(basePath)))
+      baseGz = new Uint8Array(readFileSync(resolve(basePath)))
+      const base = await decodeRecording(baseGz)
       baseline = compareReports(report, base.report)
     }
     writeFileSync(
       resolve(outDir, 'report.html'),
-      await reportHtml(title, gz, rows, baseline)
+      await reportHtml(
+        title,
+        gz,
+        rows,
+        baseGz && basePath ? { gz: baseGz, label: basePath } : null
+      )
     )
     // formatReport's own hitch lines give way to the factors below.
     const lines = [

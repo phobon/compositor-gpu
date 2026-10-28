@@ -195,6 +195,10 @@ The CLI is tools/profile.ts (`npm run profile`), with tools/profile/
 test/unit/profile_cli.test.ts; html: the report, building
 src/devtools/viewer_entry.ts as an IIFE cached in the OS temp dir) and
 tools/inject.ts (the inject bundle, shared with test:site).
+`profile.filmstrip()` (profile/filmstrip.ts) copies the canvas in the
+frame's own task, from Profiler.push via `ProfileHost.view()`: a WebGPU
+canvas is only readable before it presents. Comparisons are
+src/profile/compare.ts, shown by devtools/compare_view.ts.
 
 **Debug panel**: `mountDebugPanel(compositor)` (`compositor-gpu/debug`,
 `src/debug/index.ts`) puts a GPU button in a corner (bottom-right by

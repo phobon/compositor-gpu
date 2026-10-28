@@ -596,7 +596,15 @@ export async function createCompositor(
         ? [a.vendor, a.architecture, a.description].filter(Boolean).join(' ')
         : undefined
       return { adapter: adapter || undefined, mode }
-    }
+    },
+    view: () => ({
+      canvas,
+      sx: Math.max(0, (lastScrollX - anchorX) * dpr),
+      sy: Math.max(0, (lastScrollY - anchorY) * dpr),
+      sw: Math.min(viewW() * dpr, canvas.width),
+      sh: Math.min(viewH() * dpr, canvas.height),
+      background: pageBackground()
+    })
   }
   const profiler = new Profiler(profileHost)
   // The effects layer's hooks (gpu/graph.ts).
@@ -1359,6 +1367,18 @@ export async function createCompositor(
 const OPAQUE_IGNORE = 'cross-origin'
 
 /** A full read's dirty flags and the last mutation's target. */
+/** The colour the page shows behind everything: the body's background,
+ * else the root's, else white (for the filmstrip). */
+function pageBackground(): string {
+  for (const el of [document.body, document.documentElement]) {
+    const c = el ? getComputedStyle(el).backgroundColor : ''
+    if (c && c !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(c)) {
+      return c
+    }
+  }
+  return '#fff'
+}
+
 function fullReadCause(flags: number, last: string): string {
   const names: string[] = []
   if (flags & Dirty.LAYOUT) {

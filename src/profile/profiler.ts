@@ -11,6 +11,12 @@
 import type { GpuFrameTiming, GpuSpan } from '../gpu/timer'
 import type { Layer } from '../types'
 import { causeOf, explain, type Factor, factorsText } from './explain'
+import {
+  type FilmFrame,
+  Filmstrip,
+  type FilmstripOptions,
+  type FrameView
+} from './filmstrip'
 import { Hud } from './hud'
 import {
   ElementRegistry,
@@ -207,6 +213,8 @@ export interface ProfileReport extends ProfileSummary {
   /** performance.now() at the recording's start: `at` times are ms
    * after it; sample `t` and `start` are absolute. */
   origin?: number
+  /** Pictures of what was drawn (profile.filmstrip), when on. */
+  filmstrip?: FilmFrame[]
 }
 
 /** The compositor side the profiler drives. */
@@ -223,6 +231,9 @@ export interface ProfileHost {
   ): void
   /** The GPU adapter and the compositor's mode, for report.env. */
   describe?(): { adapter?: string; mode?: string }
+  /** The canvas and the viewport's part of it, for the filmstrip
+   * (called in the frame's task, after it rendered). */
+  view?(): FrameView | null
 }
 
 /** Raw why for a frame, from the compositor (Profiler.push). */
@@ -266,6 +277,10 @@ export interface Profile {
   tracks(on: boolean): void
   /** The DevTools tracks are on. */
   readonly tracking: boolean
+  /** Take small pictures of what was drawn while recording or flying
+   * (profile/filmstrip.ts), for the reports; false stops. */
+  filmstrip(on: boolean | FilmstripOptions): void
+  readonly filming: boolean
 }
 
 const RING = 240
@@ -302,6 +317,7 @@ export class Profiler implements Profile {
   private flightMs = 0
   private flightFrames: FrameSample[] = []
   private devtools: DevtoolsTracks | null = null
+  private film: Filmstrip | null = null
   /** Late frames waiting for their long animation frames (tracks). */
   private lateQueue: { s: FrameSample; at: number }[] = []
   private trackRefresh = 1000 / 60
@@ -319,6 +335,15 @@ export class Profiler implements Profile {
 
   get tracking(): boolean {
     return this.devtools !== null
+  }
+
+  get filming(): boolean {
+    return this.film !== null
+  }
+
+  filmstrip(on: boolean | FilmstripOptions): void {
+    this.film?.clear()
+    this.film = on === false ? null : new Filmstrip(on === true ? {} : on)
   }
 
   tracks(on: boolean): void {
@@ -346,6 +371,9 @@ export class Profiler implements Profile {
     await this.gpuSettled()
     this.session = null
     const report = this.report(session, this.startedAt)
+    if (!this.flying) {
+      this.film?.clear()
+    }
     this.update()
     return report
   }
@@ -442,6 +470,9 @@ export class Profiler implements Profile {
       const keep = s.t - 5000
       this.longFrames = this.longFrames.filter((f) => f.at + f.duration >= keep)
     }
+    if (this.film && (this.session || this.flying)) {
+      this.film.frame(s.t, this.host.view?.() ?? null)
+    }
     if (this.devtools) {
       this.trackFrame(s)
     }
@@ -493,6 +524,8 @@ export class Profiler implements Profile {
   destroy(): void {
     this.session = null
     this.devtools = null
+    this.film?.clear()
+    this.film = null
     this.flightMs = 0
     this.flightFrames = []
     this.view?.destroy()
@@ -515,6 +548,7 @@ export class Profiler implements Profile {
       this.flightFrames.splice(0, k)
     }
     const keep = this.session ? Math.min(from, this.startedAt) : from
+    this.film?.trim(keep)
     if (
       (this.longFrames[0]?.at ?? Infinity) +
         (this.longFrames[0]?.duration ?? 0) <
@@ -663,7 +697,8 @@ export class Profiler implements Profile {
         ...d
       },
       elements,
-      origin
+      origin,
+      filmstrip: this.film?.encode(origin - 1, end, origin)
     }
   }
 }

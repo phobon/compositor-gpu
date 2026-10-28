@@ -258,4 +258,29 @@ export function renderFrame(
     did.append(kv('kept running by', why.alive.join(', ')))
   }
   root.append(section('What this frame did', did))
+
+  // What was on screen either side (the filmstrip).
+  const around = m.picturesAround(m.at(i))
+  const shots = h('div', { class: 'shots' })
+  for (const [k, label] of [
+    [around.before, 'before'],
+    [around.after, 'after']
+  ] as const) {
+    const f = m.report.filmstrip?.[k]
+    if (!f) {
+      continue
+    }
+    const img = h('img', { src: f.src, alt: `on screen ${label}` })
+    shots.append(
+      h(
+        'figure',
+        {},
+        img,
+        h('figcaption', { text: `${label}: ${fmtAt(f.at)}` })
+      )
+    )
+  }
+  if (shots.childElementCount > 0) {
+    root.append(section('On screen', shots))
+  }
 }

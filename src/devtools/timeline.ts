@@ -19,6 +19,7 @@ import { COLORS, fmtAt, fmtMs, type Model, PHASES } from './model'
 const LABEL_W = 56
 const AXIS_H = 18
 const LANES = [
+  { key: 'film', label: 'screen', h: 44 },
   { key: 'frames', label: 'frames', h: 46 },
   { key: 'cpu', label: 'cpu', h: 16 },
   { key: 'gpu', label: 'gpu', h: 16 },
@@ -209,6 +210,7 @@ export class Timeline {
     g.rect(LABEL_W, 0, this.width - LABEL_W, TIMELINE_H)
     g.clip()
     this.drawAxis(g, m)
+    this.drawFilm(g, m)
     this.drawFrames(g, m)
     this.drawCpuGpu(g, m)
     this.drawMain(g, m)
@@ -229,6 +231,53 @@ export class Timeline {
       )
     }
     g.restore()
+  }
+
+  /** The filmstrip: each picture at its time, skipping ones that would
+   * overlap the last drawn (zoom in for more). */
+  private drawFilm(g: CanvasRenderingContext2D, m: Model): void {
+    const [y, h] = this.laneY('film')
+    const film = m.report.filmstrip ?? []
+    if (film.length === 0) {
+      g.fillStyle = '#6b7280'
+      g.fillText(
+        'no pictures (Settings: filmstrip)',
+        Math.max(LABEL_W, this.x(m.start)) + 6,
+        y + h / 2
+      )
+      return
+    }
+    let right = -Infinity
+    film.forEach((f, k) => {
+      const x = this.x(f.at)
+      if (x < LABEL_W - 200 || x > this.width) {
+        return
+      }
+      const img = m.image(k, () => this.queue())
+      const aspect = img?.naturalWidth
+        ? img.naturalWidth / img.naturalHeight
+        : 1.4
+      const w = (h - 4) * aspect
+      if (x < right + 2) {
+        return
+      }
+      right = x + w
+      if (img?.complete && img.naturalWidth > 0) {
+        g.drawImage(img, x, y + 2, w, h - 4)
+      } else {
+        g.fillStyle = 'rgba(255,255,255,0.08)'
+        g.fillRect(x, y + 2, w, h - 4)
+      }
+      g.fillStyle = 'rgba(255,255,255,0.5)'
+      g.fillRect(x, y + 2, 1, h - 4)
+      this.hits.push({
+        x0: x,
+        x1: x + w,
+        lane: 'film',
+        frame: m.frameAt(f.at),
+        text: `on screen at ${fmtAt(f.at)}`
+      })
+    })
   }
 
   private drawAxis(g: CanvasRenderingContext2D, m: Model): void {
