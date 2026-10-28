@@ -433,9 +433,15 @@ const rectBox = (r: DOMRect): Box => ({
  * box of its contents (a block heading's text, not the line it spans,
  * grown a little), so text scales with its size rather than its
  * container. */
+/** Paints nothing of its own and holds only text (no image, video,
+ * canvas or svg inside): it moves as its text, keyed out of the snapshot
+ * by colour. A wrapper around an image moves as its border box. */
+const textOnly = (el: Element): boolean =>
+  !paintsBox(el) && !el.querySelector('img, video, canvas, svg, iframe')
+
 function boxOf(el: Element): Box {
   const border = rectBox(el.getBoundingClientRect())
-  if (paintsBox(el)) {
+  if (!textOnly(el)) {
     return border
   }
   const range = document.createRange()
@@ -764,7 +770,7 @@ export function layoutMorph(
           continue
         }
         const box = boxOf(el)
-        const text = !paintsBox(el)
+        const text = textOnly(el)
         const old: Old = {
           box,
           radius: radiusOf(el, box),
