@@ -546,6 +546,53 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         `util/log.ts`): layer and material `update`, every frame hook,
         `onGlyph`, `onFrame`; logged once per label and message, the
         frame carries on (a throw used to stop the frame loop)
+- [ ] M6 — profiler (planned 2026-10-28, design `docs/PROFILER.md`):
+      a first-class tool for "why did this site jank", on any site that
+      mounts the library; one recording format and one viewer
+  - [x] M6a recorder core (built 2026-10-28; headless SwiftShader:
+        `test:profile -- --explain` passes, unit tests 139 pass): the
+        flight recorder (`profile.flight({ seconds })`, `profile.save()`:
+        the last seconds as a report, no recording needed beforehand);
+        each sample's `why` (profile/trace.ts: DomSync's invalidations
+        between frames, folded and capped, the scopes re-read and what
+        kept the loop running, effects by name via `FrameHook.alive`),
+        elements as `ElementRegistry` indexes (a selector path for the
+        report, a WeakRef for `profile.element(i)` on the live page);
+        hitch `factors` (profile/explain.ts: every contributor with
+        evidence, largest first, each clipped to the gap: compositor
+        phases with the read's trigger and elements, GPU on the previous
+        frame, long-animation-frame scripts with source and forced
+        layout, the compositor's own callback left out, style/layout,
+        unattributed time); `cause` / `detail` derived from them; the
+        recording format v1 (profile/recording.ts: `toRecording`,
+        `encodeRecording` gzip, `decodeRecording`, `.cgprof`). Not
+        measured yet: the sampling overhead on the real GPU (target
+        under 0.1 ms a frame; test:perf with the flight recorder on)
+  - [x] M6b devtools panel (built 2026-10-28; headless SwiftShader on
+        layout.html: save after a jank opens it at the worst frame, chips
+        outline live elements, export/import round-trips, no console
+        errors; unit tests 141 pass; 45 kB chunk, 14.6 kB gzip):
+        `compositor-gpu/devtools` `mountDevtools(compositor, opts)` (or
+        the React provider's `devtools` prop): a button that opens a
+        docked panel (bottom or right, resizable) with Live (recent
+        frames, percentiles), Timeline (canvas lanes: frames, compositor
+        phases, GPU, long animation frames with scripts; wheel zoom, drag
+        pan, click; the selected frame below it: hitch factors, then what
+        it did, with element chips), Elements (cost by element, GPU
+        label, keep-alive), Settings (flight recorder seconds, frame HUD,
+        dials, skeleton, scene reuse, dock; localStorage, `?devtools`
+        opens it). Save (Alt+Shift+S anywhere), Record/Stop, Import /
+        Export `.cgprof` (or drop a file). The button's dot turns red
+        after a late frame and counts them. `compositor-gpu/debug` is now
+        a thin alias (`mountDebugPanel` mounts the devtools). The design's
+        separate Frame tab became the Timeline's lower half. Not yet: a
+        real-GPU pass over it (Mac, 120 Hz), touch (pinch zoom)
+  - [ ] M6c DevTools custom tracks (`performance.measure` with
+        `detail.devtools`)
+  - [ ] M6d CLI `compositor-gpu profile <url>`: scenarios, the HTML
+        report (the standalone viewer), budgets, baselines
+  - [ ] M6e cost by element and effect, filmstrip at hitches, baseline
+        diff in the viewer
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

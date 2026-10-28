@@ -11,7 +11,11 @@ const inertProfile: Profile = {
   mark() {},
   recording: false,
   hud: () => false,
-  recent: () => []
+  recent: () => [],
+  flight() {},
+  flying: false,
+  save: () => Promise.resolve(null),
+  element: () => null
 }
 
 export function inert(): Compositor & { text: null; scene: null } {

@@ -156,6 +156,9 @@ export interface FrameHook {
   beforeFrame?(ctx: FrameContext): void
   /** True keeps the rAF loop running after this frame. */
   keepAlive?(): boolean
+  /** What keeps it running, by name (the profiler; called only while it
+   * samples and keepAlive() is true). */
+  alive?(): string[]
 }
 
 /** The compositor's extension surface for the effects layer. */

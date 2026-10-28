@@ -106,7 +106,11 @@ const schema = {
   // overlay (text morphs and svg shapes), 16 everything (the live page);
   // and 32: no text morphs (changed text cross-fades; read at capture()),
   // 64: no layer transforms (pairs don't move; read at settled()).
-  skip: { type: 'f32', default: 0 }
+  skip: { type: 'f32', default: 0 },
+  // 1 from capture() until settled() has set the anchor (scroll 'stay'):
+  // the frame that releases the hold draws before settled() resumes, and
+  // a swap that scrolled would show the snapshot shifted by that scroll.
+  held: { type: 'f32', default: 0 }
 } as const
 
 export type LayoutMorphSchema = typeof schema
@@ -119,6 +123,9 @@ fn lm_c(i : u32) -> vec4f { return params.c[i]; }
 
 // Scroll since the snapshot (xy) and since the new boxes (zw), uv.
 fn lm_shift() -> vec4f {
+  if (params.held > 0.5) {
+    return vec4f(0.0);
+  }
   let css = fx.viewport / fx.dpr;
   let s = fx.page_scroll;
   return vec4f((s - params.anchor.xy) / css, (s - params.anchor.zw) / css);
@@ -846,6 +853,7 @@ export function layoutMorph(
         }
       }
       p.progress = 0
+      p.held = follow ? 0 : 1
       const measured: [number, number] = [window.scrollX, window.scrollY]
       // The snapshot first (with the live text), then the copies (which
       // hide it).
@@ -883,6 +891,7 @@ export function layoutMorph(
       }
       settledAt = at
       anchor()
+      p.held = 0
       clearPairs()
       if (fx.reducedMotion) {
         return
@@ -1053,6 +1062,7 @@ export function layoutMorph(
       })
     },
     end() {
+      p.held = 0
       clearPairs()
       endMorphs()
       pass.end()

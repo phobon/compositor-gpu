@@ -15,6 +15,7 @@ import {
   useRef,
   useState
 } from 'react'
+import type { Devtools, DevtoolsOptions } from '../devtools/index'
 import type * as FxLib from '../fx/index'
 import type { Effects, Trail, TrailOptions } from '../fx/index'
 import type { ParamSchema, ParamValues } from '../fx/params'
@@ -54,6 +55,9 @@ export interface CompositorProviderProps {
   trail?: boolean | TrailOptions
   /** Show the profiler HUD (compositor.profile.hud()). */
   hud?: boolean
+  /** Mount `compositor-gpu/devtools` (loaded only then): true, or its
+   * options. Read when the compositor is created. */
+  devtools?: boolean | DevtoolsOptions
   /** Expose the compositor on `window[global]` for the console. Default
    * '__gpu'; false for none. */
   global?: string | false
@@ -96,6 +100,7 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
     let compositor: Compositor | null = null
     let fx: Effects | null = null
     let trail: Trail | null = null
+    let tools: Devtools | null = null
     let off = (): void => {}
 
     Promise.all([import('../index'), import('../fx/index')])
@@ -121,6 +126,18 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
         if (p.hud) {
           c.profile.hud(true)
         }
+        if (p.devtools) {
+          const opts = p.devtools === true ? {} : p.devtools
+          import('../devtools/index')
+            .then((d) => {
+              if (!cancelled) {
+                tools = d.mountDevtools(c, opts)
+              }
+            })
+            .catch((err: unknown) => {
+              console.warn('[compositor-gpu] devtools:', err)
+            })
+        }
         if (global) {
           win[global] = c
         }
@@ -140,6 +157,7 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
     return () => {
       cancelled = true
       off()
+      tools?.destroy()
       trail?.destroy()
       fx?.release()
       compositor?.destroy()

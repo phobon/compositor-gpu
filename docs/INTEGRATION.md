@@ -85,14 +85,22 @@ actions })`, on with `?dials=1` (`configureDials` sets the parameter,
 position, theme and inline/popover mode) or `setDialsShown(on)` at
 runtime.
 
-`compositor-gpu/debug` mounts a corner panel of debug toggles for a
-compositor (stats HUD, dials, skeleton outlines), persisted in
-localStorage and seeded from `?stats=1` / `?dials=1` / `?skeleton=1`:
+`compositor-gpu/devtools` mounts the profiler and debug panel for a
+compositor (docs/PROFILER.md): a corner button opening a docked panel
+with Live frames, a Timeline of a recording with each late frame
+explained, cost by element, and settings (the flight recorder, stats
+HUD, dials, skeleton outlines, scene reuse), persisted in localStorage
+and seeded from `?devtools`, `?stats=1`, `?dials=1`, `?skeleton=1`. After
+a jank, press Save (or Alt+Shift+S) to open the last seconds:
 
 ```ts
-const { mountDebugPanel } = await import('compositor-gpu/debug')
-mountDebugPanel(compositor, { position: 'bottom-right' })
+const { mountDevtools } = await import('compositor-gpu/devtools')
+mountDevtools(compositor, { position: 'bottom-right' })
+// or <CompositorProvider devtools={flag} ...>
 ```
+
+`compositor-gpu/debug`'s `mountDebugPanel` still works: it mounts the
+devtools.
 
 ## Measuring parity on your site
 

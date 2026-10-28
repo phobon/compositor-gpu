@@ -355,6 +355,10 @@ export class DomSync {
     animating: 0,
     last: ''
   }
+  /** The profiler's sink for invalidations (profile/trace.ts), while it
+   * samples. */
+  trace: ((kind: string, node?: Node | null, detail?: string) => void) | null =
+    null
   private scopes = new Set<Element>()
   private spare = new Set<Element>()
   private ro: ResizeObserver
@@ -372,7 +376,10 @@ export class DomSync {
     private readonly root: HTMLElement,
     private readonly onInvalidate: () => void
   ) {
-    this.ro = new ResizeObserver(() => this.mark(Dirty.LAYOUT))
+    this.ro = new ResizeObserver(() => {
+      this.trace?.('resize', this.root)
+      this.mark(Dirty.LAYOUT)
+    })
     this.mo = new MutationObserver((records) => {
       let flag = Dirty.NONE
       for (const r of records) {
@@ -384,12 +391,16 @@ export class DomSync {
           this.diag.last = `${r.type} ${describeEl(r.target)}${
             r.attributeName ? `[${r.attributeName}]` : ''
           }`
+          this.trace?.(r.type, r.target, r.attributeName ?? undefined)
         }
         flag |= f
       }
       this.mark(flag)
     })
-    this.io = new IntersectionObserver(() => this.mark(Dirty.LAYOUT))
+    this.io = new IntersectionObserver(() => {
+      this.trace?.('intersection')
+      this.mark(Dirty.LAYOUT)
+    })
   }
 
   /** Record `r`'s scope; returns the flag it implies. */
@@ -463,13 +474,23 @@ export class DomSync {
    * rect-change check in SceneReader.partialRead escalates to a full read
    * if needed. */
   invalidateScope(el: Element): void {
+    this.trace?.('invalidate', el)
     this.scopes.add(el)
     this.mark(Dirty.MUTATION)
   }
 
-  private onScroll = (): void => this.mark(Dirty.SCROLL)
-  private onResize = (): void => this.mark(Dirty.LAYOUT)
-  private onFontsLoaded = (): void => this.mark(Dirty.CONTENT)
+  private onScroll = (): void => {
+    this.trace?.('scroll')
+    this.mark(Dirty.SCROLL)
+  }
+  private onResize = (): void => {
+    this.trace?.('viewport')
+    this.mark(Dirty.LAYOUT)
+  }
+  private onFontsLoaded = (): void => {
+    this.trace?.('font')
+    this.mark(Dirty.CONTENT)
+  }
 
   // Focus changes no attribute, but `:focus` / `:focus-visible` styles
   // (the focus ring is an outline) do: re-read the element's parent, as
@@ -479,6 +500,7 @@ export class DomSync {
     if (!(t instanceof Element) || !this.root.contains(t) || isIgnored(t)) {
       return
     }
+    this.trace?.('focus', t, e.type)
     const p = t.parentElement
     this.scopes.add(p && this.root.contains(p) ? p : t)
     this.mark(Dirty.MUTATION)
@@ -493,6 +515,7 @@ export class DomSync {
   // The selection highlight is read with the text: re-read the elements
   // whose text was or is selected (a full read past SELECTION_MAX).
   private onSelection = (): void => {
+    this.trace?.('selection')
     const next = selectedParents(this.root, SELECTION_MAX)
     if (next === null || this.selectedAll) {
       this.selected = next ?? new Set()
@@ -519,6 +542,7 @@ export class DomSync {
 
   private onLoad = (e: Event): void => {
     const t = e.target
+    this.trace?.('load', t instanceof Node ? t : null)
     if (t instanceof HTMLImageElement) {
       this.scopes.add(t)
       this.mark(Dirty.MUTATION)
@@ -535,6 +559,7 @@ export class DomSync {
     }
     const had = this.animating.size
     this.animating.add(t)
+    this.trace?.('animation', t, e.type)
     if (had === 0) {
       this.mark(Dirty.MUTATION)
     }
@@ -575,6 +600,7 @@ export class DomSync {
     }
     const had = this.animating.size
     this.animating.add(t)
+    this.trace?.('animation', t, 'script')
     if (had === 0) {
       this.mark(Dirty.MUTATION)
     }
@@ -595,6 +621,7 @@ export class DomSync {
 
   /** Stop tracking `t`, with one final re-read of its end state. */
   private settle(t: Element): void {
+    this.trace?.('animation end', t)
     this.animating.delete(t)
     if (this.paintOnlyLast.delete(t)) {
       this.settled.add(t)

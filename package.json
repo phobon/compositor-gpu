@@ -35,6 +35,10 @@
     "./debug": {
       "types": "./dist/debug/index.d.ts",
       "import": "./dist/debug.js"
+    },
+    "./devtools": {
+      "types": "./dist/devtools/index.d.ts",
+      "import": "./dist/devtools.js"
     }
   },
   "files": [

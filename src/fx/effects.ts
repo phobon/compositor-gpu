@@ -1039,6 +1039,40 @@ function buildEffects(compositor: Compositor): Effects {
         clock,
         () => !override?.pointer && tracker.moving()
       )
+    },
+    alive() {
+      // As keepAlive(), per effect: busy, continuous (a timed one while
+      // the clock runs), or reading a moving pointer.
+      const held = clock.held()
+      const moving = !override?.pointer && tracker.moving()
+      const out: string[] = []
+      const named: [string, Lifecycle][] = [
+        ...passes.map((p): [string, Lifecycle] => [`pass ${p.name}`, p.life]),
+        ...layers.map((l): [string, Lifecycle] => [
+          `layer ${l.handle.name}`,
+          l.life
+        ]),
+        ...materials.map((m): [string, Lifecycle] => [
+          `material ${m.handle.name}`,
+          m.life
+        ]),
+        ...trails.map((t): [string, Lifecycle] => [
+          `trail ${t.handle.name}`,
+          t.life
+        ])
+      ]
+      for (const [name, l] of named) {
+        if (l.busy()) {
+          out.push(`${name} (busy)`)
+        } else if (l.enabled && l.hasContinuous) {
+          if (l.continuous && !(l.timed && held)) {
+            out.push(name)
+          } else if (moving) {
+            out.push(`${name} (pointer)`)
+          }
+        }
+      }
+      return out
     }
   })
   graph.setPostChain(chain)

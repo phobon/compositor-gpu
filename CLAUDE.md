@@ -88,8 +88,9 @@ space they measure into (`pass.at(space).docRect(r)`), passed down as an
 argument (`readTextNode(at, …)`, `selectionBoxes(at, …)`).
 
 **Frame profiler**: `compositor.profile` (`src/profile/`). While a
-recording runs (`start()` / `mark()` / `stop()`) or the HUD is shown
-(`hud()`), each frame records its CPU time split into read, hooks,
+recording runs (`start()` / `mark()` / `stop()`), the flight recorder is
+on (`flight()`, `save()`) or the HUD is shown (`hud()`), each frame
+records its CPU time split into read, hooks,
 upload, encode and other, the read kind (`none` / `partial` / `full` /
 `escalated`) with its cause (`SceneReader.lastRead`, the dirty flags),
 and GPU pass timings when the device has `timestamp-query`
@@ -172,6 +173,20 @@ baseline and shows each number's change against it, R switches
 `--n`, `--frames`, `--viewport`, `--headed`, `--save`, `--baseline`) or
 scrolls any page exposing `window.__gpu` (`--url`). SwiftShader numbers
 are only meaningful for CPU.
+While recording or flying, each sample also has `why` (profile/trace.ts:
+DomSync's `trace` sink gets each invalidation; the compositor passes the
+re-read scopes and what kept the loop alive, effects naming theirs via
+`FrameHook.alive`), and each hitch `factors` (profile/explain.ts, pure;
+unit-tested in test/unit/profile_explain.test.ts); a new invalidation
+source in DomSync should call `this.trace?.(kind, node, detail)`.
+`npm run test:profile -- --explain` janks layout.html on purpose and
+checks save() explains it. Recordings: profile/recording.ts (format v1;
+bump RECORDING_VERSION on a breaking change to ProfileReport).
+The panel is `src/devtools/` (`compositor-gpu/devtools`, plain DOM and
+canvas in a shadow root, no framework): model.ts (a report as the views
+need it; pure apart from `h()`), timeline.ts, frame_view.ts,
+elements_view.ts, live_view.ts, index.ts (shell, settings, recordings,
+keys). `compositor-gpu/debug` is an alias for it.
 
 **Debug panel**: `mountDebugPanel(compositor)` (`compositor-gpu/debug`,
 `src/debug/index.ts`) puts a GPU button in a corner (bottom-right by

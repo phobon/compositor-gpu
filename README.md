@@ -104,6 +104,25 @@ const report = await compositor.profile.stop()
 console.log(formatReport(report)) // percentiles, dropped frames, hitches
 ```
 
+The flight recorder keeps the last seconds so you can save them after
+the jank happened, and each hitch lists what contributed (the
+compositor's phases with what triggered its DOM read, the GPU, the
+page's own scripts from long animation frames, style and layout):
+
+```ts
+compositor.profile.flight({ seconds: 15 })
+// ... it janks ...
+const report = await compositor.profile.save()
+for (const h of report.hitches) console.log(h.dt, h.factors)
+const file = await encodeRecording(toRecording(report, 'flight')) // .cgprof
+```
+
+`compositor-gpu/devtools` puts all of this in a panel on the page
+(`mountDevtools(compositor)`): live frames, a timeline of a saved
+recording with each late frame explained, cost by element, and the
+debug toggles. `docs/PROFILER.md` has the design (DevTools tracks and
+the CLI come next).
+
 GPU pass timings need the `timestamp-query` feature (Chrome rounds them to
 100 µs unless run with `--enable-webgpu-developer-features`).
 `npm run test:profile` runs the scenario harness (`test/profile/run.ts`).

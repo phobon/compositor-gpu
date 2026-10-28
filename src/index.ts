@@ -10,12 +10,14 @@ export type {
   RenderGraph
 } from './gpu/graph'
 export type { GpuFrameTiming, GpuSpan } from './gpu/timer'
+export type { Factor, FactorKind } from './profile/explain'
 export {
   type CpuBreakdown,
   type FrameSample,
   formatReport,
   type Hitch,
   type LongFrame,
+  type LongFrameScript,
   type Pct,
   type Profile,
   type ProfileOptions,
@@ -23,6 +25,16 @@ export {
   type ProfileSummary,
   type ReadKind
 } from './profile/profiler'
+export {
+  decodeRecording,
+  encodeRecording,
+  RECORDING_FORMAT,
+  RECORDING_VERSION,
+  type Recording,
+  recordingFileName,
+  toRecording
+} from './profile/recording'
+export type { FrameWhy, TraceEvent } from './profile/trace'
 export type {
   BoxRecord,
   Glyph,

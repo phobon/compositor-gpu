@@ -500,41 +500,78 @@ export async function createCompositor(
       const upload = renderer.lastUploadMs
       const encode = renderer.lastEncodeMs
       const info = reader.lastRead
-      profiler.push({
-        id: renderer.frames,
-        t: time,
-        dt: dt * 1000,
-        continuous: wasContinued,
-        requested: wasContinued ? 0 : Math.max(0, requestedAt - lastFrameAt),
-        wait: Math.max(0, time - requestedAt),
-        cpu: {
-          total: frameMs,
-          read: frameReadMs,
-          hooks: hooksMs,
-          upload,
-          encode,
-          cull: renderer.lastCullMs,
-          scene: read === 'none' ? 0 : reader.lastSceneMs,
-          batches: read === 'none' ? 0 : scene.lastBatchesMs,
-          text: renderer.lastUploadByLayer.text ?? 0,
-          other: Math.max(0, frameMs - frameReadMs - hooksMs - upload - encode)
+      // What kept the loop going (the conditions of `continued`).
+      const alive: string[] = []
+      if (animating) {
+        alive.push(options.onGlyph ? 'onGlyph' : 'onFrame')
+      }
+      if (scene.hasDynamic) {
+        alive.push('video/canvas')
+      }
+      if (imagePass?.fades.active) {
+        alive.push('image fades')
+      }
+      if (cssAnimating) {
+        alive.push(`css animation (${sync.diag.animating})`)
+      }
+      if (isScrolling()) {
+        alive.push('scroll')
+      }
+      for (const h of hooks) {
+        if (h.keepAlive?.()) {
+          alive.push(...(h.alive?.() ?? ['effects']))
+        }
+      }
+      if (renderer.pendingRowCount > 0) {
+        alive.push('canvas rows')
+      }
+      const partial = read === 'partial' || read === 'escalated'
+      profiler.push(
+        {
+          id: renderer.frames,
+          start: t0,
+          t: time,
+          dt: dt * 1000,
+          continuous: wasContinued,
+          requested: wasContinued ? 0 : Math.max(0, requestedAt - lastFrameAt),
+          wait: Math.max(0, time - requestedAt),
+          cpu: {
+            total: frameMs,
+            read: frameReadMs,
+            hooks: hooksMs,
+            upload,
+            encode,
+            cull: renderer.lastCullMs,
+            scene: read === 'none' ? 0 : reader.lastSceneMs,
+            batches: read === 'none' ? 0 : scene.lastBatchesMs,
+            text: renderer.lastUploadByLayer.text ?? 0,
+            other: Math.max(
+              0,
+              frameMs - frameReadMs - hooksMs - upload - encode
+            )
+          },
+          read,
+          cause:
+            read === 'full'
+              ? fullReadCause(flags, sync.diag.last)
+              : read === 'escalated'
+                ? `${info.reason}${info.el ? ` ${describeEl(info.el)}` : ''}`
+                : '',
+          readElements: read === 'none' ? 0 : reader.readElements,
+          uploads: renderer.lastUploadByLayer,
+          batches: renderer.lastBatches,
+          draws: renderer.lastDraws,
+          groups: renderer.lastGroups,
+          reused: renderer.lastReused,
+          skipped: renderer.lastSkipped,
+          gpu: null
         },
-        read,
-        cause:
-          read === 'full'
-            ? fullReadCause(flags, sync.diag.last)
-            : read === 'escalated'
-              ? `${info.reason}${info.el ? ` ${describeEl(info.el)}` : ''}`
-              : '',
-        readElements: read === 'none' ? 0 : reader.readElements,
-        uploads: renderer.lastUploadByLayer,
-        batches: renderer.lastBatches,
-        draws: renderer.lastDraws,
-        groups: renderer.lastGroups,
-        reused: renderer.lastReused,
-        skipped: renderer.lastSkipped,
-        gpu: null
-      })
+        {
+          scopes: partial ? scopes : [],
+          scopeCount: partial ? scopes.size : 0,
+          alive
+        }
+      )
     }
     lastFrameAt = time
   }
@@ -548,6 +585,17 @@ export async function createCompositor(
     setSceneReuse: (on) => {
       renderer.reuseScene = on
       scheduler.request()
+    },
+    setTrace: (sink) => {
+      sync.trace = sink
+    },
+    describe: () => {
+      const a = (gpu.device as GPUDevice & { adapterInfo?: GPUAdapterInfo })
+        .adapterInfo
+      const adapter = a
+        ? [a.vendor, a.architecture, a.description].filter(Boolean).join(' ')
+        : undefined
+      return { adapter: adapter || undefined, mode }
     }
   }
   const profiler = new Profiler(profileHost)

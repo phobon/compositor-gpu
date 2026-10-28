@@ -3,11 +3,21 @@
 // timings when the device has timestamp-query. Recording collects a
 // session and reports percentiles, dropped frames and the likely cause of
 // each hitch; the HUD (profile/hud.ts) draws the most recent frames live.
-// Nothing is sampled while neither is on.
+// The flight recorder keeps the last seconds the same way, for save()
+// after the fact (docs/PROFILER.md). Each sample says why the frame did
+// what it did (profile/trace.ts) and each hitch lists what contributed
+// (profile/explain.ts). Nothing is sampled while none of these is on.
 
 import type { GpuFrameTiming, GpuSpan } from '../gpu/timer'
 import type { Layer } from '../types'
+import { causeOf, explain, type Factor, factorsText } from './explain'
 import { Hud } from './hud'
+import {
+  ElementRegistry,
+  type FrameWhy,
+  MAX_SCOPES,
+  TraceBuffer
+} from './trace'
 
 export type ReadKind = 'none' | 'full' | 'partial' | 'escalated'
 
@@ -40,6 +50,9 @@ export interface FrameSample {
   id: number
   /** rAF timestamp, ms. */
   t: number
+  /** performance.now() when the compositor's frame callback began (its
+   * script in a long animation frame); absent in older reports. */
+  start?: number
   /** ms since the previous compositor frame. */
   dt: number
   /** The previous frame asked for this one, so `dt` measures pacing (a
@@ -70,6 +83,9 @@ export interface FrameSample {
   skipped?: boolean
   /** Filled in a frame or two later; null without timestamp-query. */
   gpu: GpuFrameTiming | null
+  /** What triggered the frame's work and kept the loop running; absent
+   * in reports from before 2026-10-28. */
+  why?: FrameWhy
 }
 
 export interface ProfileOptions {
@@ -96,10 +112,15 @@ export interface Hitch {
   dt: number
   /** Refresh intervals missed. */
   missed: number
-  /** 'compositor cpu', 'gpu', 'script', 'outside' (layout, paint, GC or
-   * script the browser didn't attribute). */
+  /** The largest factor's category: 'compositor cpu', 'gpu', 'script',
+   * 'outside' (layout, paint, GC or script the browser didn't
+   * attribute). */
   cause: 'compositor cpu' | 'gpu' | 'script' | 'outside'
+  /** The largest factors as one line. */
   detail: string
+  /** Everything recorded that contributed, largest first (absent in
+   * reports from before 2026-10-28). */
+  factors?: Factor[]
   /** The frame before the gap (its work delayed this one). */
   before: FrameSample | null
 }
@@ -113,8 +134,22 @@ export interface LongFrame {
   /** Style/layout and render time at the end of the frame, ms. */
   layout: number
   render: number
-  /** The longest scripts: invoker and source, ms. */
-  scripts: { name: string; ms: number }[]
+  /** The longest scripts (up to 5): invoker and source, ms. */
+  scripts: LongFrameScript[]
+}
+
+export interface LongFrameScript {
+  name: string
+  ms: number
+  /** Start, ms since the recording started (as LongFrame.at). */
+  at?: number
+  /** Source url (and `:char` position). */
+  source?: string
+  /** invokerType: 'user-callback', 'event-listener', 'classic-script',
+   * 'module-script', 'resolve-promise', 'reject-promise'. */
+  type?: string
+  /** Forced style and layout inside it, ms. */
+  forced?: number
 }
 
 export interface ProfileSummary {
@@ -154,7 +189,23 @@ export interface ProfileReport extends ProfileSummary {
   marks: { at: number; label: string }[]
   longFrames: LongFrame[]
   samples: FrameSample[]
-  env: { dpr: number; width: number; height: number; userAgent: string }
+  env: {
+    dpr: number
+    width: number
+    height: number
+    userAgent: string
+    /** The page URL, the GPU adapter and the compositor's mode (absent
+     * in reports from before 2026-10-28). */
+    url?: string
+    adapter?: string
+    mode?: string
+  }
+  /** Element paths by ElementRegistry index, for the elements the
+   * samples and hitches name. */
+  elements?: Record<number, string>
+  /** performance.now() at the recording's start: `at` times are ms
+   * after it; sample `t` and `start` are absolute. */
+  origin?: number
 }
 
 /** The compositor side the profiler drives. */
@@ -165,6 +216,20 @@ export interface ProfileHost {
   /** Scene reuse (Compositor.sceneReuse), for the HUD's A/B key. */
   sceneReuse(): boolean
   setSceneReuse(on: boolean): void
+  /** Start (a sink) or stop (null) reporting invalidations. */
+  setTrace?(
+    sink: ((kind: string, node?: Node | null, detail?: string) => void) | null
+  ): void
+  /** The GPU adapter and the compositor's mode, for report.env. */
+  describe?(): { adapter?: string; mode?: string }
+}
+
+/** Raw why for a frame, from the compositor (Profiler.push). */
+export interface FrameWhyInput {
+  /** Re-read scope roots. */
+  scopes: Iterable<Element>
+  scopeCount: number
+  alive: string[]
 }
 
 /** compositor.profile */
@@ -182,6 +247,18 @@ export interface Profile {
   hud(on?: boolean): boolean
   /** The most recent frames (up to RING), oldest first. */
   recent(): FrameSample[]
+  /** Keep the last `seconds` (default 15) of frames, long animation
+   * frames, marks and invalidations, for save(); false stops. */
+  flight(on: boolean | { seconds?: number }): void
+  /** The flight recorder is on. */
+  readonly flying: boolean
+  /** The flight recorder's window as a report (the frames before now);
+   * null when it is off or has no frames. Resolves once their GPU
+   * timings land. */
+  save(): Promise<ProfileReport | null>
+  /** The live element behind a report's element index, while it is still
+   * in the document. */
+  element(i: number): Element | null
 }
 
 const RING = 240
@@ -198,18 +275,25 @@ const COMMON_REFRESH = [
 ]
 
 export class Profiler implements Profile {
-  /** Sampling is on (a recording or the HUD). */
+  /** Sampling is on (a recording, the flight recorder or the HUD). */
   active = false
   private readonly ring: (FrameSample | null)[] = new Array(RING).fill(null)
   private head = 0
   private session: FrameSample[] | null = null
   private opts: ProfileOptions = {}
   private startedAt = 0
+  /** Absolute times (performance.now). */
   private marks: { at: number; label: string }[] = []
   private longFrames: LongFrame[] = []
   private observer: PerformanceObserver | null = null
   private view: Hud | null = null
   private gpuOn = false
+  private traceOn = false
+  private readonly registry = new ElementRegistry()
+  private readonly trace = new TraceBuffer(this.registry)
+  /** Flight window, ms (0: off), and its frames. */
+  private flightMs = 0
+  private flightFrames: FrameSample[] = []
 
   constructor(private readonly host: ProfileHost) {}
 
@@ -217,13 +301,18 @@ export class Profiler implements Profile {
     return this.session !== null
   }
 
+  get flying(): boolean {
+    return this.flightMs > 0
+  }
+
   start(opts: ProfileOptions = {}): void {
     this.opts = opts
     this.session = []
-    this.marks = []
-    this.longFrames = []
     this.startedAt = performance.now()
-    this.observeLongFrames()
+    if (!this.flying) {
+      this.marks = []
+      this.longFrames = []
+    }
     this.update()
   }
 
@@ -232,21 +321,44 @@ export class Profiler implements Profile {
     if (!session) {
       return null
     }
-    const until = performance.now() + 300
-    while (this.host.gpuTimingPending() > 0 && performance.now() < until) {
-      await new Promise((r) => setTimeout(r, 16))
-    }
+    await this.gpuSettled()
     this.session = null
-    this.observer?.disconnect()
-    this.observer = null
-    const report = this.report(session)
+    const report = this.report(session, this.startedAt)
     this.update()
     return report
   }
 
+  flight(on: boolean | { seconds?: number }): void {
+    const seconds = on === false ? 0 : on === true ? 15 : (on.seconds ?? 15)
+    this.flightMs = Math.max(0, seconds) * 1000
+    if (!this.flying) {
+      this.flightFrames = []
+    }
+    this.update()
+  }
+
+  async save(): Promise<ProfileReport | null> {
+    if (!this.flying) {
+      return null
+    }
+    await this.gpuSettled()
+    this.trim(performance.now())
+    const frames = [...this.flightFrames]
+    const first = frames[0]
+    if (!first) {
+      return null
+    }
+    // From just before the first frame, so its interval is inside.
+    return this.report(frames, first.t - first.dt)
+  }
+
+  element(i: number): Element | null {
+    return this.registry.get(i)
+  }
+
   mark(label: string): void {
-    if (this.session) {
-      this.marks.push({ at: performance.now() - this.startedAt, label })
+    if (this.session || this.flying) {
+      this.marks.push({ at: performance.now(), label })
     }
   }
 
@@ -275,27 +387,104 @@ export class Profiler implements Profile {
   }
 
   /** A frame finished (the compositor calls this while active). */
-  push(s: FrameSample): void {
+  push(s: FrameSample, why?: FrameWhyInput): void {
+    if (this.traceOn) {
+      const { events, more } = this.trace.take()
+      const scopes: number[] = []
+      if (why) {
+        for (const el of why.scopes) {
+          if (scopes.length >= MAX_SCOPES) {
+            break
+          }
+          scopes.push(this.registry.id(el))
+        }
+      }
+      s.why = {
+        events,
+        more,
+        scopes,
+        scopeCount: why?.scopeCount ?? 0,
+        alive: why?.alive ?? []
+      }
+    }
     this.ring[this.head] = s
     this.head = (this.head + 1) % RING
     this.session?.push(s)
+    if (this.flying) {
+      this.flightFrames.push(s)
+      this.trim(s.t)
+    }
     this.view?.draw(this.recent(), this.opts.refreshMs)
   }
 
   destroy(): void {
     this.session = null
-    this.observer?.disconnect()
+    this.flightMs = 0
+    this.flightFrames = []
     this.view?.destroy()
     this.view = null
     this.update()
   }
 
+  /** Drop flight frames, long frames and marks older than the window
+   * (unless a recording still needs them). */
+  private trim(now: number): void {
+    const from = now - this.flightMs
+    let k = 0
+    while (
+      k < this.flightFrames.length &&
+      (this.flightFrames[k]?.t ?? 0) < from
+    ) {
+      k++
+    }
+    if (k > 0) {
+      this.flightFrames.splice(0, k)
+    }
+    const keep = this.session ? Math.min(from, this.startedAt) : from
+    if (
+      (this.longFrames[0]?.at ?? Infinity) +
+        (this.longFrames[0]?.duration ?? 0) <
+      keep
+    ) {
+      this.longFrames = this.longFrames.filter((f) => f.at + f.duration >= keep)
+    }
+    if ((this.marks[0]?.at ?? Infinity) < keep) {
+      // The last mark before the window labels its start.
+      const before = this.marks.filter((m) => m.at < keep)
+      this.marks = [
+        ...before.slice(-1),
+        ...this.marks.filter((m) => m.at >= keep)
+      ]
+    }
+  }
+
+  private async gpuSettled(): Promise<void> {
+    const until = performance.now() + 300
+    while (this.host.gpuTimingPending() > 0 && performance.now() < until) {
+      await new Promise((r) => setTimeout(r, 16))
+    }
+  }
+
   private update(): void {
-    this.active = this.session !== null || this.view !== null
+    const sampling = this.session !== null || this.flying
+    this.active = sampling || this.view !== null
     const gpu = this.active && this.opts.gpu !== false
     if (gpu !== this.gpuOn) {
       this.gpuOn = gpu
       this.host.setGpuTiming(gpu ? (t) => this.attachGpu(t) : null)
+    }
+    if (sampling !== this.traceOn) {
+      this.traceOn = sampling
+      this.trace.clear()
+      this.host.setTrace?.(
+        sampling ? (k, n, d) => this.trace.note(k, n, d) : null
+      )
+    }
+    if (sampling && !this.observer) {
+      this.observeLongFrames()
+    } else if (!sampling && this.observer) {
+      this.observer.disconnect()
+      this.observer = null
     }
   }
 
@@ -313,8 +502,6 @@ export class Profiler implements Profile {
   }
 
   private observeLongFrames(): void {
-    this.observer?.disconnect()
-    this.observer = null
     if (
       typeof PerformanceObserver === 'undefined' ||
       !PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')
@@ -323,43 +510,84 @@ export class Profiler implements Profile {
     }
     this.observer = new PerformanceObserver((list) => {
       for (const e of list.getEntries()) {
-        this.longFrames.push(longFrame(e as LoafEntry, this.startedAt))
+        // Absolute times; report() makes them relative.
+        this.longFrames.push(longFrame(e as LoafEntry, 0))
       }
     })
     this.observer.observe({ type: 'long-animation-frame', buffered: false })
   }
 
-  private report(session: FrameSample[]): ProfileReport {
-    const refresh = this.opts.refreshMs ?? estimateRefresh(session)
-    const rel = (s: FrameSample): number => s.t - this.startedAt
+  /** A report over `frames`, times relative to `origin` (absolute). */
+  private report(frames: FrameSample[], origin: number): ProfileReport {
+    const refresh = this.opts.refreshMs ?? estimateRefresh(frames)
+    const last = frames[frames.length - 1]
+    const end = (last?.t ?? origin) + 1
+    const longFrames = this.longFrames
+      .filter((f) => f.at + f.duration >= origin && f.at <= end)
+      .map((f) => ({
+        ...f,
+        at: f.at - origin,
+        scripts: f.scripts.map((x) =>
+          x.at !== undefined ? { ...x, at: x.at - origin } : x
+        )
+      }))
+    const inWindow = this.marks.filter((m) => m.at <= end)
+    // The last mark before the start labels the first phase.
+    const lead = inWindow.filter((m) => m.at < origin).slice(-1)
+    const marks = [...lead, ...inWindow.filter((m) => m.at >= origin)].map(
+      (m) => ({ at: Math.max(0, m.at - origin), label: m.label })
+    )
+    const paths = (i: number): string | undefined => this.registry.paths[i]
     const phases: ProfileReport['phases'] = []
-    for (let i = 0; i < this.marks.length; i++) {
-      const m = this.marks[i]
-      const next = this.marks[i + 1]
+    for (let i = 0; i < marks.length; i++) {
+      const m = marks[i]
+      const next = marks[i + 1]
       if (!m) {
         continue
       }
-      const part = session.filter(
-        (s) => rel(s) >= m.at && (!next || rel(s) < next.at)
+      const part = frames.filter(
+        (s) => s.t - origin >= m.at && (!next || s.t - origin < next.at)
       )
       phases.push({
         label: m.label,
-        summary: summarize(part, refresh, this.startedAt, this.longFrames)
+        summary: summarize(part, refresh, origin, longFrames, paths)
       })
     }
+    const summary = summarize(frames, refresh, origin, longFrames, paths)
+    // The elements the samples and hitches name.
+    const elements: Record<number, string> = {}
+    const use = (i: number | undefined): void => {
+      const p = i === undefined ? undefined : this.registry.paths[i]
+      if (i !== undefined && p !== undefined) {
+        elements[i] = p
+      }
+    }
+    for (const s of frames) {
+      for (const e of s.why?.events ?? []) {
+        use(e.el)
+      }
+      for (const i of s.why?.scopes ?? []) {
+        use(i)
+      }
+    }
+    const d = this.host.describe?.() ?? {}
     return {
-      ...summarize(session, refresh, this.startedAt, this.longFrames),
-      gpuTiming: session.some((s) => s.gpu !== null),
+      ...summary,
+      gpuTiming: frames.some((s) => s.gpu !== null),
       phases,
-      marks: this.marks,
-      longFrames: this.longFrames,
-      samples: session,
+      marks,
+      longFrames,
+      samples: frames,
       env: {
         dpr: window.devicePixelRatio,
         width: window.innerWidth,
         height: window.innerHeight,
-        userAgent: navigator.userAgent
-      }
+        userAgent: navigator.userAgent,
+        url: location.href,
+        ...d
+      },
+      elements,
+      origin
     }
   }
 }
@@ -369,6 +597,9 @@ interface LoafScript {
   invokerType?: string
   sourceURL?: string
   sourceFunctionName?: string
+  sourceCharPosition?: number
+  startTime?: number
+  forcedStyleAndLayoutDuration?: number
   duration: number
 }
 interface LoafEntry extends PerformanceEntry {
@@ -382,14 +613,31 @@ function longFrame(e: LoafEntry, origin: number): LongFrame {
   const end = e.startTime + e.duration
   const scripts = [...(e.scripts ?? [])]
     .sort((a, b) => b.duration - a.duration)
-    .slice(0, 3)
-    .map((s) => {
-      const src = (s.sourceURL ?? '').split(/[?#]/)[0]?.split('/').pop() ?? ''
+    .slice(0, 5)
+    .map((s): LongFrameScript => {
+      const url = (s.sourceURL ?? '').split(/[?#]/)[0] ?? ''
+      const src = url.split('/').pop() ?? ''
       const fn = s.sourceFunctionName || ''
-      return {
+      const out: LongFrameScript = {
         name: `${s.invoker || s.invokerType || 'script'}${fn ? ` ${fn}` : ''}${src ? ` (${src})` : ''}`,
         ms: s.duration
       }
+      if (s.startTime !== undefined) {
+        out.at = s.startTime - origin
+      }
+      if (url) {
+        out.source =
+          s.sourceCharPosition !== undefined && s.sourceCharPosition >= 0
+            ? `${url}:${s.sourceCharPosition}`
+            : url
+      }
+      if (s.invokerType) {
+        out.type = s.invokerType
+      }
+      if (s.forcedStyleAndLayoutDuration) {
+        out.forced = s.forcedStyleAndLayoutDuration
+      }
+      return out
     })
   return {
     at: e.startTime - origin,
@@ -491,11 +739,49 @@ function aloneTimes(spans: readonly GpuSpan[]): Map<string, number> {
   return out
 }
 
+/** The hitch at late frame `samples[i]` (any frame: one on time gets
+ * missed 0): the gap before it and what contributed. */
+export function hitchAt(
+  samples: readonly FrameSample[],
+  i: number,
+  refresh: number,
+  origin = 0,
+  longFrames: readonly LongFrame[] = [],
+  path?: (i: number) => string | undefined
+): Hitch {
+  const s = samples[i] as FrameSample
+  const isPaced = paced(s, refresh)
+  const prev = samples[i - 1] ?? null
+  const before = isPaced ? prev : null
+  const gap = isPaced ? s.dt : s.wait
+  const factors = explain({
+    before,
+    prev,
+    late: s,
+    from: s.t - gap,
+    to: s.t,
+    refresh,
+    origin,
+    longFrames,
+    path
+  })
+  return {
+    at: s.t - origin,
+    dt: gap,
+    missed: missed(s, refresh),
+    cause: causeOf(factors[0]?.kind),
+    detail: factorsText(factors),
+    factors,
+    before
+  }
+}
+
 export function summarize(
   samples: FrameSample[],
   refresh: number,
   origin = 0,
-  longFrames: LongFrame[] = []
+  longFrames: LongFrame[] = [],
+  path?: (i: number) => string | undefined
 ): ProfileSummary {
   const cont = samples.filter((s) => paced(s, refresh))
   const keys: (keyof CpuBreakdown)[] = [
@@ -592,17 +878,7 @@ export function summarize(
     }
     late++
     dropped += m
-    const isPaced = paced(s, refresh)
-    const prev = samples[i - 1] ?? null
-    const before = isPaced ? prev : null
-    const gap = isPaced ? s.dt : s.wait
-    hitches.push({
-      at: s.t - origin,
-      dt: gap,
-      missed: m,
-      ...blame(before, prev, s.t - gap, s.t, refresh, origin, longFrames),
-      before
-    })
+    hitches.push(hitchAt(samples, i, refresh, origin, longFrames, path))
   }
   hitches.sort((a, b) => b.dt - a.dt)
   const first = samples[0]
@@ -619,72 +895,6 @@ export function summarize(
     gpu,
     reads,
     hitches: hitches.slice(0, 12)
-  }
-}
-
-/** `before`: the frame whose CPU work preceded the gap (paced frames);
- * `prev`: the previous frame, whose GPU work may still run into it. */
-function blame(
-  before: FrameSample | null,
-  prev: FrameSample | null,
-  gapFrom: number,
-  gapTo: number,
-  refresh: number,
-  origin: number,
-  longFrames: LongFrame[]
-): Pick<Hitch, 'cause' | 'detail'> {
-  const ms = (v: number): string => `${v.toFixed(1)} ms`
-  if (before && before.cpu.total > refresh * 0.6) {
-    const c = before.cpu
-    const parts: [string, number][] = [
-      [
-        `read ${before.read}${before.cause ? ` (${before.cause})` : ''}, ${before.readElements} elements`,
-        c.read
-      ],
-      ['hooks', c.hooks],
-      [`upload ${Object.keys(before.uploads).join('/')}`, c.upload],
-      ['encode', c.encode],
-      ['other', c.other]
-    ]
-    parts.sort((a, b) => b[1] - a[1])
-    const top = parts[0]
-    return {
-      cause: 'compositor cpu',
-      detail: `${ms(c.total)} in the frame before; most in ${top?.[0]} ${ms(top?.[1] ?? 0)}`
-    }
-  }
-  const gpu = prev?.gpu
-  if (
-    prev &&
-    gpu &&
-    gpu.totalMs > refresh * 0.8 &&
-    prev.t + gpu.totalMs > gapFrom
-  ) {
-    const top = [...gpu.spans].sort((a, b) => b.ms - a.ms).slice(0, 3)
-    return {
-      cause: 'gpu',
-      detail: `${ms(gpu.totalMs)} on the GPU in the frame before; ${top.map((p) => `${p.label} ${ms(p.ms)}`).join(', ')}`
-    }
-  }
-  const from = gapFrom - origin
-  const to = gapTo - origin
-  const lf = longFrames.find((f) => f.at + f.duration > from && f.at < to)
-  if (lf) {
-    const script = lf.scripts[0]
-    if (script && script.ms > refresh * 0.5) {
-      return {
-        cause: 'script',
-        detail: `long frame ${ms(lf.duration)}: ${lf.scripts.map((x) => `${x.name} ${ms(x.ms)}`).join(', ')}`
-      }
-    }
-    return {
-      cause: 'outside',
-      detail: `long frame ${ms(lf.duration)}: style/layout ${ms(lf.layout)}, render ${ms(lf.render)}`
-    }
-  }
-  return {
-    cause: 'outside',
-    detail: 'not in the compositor (layout, paint, GC or other script)'
   }
 }
 
