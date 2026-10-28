@@ -243,3 +243,22 @@ test('a recording round-trips, gzipped and plain', async () => {
     /version 99/
   )
 })
+
+test('without its GPU timing, the frames around stand in', () => {
+  const fs = explain({
+    before: frame(0),
+    prev: frame(0),
+    late: frame(17, { dt: 17 }),
+    from: 0,
+    to: 17,
+    refresh: 1000 / 120,
+    origin: 0,
+    longFrames: [],
+    nearbyGpu: [9.5, 10.2, 9.8]
+  })
+  assert.equal(fs[0]?.kind, 'gpu')
+  assert.match(
+    fs[0]?.text ?? '',
+    /GPU likely: the frames around took 9\.5 ms–10\.2 ms/
+  )
+})

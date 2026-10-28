@@ -865,6 +865,9 @@ export function hitchAt(
   const prev = samples[i - 1] ?? null
   const before = isPaced ? prev : null
   const gap = isPaced ? s.dt : s.wait
+  const nearbyGpu = samples
+    .slice(Math.max(0, i - 4), i + 3)
+    .flatMap((x) => (x.gpu ? [x.gpu.totalMs] : []))
   const factors = explain({
     before,
     prev,
@@ -874,7 +877,8 @@ export function hitchAt(
     refresh,
     origin,
     longFrames,
-    path
+    path,
+    nearbyGpu
   })
   return {
     at: s.t - origin,

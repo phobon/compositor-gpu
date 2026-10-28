@@ -643,6 +643,28 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         (the CLI embeds `--baseline`'s recording); the CLI prints the same
         rows. Not yet: per-element GPU cost (needs per-draw timing),
         the filmstrip's cost on the real GPU
+- [ ] /duo under the profiler (2026-10-28; `npm run profile` with
+      MDS-home/scripts/profile/duo*.json, M1 Pro, Chrome 156, headed).
+      First mobile run (390×844 @3, 120 Hz; the site's submodule still
+      pre-M6, so no `why` or long-frame data): 17 frames dropped, 15 of
+      them blamed on the GPU. Two costs:
+  - [x] CSS blur and drop-shadow at full resolution: the showcase
+        screen's `drop-shadow(0 20px 32px …)` is sigma 48 device px at
+        dpr 3, two passes of 97 taps over the whole phone; with both
+        panels fading, filter + group passes added ~4 ms (GPU 9.4–10.7 ms
+        a frame). Wide blurs now run at 1/2–1/4 resolution
+        (group_blur.ts `downFactor`); test:visual drop-shadow, filters
+        and backdrop within 3/255 of before
+  - [ ] The page-pinned canvas at dpr 3: main + copy ~6 ms a frame with
+        only the auto-advance progress bar changing (the 'copy' pass
+        writes the whole kept texture, viewport plus a viewport of
+        margin above and below, 1170 × 7596 px, into the swapchain every
+        frame). Measure `?margin=0` against the default, then decide: a
+        device-pixel cap on the margin, or a viewport-sized canvas at
+        high dpr
+  - [x] Hitches with no GPU timing for their frame (readbacks in flight
+        are capped) were unattributed: `hitchAt` passes the frames
+        around's GPU times and a busy GPU reads "GPU likely"
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

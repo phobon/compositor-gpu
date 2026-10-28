@@ -29,7 +29,7 @@ import {
   type RegionFrame,
   type RegionHandler
 } from './graph'
-import { GroupBlur } from './group_blur'
+import { downFactor, GroupBlur } from './group_blur'
 import {
   type GroupPlace,
   type LevelPlan,
@@ -1378,11 +1378,16 @@ export class Renderer {
     // Device px: the group's texture scale (above 1 under a scaling
     // layer transform).
     const s = sigma * Math.max(child.sx, child.sy)
-    const mid = this.composite.acquire(child.w, child.h)
-    blur.run(encoder, src, mid, child.w, child.h, [1, 0], s)
+    // Wide blurs at a fraction of the resolution (group_blur.ts).
+    const d = downFactor(s)
+    const mid = this.composite.acquire(
+      Math.ceil(child.w / d),
+      Math.ceil(child.h / d)
+    )
+    blur.run(encoder, src, mid, child.w, child.h, [1, 0], s, { down: d })
     this.composite.release(src)
     const out = this.composite.acquire(child.w, child.h)
-    blur.run(encoder, mid, out, child.w, child.h, [0, 1], s)
+    blur.run(encoder, mid, out, child.w, child.h, [0, 1], s, { up: d })
     this.composite.release(mid)
     child.pooled = out
     child.view = out.view
@@ -1485,12 +1490,16 @@ export class Renderer {
     const s = rec.filter.blur * Math.max(target.sx, target.sy)
     // First pass: the region, shifted to the texture's origin (and
     // blurred across); second: blurred down.
-    let out = this.composite.acquire(w, h)
-    blur.run(encoder, src, out, w, h, [1, 0], s, { offset: [-x0, -y0] })
+    const d = s >= 0.01 ? downFactor(s) : 1
+    let out = this.composite.acquire(Math.ceil(w / d), Math.ceil(h / d))
+    blur.run(encoder, src, out, w, h, [1, 0], s, {
+      offset: [-x0, -y0],
+      down: d
+    })
     if (s >= 0.01) {
       const mid = out
       out = this.composite.acquire(w, h)
-      blur.run(encoder, mid, out, w, h, [0, 1], s)
+      blur.run(encoder, mid, out, w, h, [0, 1], s, { up: d })
       this.composite.release(mid)
     }
     const next = this.beginPass(encoder, target, 'load', label)
@@ -1514,13 +1523,19 @@ export class Renderer {
     const blur = this.groupBlur
     const s = sh.sigma * Math.max(child.sx, child.sy)
     const [r, g, b, a] = sh.color
-    const mid = this.composite.acquire(child.w, child.h)
+    const d = downFactor(s)
+    const mid = this.composite.acquire(
+      Math.ceil(child.w / d),
+      Math.ceil(child.h / d)
+    )
     blur.run(encoder, src, mid, child.w, child.h, [1, 0], s, {
-      offset: [sh.dx * child.sx, sh.dy * child.sy]
+      offset: [sh.dx * child.sx, sh.dy * child.sy],
+      down: d
     })
     const out = this.composite.acquire(child.w, child.h)
     blur.run(encoder, mid, out, child.w, child.h, [0, 1], s, {
-      shadow: { tint: [r * a, g * a, b * a, a], orig: src }
+      shadow: { tint: [r * a, g * a, b * a, a], orig: src },
+      up: d
     })
     this.composite.release(mid)
     this.composite.release(src)

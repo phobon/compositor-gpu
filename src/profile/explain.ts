@@ -103,6 +103,9 @@ export interface ExplainInput {
   longFrames: readonly LongFrame[]
   /** Element paths by index (for the text). */
   path?: (i: number) => string | undefined
+  /** GPU totals (ms) of the frames around, for when `prev` has none (its
+   * timing didn't come back: readbacks in flight are capped). */
+  nearbyGpu?: readonly number[]
 }
 
 /** The contributors to one hitch, largest first (at least one). */
@@ -184,6 +187,17 @@ export function explain(x: ExplainInput): Factor[] {
       ms: gpu.totalMs,
       text: `GPU on the previous frame: ${top.map((p) => `${p.label} ${ms(p.ms)}`).join(', ')}`
     })
+  } else if (prev && !gpu && x.nearbyGpu && x.nearbyGpu.length > 0) {
+    // No timing for it; the frames around say whether the GPU was busy.
+    const near = [...x.nearbyGpu].sort((a, b) => a - b)
+    const mid = near[Math.floor(near.length / 2)] ?? 0
+    if (mid > refresh * 0.8) {
+      out.push({
+        kind: 'gpu',
+        ms: mid,
+        text: `GPU likely: the frames around took ${ms(near[0] ?? 0)}–${ms(near[near.length - 1] ?? 0)} on it (this one's timing didn't come back)`
+      })
+    }
   }
 
   // The compositor's own frame callbacks show up as scripts too.

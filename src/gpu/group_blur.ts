@@ -13,6 +13,15 @@ import { timed } from './timer'
 // CSS `filter: drop-shadow()` runs the same two passes over the group's
 // texture: the first samples it shifted by the shadow's offset, the
 // second tints the blurred alpha and draws the original over it.
+//
+// A wide blur runs at a fraction of the resolution (downFactor: 1/2 to
+// 1/4 once sigma is 8 device px or more): the horizontal pass writes a
+// reduced target (each output px sampling the middle of its block, and
+// across it, so thin lines aren't skipped), the vertical one reads it
+// back with linear filtering at full size. A Gaussian that wide has
+// nothing finer than the reduced grid to keep, and the passes cost the
+// square of the factor less (a phone-sized drop shadow at dpr 3: ~4 ms
+// of a 120 Hz frame before).
 
 const BLUR_WGSL = /* wgsl */ `
 struct Blur {
@@ -22,8 +31,9 @@ struct Blur {
   radius : f32,     // taps reach ±radius device px
   step   : f32,     // device px between taps
   shadow : f32,     // 1: tint the result alpha, orig over it
-  offset : vec2f,   // device px the source is shifted by
-  _pad   : vec2f,
+  offset : vec2f,   // source px the source is shifted by
+  scale  : f32,     // source px per output px (2 or 4 down, 1/2 or 1/4 up)
+  cross  : f32,     // source px either side across dir to average (down)
   tint   : vec4f,   // premultiplied shadow colour
 };
 @group(0) @binding(0) var<uniform> blur : Blur;
@@ -39,10 +49,28 @@ fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 
 @fragment
 fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
-  let p = pos.xy - blur.offset;
+  let p = pos.xy * blur.scale - blur.offset;
+  let across = vec2f(blur.dir.y, blur.dir.x) * blur.cross;
   var acc = vec4f(0.0);
   if (blur.sigma < 0.01) {
     acc = textureSampleLevel(src, samp, p * blur.texel, 0.0);
+  } else if (blur.cross > 0.0) {
+    let k = -0.5 / (blur.sigma * blur.sigma);
+    var total = 0.0;
+    var o = -blur.radius;
+    loop {
+      if (o > blur.radius) {
+        break;
+      }
+      let w = exp(o * o * k);
+      let q = p + blur.dir * o;
+      acc += (textureSampleLevel(src, samp, (q - across) * blur.texel, 0.0) +
+        textureSampleLevel(src, samp, (q + across) * blur.texel, 0.0)) *
+        (0.5 * w);
+      total += w;
+      o += blur.step;
+    }
+    acc = acc / total;
   } else {
     let k = -0.5 / (blur.sigma * blur.sigma);
     var total = 0.0;
@@ -69,6 +97,12 @@ fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
 `
 
 const UNIFORM_BYTES = 64
+
+/** The resolution divisor for a blur of `sigma` device px: 1 below 8,
+ * then sigma / 4 rounded down, at most 4. */
+export function downFactor(sigma: number): number {
+  return sigma < 8 ? 1 : Math.min(4, Math.floor(sigma / 4))
+}
 
 export class GroupBlur {
   private readonly pipeline: GPURenderPipeline
@@ -132,7 +166,10 @@ export class GroupBlur {
 
   /** Blur the top-left w×h of `from` along `dir` into `to`. `offset`
    * (device px) shifts the source; with `shadow` the result's alpha is
-   * tinted (premultiplied) and `orig` drawn over it. */
+   * tinted (premultiplied) and `orig` drawn over it. `down`: write `to` at
+   * 1/down the size (w, h stay the full size; the horizontal pass);
+   * `up`: `from` is 1/up the size, read back at full size (the vertical
+   * pass). `sigma` is always full-size device px. */
   run(
     encoder: GPUCommandEncoder,
     from: Pick<GroupTarget, 'view' | 'width' | 'height'>,
@@ -144,6 +181,8 @@ export class GroupBlur {
     opts: {
       offset?: [number, number]
       shadow?: { tint: [number, number, number, number]; orig: GroupTarget }
+      down?: number
+      up?: number
     } = {}
   ): void {
     const { device } = this.shared
@@ -157,10 +196,15 @@ export class GroupBlur {
       this.uniforms.push(buffer)
     }
     this.used++
-    const radius = sigma < 0.01 ? 0 : Math.ceil(sigma * 3)
+    const down = Math.max(1, opts.down ?? 1)
+    const up = Math.max(1, opts.up ?? 1)
+    // Source px: the reduced texture's for the pass reading it back.
+    const sig = sigma / up
+    const radius = sig < 0.01 ? 0 : Math.ceil(sig * 3)
     const offset = opts.offset ?? [0, 0]
     const tint = opts.shadow?.tint ?? [0, 0, 0, 0]
-    const step = Math.max(1, Math.ceil(radius / 48))
+    // Taps at least a reduced px apart when writing reduced.
+    const step = Math.max(down > 1 ? down / 2 : 1, Math.ceil(radius / 48))
     device.queue.writeBuffer(
       buffer,
       0,
@@ -169,14 +213,14 @@ export class GroupBlur {
         dir[1],
         1 / from.width,
         1 / from.height,
-        sigma,
+        sig,
         radius,
         step,
         opts.shadow ? 1 : 0,
         offset[0],
         offset[1],
-        0,
-        0,
+        down / up,
+        down > 1 ? down / 4 : 0,
         ...tint
       ])
     )
@@ -202,7 +246,12 @@ export class GroupBlur {
     })
     rp.setPipeline(this.pipeline)
     rp.setBindGroup(0, bindGroup)
-    rp.setScissorRect(0, 0, Math.min(w, to.width), Math.min(h, to.height))
+    rp.setScissorRect(
+      0,
+      0,
+      Math.min(Math.ceil(w / down), to.width),
+      Math.min(Math.ceil(h / down), to.height)
+    )
     rp.draw(3)
     rp.end()
   }
