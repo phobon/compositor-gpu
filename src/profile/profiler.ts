@@ -187,6 +187,18 @@ export interface ProfileSummary {
     elements: Pct
   }
   hitches: Hitch[]
+  /** Opacity-group textures over the frames that drew groups: drawn
+   * from a kept texture, rendered afresh by reason, and the elements
+   * rendered most (absent when no frame recorded it). */
+  groupCache?: GroupCacheSummary
+}
+
+export interface GroupCacheSummary {
+  frames: number
+  hits: number
+  rendered: number
+  why: Record<string, number>
+  top: { el: string; why: string; n: number }[]
 }
 
 export interface ProfileReport extends ProfileSummary {
@@ -242,6 +254,12 @@ export interface FrameWhyInput {
   scopes: Iterable<Element>
   scopeCount: number
   alive: string[]
+  /** Group textures kept and rendered (Renderer.lastGroupRendered). */
+  groups?: {
+    hits: number
+    why: Record<string, number>
+    rendered: { key: object | undefined; why: string }[]
+  }
 }
 
 /** compositor.profile */
@@ -457,6 +475,19 @@ export class Profiler implements Profile {
         scopes,
         scopeCount: why?.scopeCount ?? 0,
         alive: why?.alive ?? []
+      }
+      const gr = why?.groups
+      if (gr && (gr.hits > 0 || gr.rendered.length > 0)) {
+        s.why.groups = {
+          hits: gr.hits,
+          why: { ...gr.why },
+          els: gr.rendered.map((r) => {
+            const k = r.key as { nodeType?: number } | undefined
+            return k?.nodeType === 1
+              ? { el: this.registry.id(k as Element), why: r.why }
+              : { why: r.why }
+          })
+        }
       }
     }
     this.ring[this.head] = s
@@ -996,6 +1027,7 @@ export function summarize(
     hitches.push(hitchAt(samples, i, refresh, origin, longFrames, path))
   }
   hitches.sort((a, b) => b.dt - a.dt)
+  const groupCache = summarizeGroups(samples, path)
   const first = samples[0]
   const last = samples[samples.length - 1]
   return {
@@ -1009,8 +1041,49 @@ export function summarize(
     cpu,
     gpu,
     reads,
-    hitches: hitches.slice(0, 12)
+    hitches: hitches.slice(0, 12),
+    ...(groupCache ? { groupCache } : {})
   }
+}
+
+function summarizeGroups(
+  samples: readonly FrameSample[],
+  path?: (i: number) => string | undefined
+): GroupCacheSummary | undefined {
+  let frames = 0
+  let hits = 0
+  let rendered = 0
+  const why: Record<string, number> = {}
+  const byEl = new Map<string, number>()
+  for (const s of samples) {
+    const g = s.why?.groups
+    if (!g) {
+      continue
+    }
+    frames++
+    hits += g.hits
+    for (const [k, n] of Object.entries(g.why)) {
+      why[k] = (why[k] ?? 0) + n
+      rendered += n
+    }
+    for (const e of g.els) {
+      const el =
+        e.el === undefined ? '(pseudo-element)' : (path?.(e.el) ?? `#${e.el}`)
+      const k = `${el}\u0000${e.why}`
+      byEl.set(k, (byEl.get(k) ?? 0) + 1)
+    }
+  }
+  if (frames === 0) {
+    return undefined
+  }
+  const top = [...byEl]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([k, n]) => {
+      const [el, why] = k.split('\u0000')
+      return { el: el ?? '', why: why ?? '', n }
+    })
+  return { frames, hits, rendered, why, top }
 }
 
 /** A report as text (the harness prints this). */
@@ -1052,6 +1125,20 @@ export function formatReport(r: ProfileSummary, title = 'profile'): string {
   const causes = Object.entries(r.reads.causes).sort((a, b) => b[1] - a[1])
   for (const [c, n] of causes.slice(0, 5)) {
     lines.push(`  ${String(n).padStart(4)}× ${c}`)
+  }
+  const gc = r.groupCache
+  if (gc) {
+    const per = (n: number): string => (n / gc.frames).toFixed(1)
+    const why = Object.entries(gc.why)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${k} ${per(n)}`)
+      .join(', ')
+    lines.push(
+      `  group textures a frame: ${per(gc.hits)} kept, ${per(gc.rendered)} rendered${why ? ` (${why})` : ''}`
+    )
+    for (const t of gc.top.slice(0, 4)) {
+      lines.push(`    ${String(t.n).padStart(4)}× ${t.why}: ${t.el}`)
+    }
   }
   for (const h of r.hitches.slice(0, 5)) {
     lines.push(

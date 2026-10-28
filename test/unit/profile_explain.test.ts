@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import { causeOf, explain } from '../../src/profile/explain'
 import {
   type FrameSample,
+  formatReport,
   type LongFrame,
   summarize
 } from '../../src/profile/profiler'
@@ -260,5 +261,41 @@ test('without its GPU timing, the frames around stand in', () => {
   assert.match(
     fs[0]?.text ?? '',
     /GPU likely: the frames around took 9\.5 ms–10\.2 ms/
+  )
+})
+
+test('group textures: kept and rendered a frame, by reason and element', () => {
+  const why = (hits: number, w: Record<string, number>) => ({
+    events: [],
+    more: 0,
+    scopes: [],
+    scopeCount: 0,
+    alive: [],
+    groups: {
+      hits,
+      why: w,
+      els: Object.keys(w).map((k) => ({ el: 3, why: k }))
+    }
+  })
+  const s = summarize(
+    [
+      frame(0, { why: why(2, { changed: 1, transformed: 2 }) }),
+      frame(REFRESH, { why: why(4, { transformed: 2 }) })
+    ],
+    REFRESH,
+    0,
+    [],
+    (i) => (i === 3 ? 'div.card' : undefined)
+  )
+  assert.deepEqual(s.groupCache?.why, { changed: 1, transformed: 4 })
+  assert.equal(s.groupCache?.hits, 6)
+  assert.deepEqual(s.groupCache?.top[0], {
+    el: 'div.card',
+    why: 'transformed',
+    n: 2
+  })
+  assert.match(
+    formatReport(s),
+    /group textures a frame: 3\.0 kept, 2\.5 rendered \(transformed 2\.0, changed 0\.5\)/
   )
 })

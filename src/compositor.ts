@@ -632,7 +632,12 @@ export async function createCompositor(
         {
           scopes: partial ? scopes : [],
           scopeCount: partial ? scopes.size : 0,
-          alive
+          alive,
+          groups: {
+            hits: renderer.lastGroupHits,
+            why: renderer.lastGroupWhy,
+            rendered: renderer.lastGroupRendered
+          }
         }
       )
     }

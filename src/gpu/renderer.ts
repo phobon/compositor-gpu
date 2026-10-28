@@ -30,7 +30,12 @@ import {
   type RegionHandler
 } from './graph'
 import { downFactor, GroupBlur } from './group_blur'
-import { type CacheContext, cacheKey, GroupCache } from './group_cache'
+import {
+  type CacheContext,
+  cacheKey,
+  GroupCache,
+  type Rendered
+} from './group_cache'
 import {
   type GroupPlace,
   type LevelPlan,
@@ -200,6 +205,10 @@ export class Renderer {
   /** Groups drawn from a kept texture / rendered, last frame. */
   lastGroupHits = 0
   lastGroupMisses = 0
+  /** Last frame's groups rendered afresh, by reason, and the first few
+   * (the profiler's FrameWhy.groups). */
+  lastGroupWhy: Record<string, number> = {}
+  lastGroupRendered: Rendered[] = []
   /** ms the last frame spent recomputing culled runs; 0 when cached
    * (stats().cullMs). */
   lastCullMs = 0
@@ -553,6 +562,10 @@ export class Renderer {
         this.lastInstances = 0
         this.lastGroups = 0
         this.lastGroupPasses = 0
+        this.lastGroupHits = 0
+        this.lastGroupMisses = 0
+        this.lastGroupWhy = {}
+        this.lastGroupRendered = []
         this.lastUploads = 0
         this.lastUploadMs = 0
         this.lastUploadByLayer = {}
@@ -814,6 +827,20 @@ export class Renderer {
               )
             : null
         const kept = key && sig !== null ? this.groupCache.get(key, sig) : null
+        if (!kept) {
+          this.groupCache.note(
+            key,
+            !cacheOn
+              ? this.cacheGroups
+                ? 'loading'
+                : 'off'
+              : step.label === 'layer'
+                ? 'transformed'
+                : step.region
+                  ? 'region'
+                  : this.groupCache.reason
+          )
+        }
         if (kept) {
           const child = this.finishGroup(m, kept, 0, 0, slot, ctx)
           slot++
@@ -870,6 +897,8 @@ export class Renderer {
         : 0
       for (let k = 0; k < leaves.length; k++) {
         const l = leaves[k] as (typeof leaves)[number]
+        const lg = scene.groups[l.group]
+        this.groupCache.note(lg ? cacheKey(lg) : undefined, 'leaf')
         if (shared > 1 && packed?.at[k]) {
           continue
         }
@@ -1006,6 +1035,8 @@ export class Renderer {
     this.backdrop?.flush()
     this.lastGroupHits = this.groupCache.hits
     this.lastGroupMisses = this.groupCache.misses
+    this.lastGroupWhy = this.groupCache.why
+    this.lastGroupRendered = this.groupCache.rendered
     this.groupCache.sweep()
     const readback = timer?.end(encoder)
     this.device.queue.submit([encoder.finish()])
@@ -1028,6 +1059,8 @@ export class Renderer {
     this.lastUploadByLayer = {}
     this.lastBatches = 0
     this.lastGroups = 0
+    this.lastGroupWhy = {}
+    this.lastGroupRendered = []
     this.lastDraws = 0
     this.lastReused = true
     const encodeStart = performance.now()

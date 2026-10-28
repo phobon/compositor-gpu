@@ -690,7 +690,20 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           spinner forcing band redraws: 2 hits a frame, edits re-render;
           test:visual the same on and off (backdrop's 3.26% in a full run,
           1.17% alone, is the same either way; its GPU image is
-          pixel-identical). Desktop rerun pending
+          pixel-identical)
+    - [ ] Desktop rerun (11:10): dropped 516 → 465, lightbox 71 → 48,
+          fling 124 → 83, but the passes a frame didn't move (filter 12,
+          group 4, layer 6): /duo's groups weren't being kept. Two
+          changes since: a record's signature part is now its content
+          (hashed once per record, its per-read `id` and `z` left out),
+          not its identity, so a partial read that rebuilds an
+          unchanged element's records (481 in the run) no longer looks
+          like a change; and each frame records why each group was
+          rendered afresh (FrameWhy.groups; the report's "group textures
+          a frame" line with the elements rendered most). Rerun to see
+          which reasons are left. Per-label GPU ms on the M1 (filter
+          50 ms p50 in a 7.6 ms frame, `alone` 0) overlap: count passes
+          there, not ms
     - [ ] Atlas leaves and transformed ('layer') groups: leaves share a
           texture per frame, and groups under gsap scroll scaling reuse
           theirs only when just the affine changed (see the open item

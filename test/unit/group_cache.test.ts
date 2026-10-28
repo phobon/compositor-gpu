@@ -87,10 +87,17 @@ test('the same group, records and place sign the same', () => {
   assert.equal(a, b)
 })
 
-test('a replaced record, a new place or filter changes the signature', () => {
+test('a record rebuilt the same keeps the signature (its id and z aside)', () => {
   const { g, scene, ctx, cache } = setup()
   const a = cache.signature(ctx, g, 0, 2, place(), 0, [])
-  scene.boxes[1] = box(2) as never
+  scene.boxes[1] = box(2, { id: 77, z: 40 }) as never
+  assert.equal(cache.signature(ctx, g, 0, 2, place(), 0, []), a)
+})
+
+test('a changed record, a new place or filter changes the signature', () => {
+  const { g, scene, ctx, cache } = setup()
+  const a = cache.signature(ctx, g, 0, 2, place(), 0, [])
+  scene.boxes[1] = box(2, { fill: { r: 1, g: 0, b: 0, a: 1 } }) as never
   assert.notEqual(cache.signature(ctx, g, 0, 2, place(), 0, []), a)
   const b = cache.signature(ctx, g, 0, 2, place(), 0, [])
   assert.notEqual(cache.signature(ctx, g, 0, 2, place({ oy: 21 }), 0, []), b)
@@ -188,4 +195,31 @@ test('the key is the element, except for a pseudo-element node', () => {
   const pseudo = { el, pseudo: true }
   assert.equal(cacheKey(group({ key: pseudo })), pseudo)
   assert.equal(cacheKey(group({ key: undefined })), undefined)
+})
+
+test('rendered afresh: why, a move told from a change', () => {
+  const { g, scene, ctx, cache } = setup()
+  const key = {}
+  cache.begin()
+  const a = cache.signature(ctx, g, 0, 2, place(), 0, []) as number
+  assert.equal(cache.get(key, a), null)
+  assert.equal(cache.reason, 'new')
+  cache.put(key, a, target())
+  const b = cache.signature(ctx, g, 0, 2, place({ oy: 30 }), 0, []) as number
+  assert.equal(cache.get(key, b), null)
+  assert.equal(cache.reason, 'moved')
+  cache.put(key, b, target())
+  scene.boxes[0] = box(1, { fill: { r: 0, g: 1, b: 0, a: 1 } }) as never
+  const c = cache.signature(ctx, g, 0, 2, place({ oy: 30 }), 0, []) as number
+  assert.equal(cache.get(key, c), null)
+  assert.equal(cache.reason, 'changed')
+  assert.equal(
+    cache.signature(ctx, g, 0, 2, place({ xf: [1, 0, 0, 1, 0, 0] }), 0, []),
+    null
+  )
+  assert.equal(cache.reason, 'transformed')
+  cache.note(key, 'changed')
+  cache.note(undefined, 'leaf')
+  assert.deepEqual(cache.why, { changed: 1, leaf: 1 })
+  assert.equal(cache.rendered.length, 2)
 })

@@ -33,6 +33,18 @@ export interface FrameWhy {
   /** What kept the frame loop running after this frame ('scroll', 'css
    * animation', an effect's name, ...). */
   alive: string[]
+  /** Opacity-group textures this frame: drawn from a kept one (hits),
+   * and rendered afresh by reason (gpu/group_cache.ts RenderReason) with
+   * the first few elements; absent before 2026-10-28. */
+  groups?: FrameGroups
+}
+
+export interface FrameGroups {
+  hits: number
+  why: Record<string, number>
+  /** ElementRegistry index (absent for a pseudo-element's node) and
+   * reason. */
+  els: { el?: number; why: string }[]
 }
 
 export const MAX_EVENTS = 12

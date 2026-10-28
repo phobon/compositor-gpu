@@ -710,8 +710,11 @@ Conventions each pass must follow:
   `stats().groupPasses` counts the passes. A group rendered into its own
   texture keeps it between frames while its signature matches
   (`gpu/group_cache.ts`: keyed by element via `cacheKey`, a hash of its
-  `GroupPlace`, blur, shadows and the identity of every record and nested
-  push inside; records are replaced on change, so identity is enough).
+  `GroupPlace`, blur, shadows and the content of every record and nested
+  push inside: records aren't mutated, so each one's hash is memoized;
+  `id` and `z` are left out, so a re-read rebuilding an unchanged element
+  matches). Each frame notes why each group was rendered afresh
+  (`FrameWhy.groups`, the report's "group textures a frame" line).
   Anything that changes without a new record makes a group uncacheable
   (dynamic images, materials, extras, nested xf/region, viewport space,
   image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,

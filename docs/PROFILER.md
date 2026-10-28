@@ -37,6 +37,11 @@ Timeline rather than in a tab of its own.
     GPU time by label;
   - the browser's own long animation frame (LoAF) work overlapping the
     frame: scripts with source, style/layout, render.
+  - which opacity-group textures were drawn from a kept texture and
+    which were rendered afresh, and why ('changed', 'moved',
+    'transformed', 'leaf', a reason it can't be kept), with the first
+    few elements (`FrameWhy.groups`; summed in the report as "group
+    textures a frame").
 - **Hitch explanations.** Today `blame()` returns one cause. Each dropped
   frame gets an ordered list of contributing factors with evidence (for
   example "read: partial, 412 elements, triggered by a class change on

@@ -15,10 +15,10 @@ import type { GroupPlace } from './group_plan'
 // "The same": its signature, a hash of everything the texture depends
 // on, matches the one it was rendered with: where it sits and at what
 // scale (GroupPlace), its blur and shadows, the device pixel ratio, and
-// for every batch inside it, in order, the identity of each record drawn
-// (Scene.replace swaps records rather than mutating them, so a changed
-// element is a new record), nested groups' alpha, filter and blend, and
-// backdrop records. A group can't be kept when what it draws changes
+// for every batch inside it, in order, the content of each record drawn
+// (records aren't mutated once made, so each one's hash is computed once;
+// a re-read that rebuilds an unchanged element's records hashes the
+// same), nested groups' alpha, filter and blend, and backdrop records. A group can't be kept when what it draws changes
 // without a new record: a dynamic image (video, canvas), a material, an
 // extra layer, a nested layer transform or region, viewport-space
 // members (they move with the scroll), or while the mirror is
@@ -36,9 +36,30 @@ const MAX_AREA = 64 * 1024 * 1024
 
 interface Entry {
   sig: number
+  /** The placement part of `sig` (a mismatch there is a move). */
+  place: number
   target: GroupTarget
   used: number
 }
+
+/** Why a group was rendered afresh rather than drawn from a kept
+ * texture (FrameWhy.groups): a signature() refusal, 'new' (nothing kept
+ * for it), 'moved' (its placement or scale changed), 'changed' (what it
+ * draws changed), or the renderer's: 'transformed', 'region', 'leaf',
+ * 'loading', 'off'. */
+export type RenderReason = string
+
+/** A group rendered afresh this frame: its key (the element) and why. */
+export interface Rendered {
+  key: object | undefined
+  why: RenderReason
+}
+
+/** Record fields left out of its content hash (see content()). */
+const SKIP = new Set(['id', 'z', 'material', 'glyphBase', 'batchRect'])
+
+/** Groups rendered afresh kept per frame, for the profiler. */
+const MAX_RENDERED = 8
 
 /** What else a group's texture depends on (from the renderer). */
 export interface CacheContext {
@@ -54,6 +75,7 @@ export interface CacheContext {
 export class GroupCache {
   private readonly entries = new Map<object, Entry>()
   private readonly ids = new WeakMap<object, number>()
+  private readonly hashes = new WeakMap<object, number>()
   private nextId = 1
   private frame = 0
   /** Prefix sums of glyphs per run (text batches index glyphs), for the
@@ -62,6 +84,13 @@ export class GroupCache {
   private glyphRuns: unknown = null
   hits = 0
   misses = 0
+  /** Why signature() last returned null. */
+  reason: RenderReason = ''
+  /** The placement hash of the last signature(). */
+  private place = 0
+  /** This frame's groups rendered afresh, by reason, and the first few. */
+  why: Record<RenderReason, number> = {}
+  rendered: Rendered[] = []
 
   constructor(private readonly release: (t: GroupTarget) => void) {}
 
@@ -69,6 +98,84 @@ export class GroupCache {
     this.frame++
     this.hits = 0
     this.misses = 0
+    this.why = {}
+    this.rendered = []
+  }
+
+  /** A group rendered afresh (FrameWhy.groups). */
+  note(key: object | undefined, why: RenderReason): void {
+    this.why[why] = (this.why[why] ?? 0) + 1
+    if (this.rendered.length < MAX_RENDERED) {
+      this.rendered.push({ key, why })
+    }
+  }
+
+  /** A record's content hash: its fields, recursively, leaving out the
+   * per-read `id`, paint order `z` (the batch order carries it) and what
+   * Scene.assign sets on it later; objects that aren't plain data (an
+   * image source) by identity. Memoized: records aren't mutated. */
+  private content(o: object): number {
+    let h = this.hashes.get(o)
+    if (h === undefined) {
+      h = this.deep(o, 0x811c9dc5, 0)
+      this.hashes.set(o, h)
+    }
+    return h
+  }
+
+  private deep(v: unknown, h: number, depth: number): number {
+    const mix = (x: number): number => {
+      let k = Math.imul(h ^ (x & 0xffff), 0x01000193)
+      k = Math.imul(k ^ ((x >>> 16) & 0xffff), 0x01000193)
+      h = k
+      return k
+    }
+    switch (typeof v) {
+      case 'number':
+        return mix(Number.isInteger(v) ? v : Math.round(v * 4096))
+      case 'boolean':
+        return mix(v ? 3 : 2)
+      case 'string':
+        mix(v.length)
+        for (let i = 0; i < v.length; i++) {
+          mix(v.charCodeAt(i))
+        }
+        return h
+      case 'object': {
+        if (v === null) {
+          return mix(1)
+        }
+        if (depth > 8) {
+          return mix(this.id(v))
+        }
+        if (Array.isArray(v) || ArrayBuffer.isView(v)) {
+          const a = v as ArrayLike<unknown>
+          mix(a.length)
+          for (let i = 0; i < a.length; i++) {
+            h = this.deep(a[i], h, depth + 1)
+          }
+          return h
+        }
+        const proto = Object.getPrototypeOf(v)
+        if (proto !== Object.prototype && proto !== null) {
+          return mix(this.id(v))
+        }
+        for (const k in v) {
+          if (SKIP.has(k)) {
+            continue
+          }
+          const x = (v as Record<string, unknown>)[k]
+          if (x === undefined) {
+            continue
+          }
+          h = this.deep(k, h, depth)
+          h = this.deep(x, h, depth + 1)
+        }
+        return h
+      }
+      default:
+        return mix(0)
+    }
   }
 
   private id(o: object): number {
@@ -96,8 +203,18 @@ export class GroupCache {
       color: readonly number[]
     }[]
   ): number | null {
-    if (!g.key || g.vbounds || g.space === 'viewport' || m.xf) {
+    const no = (why: RenderReason): null => {
+      this.reason = why
       return null
+    }
+    if (!g.key) {
+      return no('no element')
+    }
+    if (g.vbounds || g.space === 'viewport') {
+      return no('viewport')
+    }
+    if (m.xf) {
+      return no('transformed')
     }
     let h = 0x811c9dc5
     const mix = (v: number): void => {
@@ -113,6 +230,7 @@ export class GroupCache {
     mix(m.ox)
     mix(m.oy)
     mix(c.dpr)
+    this.place = h
     mix(blur)
     for (const s of shadows) {
       mix(s.dx)
@@ -129,13 +247,16 @@ export class GroupCache {
         continue
       }
       if (b.kind === 'extra') {
-        return null
+        return no('extra layer')
       }
       if (b.kind === 'push' || b.kind === 'pop') {
         mix(b.kind === 'push' ? 1 : 2)
         const n = scene.groups[b.group]
-        if (!n || n.region !== undefined || n.vbounds) {
-          return null
+        if (!n || n.region !== undefined) {
+          return no('nested region')
+        }
+        if (n.vbounds) {
+          return no('viewport')
         }
         if (b.kind === 'push') {
           mix(n.alpha)
@@ -164,42 +285,45 @@ export class GroupCache {
         const r = scene.backdrops[b.index]
         // A viewport-space backdrop's region moves with the scroll.
         if (!r || r.space === 'viewport') {
-          return null
+          return no('viewport')
         }
         mix(3)
-        mix(this.id(r))
+        mix(this.content(r))
         continue
       }
       if (b.material !== undefined) {
-        return null
+        return no('material')
       }
       mix(4)
       if (b.layer === 'text') {
         if (c.textVolatile) {
-          return null
+          return no('onGlyph')
         }
         const runs = this.runsFor(scene, b.first, b.count)
         for (const r of runs) {
-          mix(this.id(r))
+          mix(this.content(r))
         }
         continue
       }
       const records = layerRecords(scene, b.layer)
       if (!records) {
-        return null
+        return no(`${b.layer} layer`)
       }
       for (let r = b.first; r < b.first + b.count; r++) {
         const rec = records[r]
         if (!rec) {
-          return null
+          return no('missing record')
         }
-        if (rec.kind === 'image' && (rec.dynamic || c.imagesVolatile)) {
-          return null
+        if (rec.kind === 'image' && rec.dynamic) {
+          return no('video or canvas')
+        }
+        if (rec.kind === 'image' && c.imagesVolatile) {
+          return no('image fade')
         }
         if (rec.space === 'viewport') {
-          return null
+          return no('viewport')
         }
-        mix(this.id(rec))
+        mix(this.content(rec))
       }
     }
     return h >>> 0
@@ -238,14 +362,17 @@ export class GroupCache {
     return out
   }
 
-  /** The kept texture for `key` when its signature still matches. */
+  /** The kept texture for `key` when its signature (the last
+   * signature() call's) still matches; else null, with `reason` set. */
   get(key: object, sig: number): GroupTarget | null {
     const e = this.entries.get(key)
     if (!e) {
       this.misses++
+      this.reason = 'new'
       return null
     }
     if (e.sig !== sig) {
+      this.reason = e.place !== this.place ? 'moved' : 'changed'
       this.drop(key, e)
       this.misses++
       return null
@@ -262,7 +389,12 @@ export class GroupCache {
       this.drop(key, old)
     }
     target.held = true
-    this.entries.set(key, { sig, target, used: this.frame })
+    this.entries.set(key, {
+      sig,
+      place: this.place,
+      target,
+      used: this.frame
+    })
   }
 
   /** Let go of entries unused for EVICT frames, then the least recently
