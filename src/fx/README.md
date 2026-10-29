@@ -49,7 +49,8 @@ fx.pass({
   enabled?: true,
   continuous?: false,
   region?: target | element,        // see Region passes
-  idle?: (params, dpr) => boolean   // region passes: nothing to do now
+  idle?: (params, dpr) => boolean,  // region passes: nothing to do now
+  key?: (params, dpr) => number     // region passes: what the output depends on
 }) -> Pass { name, params, enabled, continuous, radius, region, destroy() }
 ```
 
@@ -65,6 +66,10 @@ fx.pass({
   full resolution). `fx.scale` / `fx.src_scale` are the device px
   per texel of the stage's output and source (1 at full resolution);
   `uv`, `sample` and `fx.texel` stay in full-resolution terms.
+- `key` (region passes): a number that changes whenever the output for
+  the same input can. With it, an opacity group around the element keeps
+  its texture while the key holds, instead of re-rendering every frame
+  the pass runs (`blur`: its radius in half-device-px, then 5%, steps).
 - `idle` (region passes): true while the fragment can't change anything
   (`blur` below half a device px of radius). The element then draws in
   place, not isolated and passed through, and an opacity group around it

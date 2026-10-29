@@ -732,8 +732,10 @@ Conventions each pass must follow:
   element's further groups in a frame stand-in keys kept per element
   and order (not reader nodes, which re-reads replace). A region pass
   whose `idle()` (PassOptions.idle) is true reports inactive: its group
-  plans in place (group_plan.ts, with alpha 1, no filter or blend), and
-  `nestedLive` lets a parent be kept around it.
+  plans in place (group_plan.ts, with alpha 1, no filter or blend). A
+  parent around a live region signs with the handler's `key()`
+  (PassOptions.key; none: it can't be kept), around a nested layer
+  transform with its affine and opacity (`CacheContext.nested`).
   Anything that changes without a new record makes a group uncacheable
   (dynamic images, materials, extras, nested xf/region, viewport space,
   image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,

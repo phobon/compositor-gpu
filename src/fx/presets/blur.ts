@@ -7,6 +7,9 @@ import type { Target } from '../target'
 // resolution and the copy upsamples (bilinear) to full: a quarter of the
 // pixels, and half the taps, for a kernel too wide to show the difference;
 // from QUARTER_AT, at a quarter (a sixteenth of the pixels).
+// As a region pass its key is the radius in steps (half a device px up
+// to 8, 5% past that): a group around the element keeps its texture while
+// an animated radius stays within a step, drawn at most a step behind.
 // Taps are one per source or target texel, whichever is coarser, capped
 // at MAX_TAPS per side and spread evenly past that, with the sampler's
 // bilinear filter covering the gaps.
@@ -14,6 +17,17 @@ import type { Target } from '../target'
 const MAX_TAPS = 16
 const DOWNSAMPLE_AT = 8
 const QUARTER_AT = 24
+
+/** The radius step (PassOptions.key) for `r` device px. */
+export function radiusStep(r: number): number {
+  if (!(r >= 0.5)) {
+    return 0
+  }
+  if (r < DOWNSAMPLE_AT) {
+    return Math.round(r * 2)
+  }
+  return 100 + Math.round(Math.log(r / DOWNSAMPLE_AT) / Math.log(1.05))
+}
 
 const axis = (dir: string): string => /* wgsl */ `
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
@@ -71,6 +85,7 @@ export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
     },
     // Under half a device px the stages sample their input as is.
     idle: (p, dpr) => p.radius * dpr < 0.5,
+    key: (p, dpr) => radiusStep(p.radius * dpr),
     enabled: opts.enabled,
     region: opts.region
   })

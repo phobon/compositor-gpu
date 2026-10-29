@@ -793,8 +793,19 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           playing re-renders with its drop shadow (nested region 5.7 a
           frame). On the M1 the per-pass timestamps all overlap (every
           pass "starts" near 0), so pass counts are the measure there
-    - [ ] Fewer passes for a card around a live reveal: its shadow comes
-          from its silhouette, which the inner blur doesn't change
+    - [x] Fewer passes for a card around a live reveal: a region pass
+          can give a key (new PassOptions `key`: what its output depends
+          on), and a group around it signs with that instead of
+          refusing to be kept; `blur`'s key is its radius in steps (half
+          a device px up to 8, then 5%), so the card and its shadow,
+          and the region pass and blur inside it, re-render once a step
+          rather than every frame, drawn at most a step behind. A nested
+          layer transform signs with its affine and opacity the same way
+          (a card around its tilted screenshot). Headless, three cards
+          revealing (scale, y, opacity, unblur 28 → 0 device px over 60
+          frames): 174 group passes against 294 with the cache off,
+          pixel-identical once settled; fx transform, motion, region
+          and layout sections unchanged. Desktop rerun pending
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's
@@ -817,7 +828,13 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           to a full read, emoji and CJK atlas glyphs included; overflow
           toggles on <body> read nothing; color, `--x` and a class on
           <body> still read everything; test:edit and the text visual
-          sections unchanged. Desktop rerun pending
+          sections unchanged
+    - [x] Rerun (03:09): no full reads in the run (521 partial);
+          lightbox 26 → 6 dropped, the run 153 → 77, frame interval p95
+          16.3 → 9.3 ms. Left at the lightbox: a 52 ms long frame on the
+          click the browser doesn't attribute (needs a DevTools trace),
+          and a 21 ms partial read of 57 elements when a page font
+          finishes loading
   - [x] Hitches with no GPU timing for their frame (readbacks in flight
         are capped) were unattributed: `hitchAt` passes the frames
         around's GPU times and a busy GPU reads "GPU likely"

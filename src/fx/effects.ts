@@ -108,6 +108,12 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
    * and passed through, and the group around it can keep its texture
    * (gpu/group_cache.ts). Re-evaluated each frame. */
   idle?: (params: ParamValues<S>, dpr: number) => boolean
+  /** Region passes: a number that changes whenever the fragment's output
+   * for the same input can (a blur: its radius, as the shader rounds it).
+   * With it, an opacity group around the element keeps its texture while
+   * the key holds (gpu/group_cache.ts); without it, any frame the pass
+   * runs counts as a change. Re-evaluated each frame. */
+  key?: (params: ParamValues<S>, dpr: number) => number
   /** Default true. */
   enabled?: boolean
   /** Keep the frame loop running while enabled (time-based motion).
@@ -269,6 +275,8 @@ interface PassState {
   downsample: (dpr: number) => number
   /** PassOptions.idle. */
   idle: (dpr: number) => boolean
+  /** PassOptions.key (null without one). */
+  key: (dpr: number) => number | null
   /** Region passes: the resolution divisor this frame's encode used
    * (composite reads the last intermediate stage at it). */
   regionDown?: number
@@ -340,6 +348,14 @@ function downsampleFn<S extends ParamSchema>(
   }
   const n = clampTo(d ?? 1)
   return () => n
+}
+
+function keyFn<S extends ParamSchema>(
+  opts: PassOptions<S>,
+  values: ParamValues<S>
+): (dpr: number) => number | null {
+  const f = opts.key
+  return f ? (dpr) => f(values, dpr) : () => null
 }
 
 function idleFn<S extends ParamSchema>(
@@ -416,6 +432,7 @@ function inertEffects(): Effects {
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
         idle: idleFn(opts, block.values),
+        key: keyFn(opts, block.values),
         life: new Lifecycle({
           enabled: opts.enabled ?? true,
           continuous: passContinuous(opts),
@@ -1374,6 +1391,7 @@ function buildEffects(compositor: Compositor): Effects {
       p.stages.length > 0 &&
       !destroyed &&
       !p.idle(graph.shared.dpr),
+    key: () => p.key(graph.shared.dpr),
     encode(f) {
       if (p.block.dirty && p.paramsBuf) {
         device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
@@ -1478,6 +1496,7 @@ function buildEffects(compositor: Compositor): Effects {
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
         idle: idleFn(opts, block.values),
+        key: keyFn(opts, block.values),
         life,
         paramsBuf: null,
         stages: [],

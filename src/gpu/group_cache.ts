@@ -74,10 +74,11 @@ export interface CacheContext {
    * that changes when its drawing over `g` can, or null when it can't be
    * kept (Renderer.materialKey). */
   materialKey?: (id: number, g: OpacityGroup) => number | null
-  /** Why the nested group `scene.groups[i]` draws differently from frame
-   * to frame without a new record ('nested region': a live region pass;
-   * 'nested transform': a layer transform away from rest), or null. */
-  nestedLive?: (i: number) => RenderReason | null
+  /** What the isolated nested group `scene.groups[i]` adds to the
+   * signature beyond its records: a number (a region pass's key, a layer
+   * transform's values), null (nothing: idle or at rest), or why it
+   * can't be kept ('nested region': a region pass without a key). */
+  nested?: (i: number) => number | RenderReason | null
 }
 
 export class GroupCache {
@@ -301,9 +302,12 @@ export class GroupCache {
           return no('nested region')
         }
         if (n.region !== undefined) {
-          const live = c.nestedLive ? c.nestedLive(b.group) : 'nested region'
-          if (live) {
-            return no(live)
+          const k = c.nested ? c.nested(b.group) : 'nested region'
+          if (typeof k === 'string') {
+            return no(k)
+          }
+          if (k !== null) {
+            mix(k)
           }
         }
         if (n.vbounds) {
@@ -541,4 +545,15 @@ function layerRecords(
     default:
       return null
   }
+}
+
+/** An FNV-1a hash of `values` (CacheContext.nested's keys). */
+export function hashValues(values: readonly number[]): number {
+  let h = 0x811c9dc5
+  for (const v of values) {
+    const x = Number.isInteger(v) ? v : Math.round(v * 4096)
+    h = Math.imul(h ^ (x & 0xffff), 0x01000193)
+    h = Math.imul(h ^ ((x >>> 16) & 0xffff), 0x01000193)
+  }
+  return h >>> 0
 }

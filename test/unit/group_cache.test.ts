@@ -262,7 +262,7 @@ test('a second group of the same element keeps one stand-in key', () => {
   assert.equal(cache.keyOf(group({ key: { el } })), kb)
 })
 
-test('a nested isolated group: kept unless its pass or transform is live', () => {
+test('a nested isolated group signs with its key, or keeps the group from being kept', () => {
   const { scene, list, ctx, cache } = setup()
   const outer = group()
   const inner = group({ depth: 1, region: 7 })
@@ -272,10 +272,25 @@ test('a nested isolated group: kept unless its pass or transform is live', () =>
   list[4] = { kind: 'pop', group: 0 }
   assert.equal(cache.signature(ctx, outer, 0, 4, place(), 0, []), null)
   assert.equal(cache.reason, 'nested region')
-  let live: string | null = null
-  const c = { ...ctx, nestedLive: () => live }
-  assert.notEqual(cache.signature(c, outer, 0, 4, place(), 0, []), null)
-  live = 'nested transform'
+  let k: number | string | null = null
+  const c = { ...ctx, nested: () => k }
+  const idle = cache.signature(c, outer, 0, 4, place(), 0, [])
+  assert.notEqual(idle, null)
+  k = 12
+  const a = cache.signature(c, outer, 0, 4, place(), 0, [])
+  assert.notEqual(a, idle)
+  assert.equal(cache.signature(c, outer, 0, 4, place(), 0, []), a)
+  k = 13
+  assert.notEqual(cache.signature(c, outer, 0, 4, place(), 0, []), a)
+  k = 'nested region'
   assert.equal(cache.signature(c, outer, 0, 4, place(), 0, []), null)
-  assert.equal(cache.reason, 'nested transform')
+})
+
+test('radiusStep: half device px up to 8, then 5% steps', async () => {
+  const { radiusStep } = await import('../../src/fx/presets/blur')
+  assert.equal(radiusStep(0.3), 0)
+  assert.equal(radiusStep(2.2), radiusStep(2.1))
+  assert.notEqual(radiusStep(2.2), radiusStep(2.9))
+  assert.equal(radiusStep(28), radiusStep(28.4))
+  assert.notEqual(radiusStep(28), radiusStep(30))
 })

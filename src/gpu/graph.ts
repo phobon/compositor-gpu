@@ -103,6 +103,11 @@ export interface RegionHandler {
   pad(): number
   /** False: composite the group plainly this frame. */
   active(): boolean
+  /** A number that changes whenever what it draws over the same source
+   * can (its params, as the pass sees them), so a group around the
+   * element can keep its texture while it holds; null or absent: it can
+   * change any frame (time, the pointer). */
+  key?(): number | null
   /** Record any intermediate stages, before the parent pass resumes. */
   encode(frame: RegionFrame): void
   /** Draw into the parent target's pass (premultiplied over; the

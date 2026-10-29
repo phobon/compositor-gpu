@@ -31,7 +31,12 @@ import {
 } from './graph'
 import { downFactor, GroupBlur } from './group_blur'
 
-import { type CacheContext, GroupCache, type Rendered } from './group_cache'
+import {
+  type CacheContext,
+  GroupCache,
+  hashValues,
+  type Rendered
+} from './group_cache'
 import {
   type GroupPlace,
   type LevelPlan,
@@ -731,13 +736,18 @@ export class Renderer {
       imagesVolatile: this.imagesVolatile,
       textVolatile: this.textVolatile,
       materialKey: (id, g) => this.materialKey(id, g, ctx),
-      nestedLive: (i) => {
+      nested: (i) => {
         const e = fx.effectOf(scene.groups[i])
         if (e?.kind === 'region') {
-          return 'nested region'
+          return e.region.key?.() ?? 'nested region'
         }
-        // Called while groups render, after xfs is filled below.
-        return e?.kind === 'transform' && xfs[i] ? 'nested transform' : null
+        // Called while groups render, after xfs is filled below: the
+        // affine and opacity it composites with.
+        const xf = xfs[i]
+        if (e?.kind === 'transform' && xf) {
+          return hashValues([...xf, e.transform.opacity])
+        }
+        return null
       }
     }
     if (scene.backdrops.length > 0) {
