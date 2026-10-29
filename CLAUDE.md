@@ -610,6 +610,19 @@ Conventions each pass must follow:
   are used when present; text is measured with Canvas 2D and anchored to the
   element's first/last glyph line. They become BoxRecords/GlyphRuns in
   `node.kids` (marker, ::before, kids, ::after) in the element's local frame.
+  They're read only for elements a style rule giving them `content` can
+  match (`dom/pseudo_rules.ts`, rescanned when the sheets change; Chrome's
+  `q` quotes built in; an unreadable sheet reads every element), and a
+  `::marker` with list-style none likewise.
+- **Lazy reads** (`lazyRead`, opt-in; docs/LAZY_READ.md): the compositor
+  sets `SceneReader.readWindow` from the scroll before each read; an
+  element far outside it has its children deferred (`ElNode.deferred`,
+  `defers()`), a far child of a read element is a stub (`farStub()`:
+  rect plus `display`/`position`/`float`, no records), and
+  `dueDeferred()` feeds the compositor's `lazyScopes()`, which reads
+  them as partial-read scopes as the canvas nears (budgeted, at least
+  one a frame). Not when the subtree can hold a fixed element
+  (`PseudoRules.mayHoldFixed`) or carries `data-gpu-eager`.
   A pseudo's own `transform`/`translate`/`rotate`/`scale` (about its
   `transform-origin`) is applied from computed style (`boxAffine`), since
   there's no rect to solve a translation from. `counter()`/`counters()`

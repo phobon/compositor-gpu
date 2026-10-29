@@ -433,14 +433,27 @@ const BORDER_STYLE_CODE: Record<string, BorderStyle> = {
  * draw solid.
  */
 function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
+  const sides = [
+    s.borderTopStyle,
+    s.borderRightStyle,
+    s.borderBottomStyle,
+    s.borderLeftStyle
+  ]
+  // Most elements have no border: their widths and colours go unread.
+  if (sides.every((st) => NO_BORDER_STYLE.has(st))) {
+    return null
+  }
   const side = (width: string, style: string) =>
     NO_BORDER_STYLE.has(style) ? 0 : px(width)
   const widths: [number, number, number, number] = [
-    side(s.borderTopWidth, s.borderTopStyle),
-    side(s.borderRightWidth, s.borderRightStyle),
-    side(s.borderBottomWidth, s.borderBottomStyle),
-    side(s.borderLeftWidth, s.borderLeftStyle)
+    side(s.borderTopWidth, sides[0] ?? ''),
+    side(s.borderRightWidth, sides[1] ?? ''),
+    side(s.borderBottomWidth, sides[2] ?? ''),
+    side(s.borderLeftWidth, sides[3] ?? '')
   ]
+  if (widths.every((w) => w === 0)) {
+    return null
+  }
   const colors: [RGBA, RGBA, RGBA, RGBA] = [
     parseColor(s.borderTopColor),
     parseColor(s.borderRightColor),
@@ -448,10 +461,10 @@ function readBorder(s: CSSStyleDeclaration): BoxRecord['border'] {
     parseColor(s.borderLeftColor)
   ]
   const styles: [BorderStyle, BorderStyle, BorderStyle, BorderStyle] = [
-    BORDER_STYLE_CODE[s.borderTopStyle] ?? 0,
-    BORDER_STYLE_CODE[s.borderRightStyle] ?? 0,
-    BORDER_STYLE_CODE[s.borderBottomStyle] ?? 0,
-    BORDER_STYLE_CODE[s.borderLeftStyle] ?? 0
+    BORDER_STYLE_CODE[sides[0] ?? ''] ?? 0,
+    BORDER_STYLE_CODE[sides[1] ?? ''] ?? 0,
+    BORDER_STYLE_CODE[sides[2] ?? ''] ?? 0,
+    BORDER_STYLE_CODE[sides[3] ?? ''] ?? 0
   ]
   const paints = widths.some((w, i) => w > 0 && (colors[i]?.a ?? 0) > 0.001)
   return paints ? { widths, colors, styles } : null

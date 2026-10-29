@@ -55,6 +55,7 @@ export function inert(): Compositor & { text: null; scene: null } {
       sceneReused: false,
       readElements: 0,
       partialReads: 0,
+      deferred: 0,
       patchedReads: 0,
       refits: 0,
       sync: {

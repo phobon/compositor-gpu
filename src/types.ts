@@ -105,6 +105,19 @@ export interface CompositorOptions {
    * when the viewport leaves it; a larger margin means fewer re-anchors
    * and a larger canvas. */
   canvasMargin?: number
+  /** Read only what can paint near the canvas (docs/LAZY_READ.md): a
+   * subtree lying `lazySafe` past the read window (the canvas region
+   * grown by `lazyMargin`) has its children read later, as the canvas
+   * approaches, up to `lazyBudget` ms a frame (more when the canvas
+   * reaches one unread). `data-gpu-eager` opts a subtree out. Default
+   * false. */
+  lazyRead?: boolean
+  /** CSS px (default: one viewport height). */
+  lazyMargin?: number
+  /** CSS px (default: one viewport height). */
+  lazySafe?: number
+  /** ms (default 2). */
+  lazyBudget?: number
   /** 'page' (default): the canvas is part of the document and the browser
    * scrolls it with the page on its compositor thread, so content never
    * lags the scroll; anything drawn fixed to the viewport (a viewport-space
@@ -259,6 +272,8 @@ export interface CompositorStats {
   readElements: number
   /** Running count of mutation-scoped (non-full) DOM reads. */
   partialReads: number
+  /** Elements whose children are deferred (CompositorOptions.lazyRead). */
+  deferred: number
   /** Of those, the ones applied by replacing records in place rather
    * than rebuilding the scene (CompositorOptions.patchEdits). */
   patchedReads: number

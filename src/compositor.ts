@@ -369,6 +369,9 @@ export async function createCompositor(
       isolationScopes.clear()
       flags |= Dirty.MUTATION
     }
+    if (lazy && lazyScopes(scopes)) {
+      flags |= Dirty.MUTATION
+    }
     // Paint-only animation scopes skip the partial read's rect check,
     // except when a mutation in the same frame lies inside one (it could
     // change its layout size). A mutation outside one is covered by its
@@ -435,6 +438,10 @@ export async function createCompositor(
       reader.partialRead(dirty.scopes, paintOnly)
       readMs = frameReadMs = performance.now() - t0
       read = reader.lastRead.kind
+    }
+    if (lazy && reader.readElements > 50) {
+      msPerElement =
+        0.8 * msPerElement + (0.2 * frameReadMs) / reader.readElements
     }
     // After the reads (layout is clean, so docSize() costs no extra
     // reflow when it doesn't toggle the canvas), and in the same task as
@@ -952,6 +959,54 @@ export async function createCompositor(
     return out
   }
   const sync = new DomSync(root, () => scheduler.request())
+  const lazy = options.lazyRead === true && options.canvasPin !== 'viewport'
+  /** ms a read spends per element, from the last reads (lazy budget). */
+  let msPerElement = 0.05
+  /** Set the read window for this frame's reads and queue the deferred
+   * subtrees now inside it: those the canvas reaches all, the rest
+   * nearest first within the budget. True when it queued any. */
+  const lazyScopes = (scopes: Set<Element>): boolean => {
+    const vh = window.innerHeight
+    const sy = window.scrollY
+    const margin = Math.max(0, options.canvasMargin ?? vh)
+    const extra = Math.max(0, options.lazyMargin ?? vh)
+    const c0 = sy - margin
+    const c1 = sy + vh + margin
+    reader.readWindow = {
+      y0: c0 - extra,
+      y1: c1 + extra,
+      safe: Math.max(0, options.lazySafe ?? vh)
+    }
+    if (reader.deferredCount === 0) {
+      return false
+    }
+    const budget = options.lazyBudget ?? 2
+    let spent = 0
+    let queued = 0
+    for (const el of reader.dueDeferred(c0 - extra, c1 + extra, sy + vh / 2)) {
+      const r = el.getBoundingClientRect()
+      const onCanvas = r.bottom + sy >= c0 && r.top + sy <= c1
+      const cost = el.getElementsByTagName('*').length * msPerElement
+      // The nearest one each frame regardless, so a subtree larger than
+      // the budget still gets read.
+      if (
+        !onCanvas &&
+        queued > 0 &&
+        (spent + cost > budget || queued >= LAZY_SCOPES_MAX)
+      ) {
+        continue
+      }
+      spent += cost
+      queued++
+      scopes.add(el)
+      sync.trace?.('lazy', el)
+    }
+    // Left for a later frame: ask for one.
+    if (queued < reader.dueDeferred(c0 - extra, c1 + extra, 0).length) {
+      scheduler.request()
+    }
+    return queued > 0
+  }
   sync.fontScope = (families) =>
     reader.elementsWithFont(families, FONT_SCOPE_MAX)
   // Every glyph uploads again: atlas glyphs re-rasterise (the atlas
@@ -1368,6 +1423,7 @@ export async function createCompositor(
       sceneReused: renderer.lastReused,
       readElements: reader.readElements,
       partialReads: reader.partialReads,
+      deferred: reader.deferredCount,
       patchedReads: reader.patchedReads,
       refits: scene.refits,
       sync: { ...sync.diag },
@@ -1476,6 +1532,10 @@ interface MediaState {
   changed: boolean
 }
 const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
+
+/** Deferred subtrees queued in one frame at most beyond those the canvas
+ * reaches (partial reads past MAX_BOUNDARIES read everything). */
+const LAZY_SCOPES_MAX = 32
 
 /** Elements a font load re-reads at most before it reads everything
  * (DomSync.invalidateFonts). */

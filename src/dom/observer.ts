@@ -168,6 +168,9 @@ function carriesStylesheet(n: Node): boolean {
  * canvas; an attribute change on the element itself still re-reads its
  * parent, so the hole follows class/style toggles. */
 export const IGNORE_ATTR = 'data-gpu-ignore'
+/** Never defer reading this element's subtree (docs/LAZY_READ.md): for
+ * content that paints far from where it sits in the page. */
+export const EAGER_ATTR = 'data-gpu-eager'
 
 /** Selected text parents a selection change re-reads before it falls back
  * to a full read. */

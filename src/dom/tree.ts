@@ -31,7 +31,7 @@ import {
   propagateDecorations
 } from './decorations'
 import { GeneratedState } from './generated'
-import { IGNORE_ATTR, isIgnored } from './observer'
+import { EAGER_ATTR, IGNORE_ATTR, isIgnored } from './observer'
 import {
   type GlyphRef,
   type OrdinalCache,
@@ -41,6 +41,7 @@ import {
   readBeforeAfter,
   readMarker
 } from './pseudo'
+import { PseudoRules } from './pseudo_rules'
 import { ReadPass, type TextReadStats } from './read_pass'
 import { patch, rebuild } from './scene_sync'
 import { colorSelected, selectionBoxes } from './selection'
@@ -181,6 +182,10 @@ export interface ElNode {
   /** `display: inline | contents`: the box is fragmented (or absent), so
    * its bounding rect doesn't bound its effect on layout outside it. */
   fragmented: boolean
+  /** Its children weren't read: it lay far from the read window
+   * (SceneReader.readWindow, docs/LAZY_READ.md). Read later as a partial
+   * read scoped to it. */
+  deferred?: boolean
   /** Computed `float` is not none. */
   float: boolean
   /** Accumulated linear transform (ancestors · own); null = identity. */
@@ -461,6 +466,9 @@ export class SceneReader {
   /** Counters and quote depth for generated content, for the current
    * read (generated.ts). */
   private readonly generated = new GeneratedState()
+  /** Which elements a style rule can give a pseudo-element (read once
+   * per pass while the sheets are unchanged). */
+  private readonly pseudoRules = new PseudoRules()
   /** Elements visited (DOM-read) by the most recent read, incl. any work
    * discarded by an escalation. */
   readElements = 0
@@ -473,6 +481,12 @@ export class SceneReader {
   /** Elements isolated for region effects, by region id (gpu/graph.ts
    * `isolate`). Read on the next read; changing it needs a full read. */
   readonly isolated = new Map<Element, number>()
+  /** Lazy reads (docs/LAZY_READ.md): the doc-space rows reads cover this
+   * frame, and how far outside them an element's subtree must lie to be
+   * deferred; null reads everything. */
+  readWindow: { y0: number; y1: number; safe: number } | null = null
+  /** Nodes whose children were deferred. */
+  private deferredNodes = new Set<ElNode>()
   /** Partial reads that completed without escalating. */
   partialReads = 0
   /** Of those, the ones applied by replacing records in place instead of
@@ -545,6 +559,7 @@ export class SceneReader {
     this.lastSceneMs = 0
     this.ordinals.clear()
     this.generated.clear()
+    this.pseudoRules.refresh()
     this.reads++
   }
 
@@ -768,6 +783,132 @@ export class SceneReader {
     return out
   }
 
+  /** Whether `node`'s children can wait (docs/LAZY_READ.md): its box and
+   * own ink lie at least `safe` outside the read window, and nothing in
+   * its subtree can paint far from it that the scan can see. */
+  private defers(
+    node: ElNode,
+    el: Element,
+    position: string,
+    region: number | undefined,
+    hold: boolean
+  ): boolean {
+    const w = this.readWindow
+    if (
+      !w ||
+      node.space !== 'doc' ||
+      node.fragmented ||
+      position === 'fixed' ||
+      position === 'sticky' ||
+      region !== undefined ||
+      hold ||
+      !el.firstChild ||
+      el.hasAttribute(EAGER_ATTR)
+    ) {
+      return false
+    }
+    let top = node.rect.y
+    let bottom = node.rect.y + node.rect.height
+    for (const r of node.own) {
+      top = Math.min(top, r.rect.y)
+      bottom = Math.max(bottom, r.rect.y + r.rect.height)
+    }
+    if (bottom > w.y0 - w.safe && top < w.y1 + w.safe) {
+      return false
+    }
+    return !this.pseudoRules.mayHoldFixed(el)
+  }
+
+  /** A child lying far outside the read window, as a node of its rect
+   * alone with its own style unread too (two property reads instead of
+   * ~95): read in full, like a deferred node, when the canvas nears.
+   * Null for `display: none`; undefined when it must be read now (near,
+   * fixed or sticky, fragmented, floated, opted out, or able to hold a
+   * fixed element). */
+  private farStub(
+    el: Element,
+    parent: ElNode,
+    cb: Placement
+  ): ElNode | null | undefined {
+    const w = this.readWindow
+    if (
+      !w ||
+      parent.space !== 'doc' ||
+      this.inIgnored ||
+      SKIP_TAGS.has(el.tagName) ||
+      el.hasAttribute(IGNORE_ATTR) ||
+      el.hasAttribute(EAGER_ATTR) ||
+      this.isolated.has(el) ||
+      this.holds.has(el)
+    ) {
+      return undefined
+    }
+    const rect = this.pass.at('doc').docRect(el.getBoundingClientRect())
+    if (rect.y + rect.height > w.y0 - w.safe && rect.y < w.y1 + w.safe) {
+      return undefined
+    }
+    const s = getComputedStyle(el)
+    const display = s.display
+    if (display === 'none') {
+      return null
+    }
+    if (
+      display === 'inline' ||
+      display === 'contents' ||
+      s.position === 'fixed' ||
+      s.position === 'sticky' ||
+      s.float !== 'none' ||
+      this.pseudoRules.mayHoldFixed(el)
+    ) {
+      return undefined
+    }
+    const node: ElNode = {
+      kind: 'element',
+      el,
+      parent,
+      kids: [],
+      rect,
+      space: 'doc',
+      trapsFixed: parent.trapsFixed,
+      own: NO_RECORDS,
+      isContext: false,
+      realContext: false,
+      ctxZ: 0,
+      childClip: null,
+      alpha: 1,
+      fragmented: false,
+      deferred: true,
+      float: false,
+      lin: parent.lin,
+      decor: null,
+      cb,
+      place: rectPlacement(rect)
+    }
+    this.nodes.set(el, node)
+    this.deferredNodes.add(node)
+    return node
+  }
+
+  /** Elements whose deferred children now fall inside rows [y0, y1],
+   * nearest `focus` first (the compositor reads them as partial reads). */
+  dueDeferred(y0: number, y1: number, focus: number): Element[] {
+    const out: { el: Element; d: number }[] = []
+    for (const n of this.deferredNodes) {
+      const top = n.rect.y
+      const bottom = n.rect.y + n.rect.height
+      if (bottom >= y0 && top <= y1) {
+        const d = bottom < focus ? focus - bottom : Math.max(0, top - focus)
+        out.push({ el: n.el, d })
+      }
+    }
+    return out.sort((a, b) => a.d - b.d).map((o) => o.el)
+  }
+
+  /** Nodes whose children are deferred (stats). */
+  get deferredCount(): number {
+    return this.deferredNodes.size
+  }
+
   movedStickies(): Element[] {
     const out: Element[] = []
     if (this.stickies.size === 0) {
@@ -792,6 +933,7 @@ export class SceneReader {
     if (this.nodes.get(node.el) === node) {
       this.nodes.delete(node.el)
     }
+    this.deferredNodes.delete(node)
     for (const kid of node.kids) {
       if (kid.kind === 'element') {
         this.forget(kid)
@@ -809,6 +951,7 @@ export class SceneReader {
 
   private readAll(): void {
     this.nodes = new WeakMap()
+    this.deferredNodes.clear()
     this.stickies.clear()
     this.rootTrapsFixed = ancestorsTrapFixed(this.root)
     this.rootInRootContext = !ancestorsMakeContext(this.root)
@@ -1162,19 +1305,29 @@ export class SceneReader {
       node.ownBlend = true
     }
     this.nodes.set(el, node)
+    const deferred =
+      !svgRoot && !isRoot && this.defers(node, el, position, region, hold)
+    if (deferred) {
+      node.deferred = true
+      this.deferredNodes.add(node)
+    }
 
-    if (!svgRoot) {
+    if (!svgRoot && !deferred) {
       for (const child of el.childNodes) {
         if (child.nodeType === Node.ELEMENT_NODE) {
-          const kid = this.readNode(
-            child as Element,
-            node,
-            childClip,
-            false,
-            lin,
-            decor,
-            cb
-          )
+          const far = this.farStub(child as Element, node, cb)
+          const kid =
+            far === undefined
+              ? this.readNode(
+                  child as Element,
+                  node,
+                  childClip,
+                  false,
+                  lin,
+                  decor,
+                  cb
+                )
+              : far
           if (kid) {
             node.kids.push(kid)
           }
@@ -1392,17 +1545,28 @@ export class SceneReader {
       gen: this.generated
     }
     const head: ElKid[] = []
-    if (display === 'list-item') {
+    const el = node.el
+    const rules = this.pseudoRules
+    if (
+      display === 'list-item' &&
+      (s.listStyleType !== 'none' ||
+        s.listStyleImage !== 'none' ||
+        rules.may(el, '::marker'))
+    ) {
       const marker = readMarker(host, firstGlyph(node.kids), this.ordinals)
       if (marker) {
         head.push(...this.pseudoKids(node, marker))
       }
     }
-    const before = readBeforeAfter(host, '::before', firstGlyph(node.kids))
+    const before = rules.may(el, '::before')
+      ? readBeforeAfter(host, '::before', firstGlyph(node.kids))
+      : null
     if (before) {
       head.push(...this.pseudoKids(node, before))
     }
-    const after = readBeforeAfter(host, '::after', lastGlyph(node.kids))
+    const after = rules.may(el, '::after')
+      ? readBeforeAfter(host, '::after', lastGlyph(node.kids))
+      : null
     if (head.length) {
       node.kids.unshift(...head)
     }

@@ -805,7 +805,11 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           revealing (scale, y, opacity, unblur 28 → 0 device px over 60
           frames): 174 group passes against 294 with the cache off,
           pixel-identical once settled; fx transform, motion, region
-          and layout sections unchanged. Desktop rerun pending
+          and layout sections unchanged
+    - [x] Rerun (03:34): 77 → 36 dropped (516 at the start), fling GPU
+          p50 9.9 → 7.1 ms (under the 8.3 ms frame), fling 35 → 14 and
+          scroll 36 → 13 dropped; 6.9 kept, 4.5 rendered a frame
+          (changed 1.5: cards at each blur step)
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's
@@ -838,6 +842,36 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [x] Hitches with no GPU timing for their frame (readbacks in flight
         are capped) were unattributed: `hitchAt` passes the frames
         around's GPU times and a busy GPU reads "GPU likely"
+- [ ] Read speed (2026-10-29; marketplace route changes: escalated reads
+      of ~1,080 elements, 38–45 ms on the M1). A read costs ~40 µs an
+      element, nearly all computed style (~95 property reads at ~0.4 µs;
+      background/border records ~22%, text ~18%, pseudo-elements ~10%,
+      transform/stacking checks ~10%). Memoising each element's property
+      reads changed nothing (repeats are cheap), so it was dropped
+  - [x] Fast paths: a border reads its widths and colours only when a
+        side has a style (most have none), and `::before` / `::after` /
+        `::marker` (list-style none) are read only for elements a style
+        rule giving them `content` can match (dom/pseudo_rules.ts: the
+        document's rules scanned when its sheets change, Chrome's own
+        `q` quotes included; an unreadable sheet or nested CSS reads
+        every element as before). Headless, a 970-element grid page:
+        ~44 → ~37 ms a full read; pseudo, gencontent, text, boxes,
+        borders, outlines, gradients, shadows and stacking unchanged,
+        test:edit unchanged
+  - [x] Lazy reads (docs/LAZY_READ.md; `lazyRead: true`, opt-in): an
+        element far outside the read window (the canvas region plus a
+        viewport) has its children deferred, a far child of a read
+        element is a stub (its rect and three style reads), and both are
+        read as partial reads as the canvas approaches, within a 2 ms
+        budget a frame (all that the canvas reaches regardless). A
+        subtree that can hold a fixed element (style rules setting it,
+        or an inline style naming it) is read in full; `data-gpu-eager`
+        opts one out. Headless on a 400-card page: full reads 3,268 →
+        529 elements at the top (200 → 61 ms) and 339 at the bottom
+        (214 → 32 ms), pixel-identical to an eager read while scrolling
+        through, after far edits, removals and a jump back; the whole of
+        test:visual and test:edit with it forced on: unchanged. Desktop:
+        marketplace and /duo with it on, pending
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked
