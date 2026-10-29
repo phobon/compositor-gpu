@@ -472,6 +472,13 @@ fn base_fs0(in : VOut) -> vec4f {
   let ip = in.local + in.half - (b.sh1.xy + b.sh1.zw * 0.5);
   let di = sd_box(ip, b.sh1.zw * 0.5, b.shr, b.gt);
   let aai = max(fwidth(di), 1e-4);
+  // A plain fill (no border, gradient, shadow or background-clip inset):
+  // what the general path below comes to, without its other SDFs.
+  if (b.grad.x == 0.0 && b.sh0.z < 0.5 && all(bw == vec4f(0.0)) &&
+      all(b.sh1 == vec4f(0.0))) {
+    return vec4f(b.fill.rgb * b.fill.a, b.fill.a) * edge_cov(d, apx) *
+      opacity;
+  }
   if (b.grad.x < -0.5) {
     let la = b.fill.a * line_cov(b, in.local, in.half, apx);
     return vec4f(b.fill.rgb * la, la) * opacity;
