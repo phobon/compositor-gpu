@@ -191,6 +191,73 @@ describe('planLevel', () => {
     )
   })
 
+  test('outside the band under a layer transform or a region pass, skipped', () => {
+    const list = [push(0), draw, pop(0), push(1), draw, pop(1)]
+    const groups = [
+      group(100, {
+        alpha: 1,
+        box: { x: 100, y: 100, width: 200, height: 100 }
+      }),
+      group(1500, { alpha: 1 })
+    ]
+    const banded = {
+      ...main,
+      scissor: [0, 600, 1000, 300] as [number, number, number, number]
+    }
+    const region: RegionHandler = {
+      pad: () => 0,
+      active: () => true,
+      encode: () => {},
+      composite: () => {}
+    }
+    const effects = new Map<number, GroupEffect>([
+      [0, { kind: 'transform', transform: transform({ scaleX: 0.9 }) }],
+      [1, { kind: 'region', region }]
+    ])
+    const xfs = [
+      layerAffine(groups[0] as OpacityGroup, transform({ scaleX: 0.9 }), ctx),
+      null
+    ]
+    const p = planLevel(banded, 0, 6, input(list, groups, { xfs }, effects))
+    assert.deepEqual(kinds(p.steps), ['skip', 'skip'])
+    // Moved into the band by its transform, or reaching it: drawn.
+    const down = [
+      layerAffine(groups[0] as OpacityGroup, transform({ y: 550 }), ctx),
+      null
+    ]
+    region.pad = () => 700
+    const q = planLevel(
+      banded,
+      0,
+      6,
+      input(list, groups, { xfs: down }, effects)
+    )
+    assert.deepEqual(kinds(q.steps), ['own', 'own'])
+  })
+
+  test('a blurred or shadowed group reaching into the band is drawn', () => {
+    const list = [push(0), draw, pop(0)]
+    const banded = {
+      ...main,
+      scissor: [0, 600, 1000, 300] as [number, number, number, number]
+    }
+    const shadow = { dx: 0, dy: 60, sigma: 10, color: [0, 0, 0, 1] }
+    const filter = {
+      matrices: [],
+      blur: 0,
+      shadows: [shadow]
+    } as unknown as GroupFilter
+    const near = group(420, { filter })
+    assert.deepEqual(
+      kinds(planLevel(banded, 0, 3, input(list, [near])).steps),
+      ['own']
+    )
+    const far = group(300, { filter })
+    assert.deepEqual(kinds(planLevel(banded, 0, 3, input(list, [far])).steps), [
+      'skip'
+    ])
+  })
+
   test('an invisible group or one with nothing inside is skipped', () => {
     const list = [push(0), draw, pop(0), push(1), draw, pop(1)]
     const empty = group(0, { bounds: { x: 0, y: 0, width: 0, height: 0 } })

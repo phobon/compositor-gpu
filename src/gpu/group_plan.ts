@@ -205,7 +205,7 @@ export function planLevel(
     // Outside the band being drawn (canvasFill: 'band'): nothing of it
     // would land.
     const band = parent.scissor
-    const e = g && band && !xf && !region ? extent() : null
+    const e = g && band ? landing(g, xf, pad, extent()) : null
     if (
       e &&
       band &&
@@ -280,6 +280,32 @@ export function planLevel(
     leaves,
     packed: leaves.length > 1 ? packGroups(leaves, input.maxTexture) : null
   }
+}
+
+/** Where in the parent (doc CSS px) `g` can paint: its extent grown by
+ * a region pass's reach (`pad`) and its filter's blur and shadows, then
+ * through its layer transform. */
+export function landing(
+  g: OpacityGroup,
+  xf: Affine | null,
+  pad: number,
+  extent: Box4 | null
+): Box4 | null {
+  if (!extent) {
+    return null
+  }
+  const f = g.filter
+  let m = pad + 3 * (f?.blur ?? 0)
+  for (const s of f?.shadows ?? []) {
+    m = Math.max(
+      m,
+      pad + Math.max(Math.abs(s.dx), Math.abs(s.dy)) + 3 * s.sigma
+    )
+  }
+  const [x0, y0, x1, y1] = extent
+  return xf
+    ? mapRect(xf, x0 - m, y0 - m, x1 + m, y1 + m)
+    : [x0 - m, y0 - m, x1 + m, y1 + m]
 }
 
 /** Where `g`'s texture sits in `parent` and at what scale; null when
