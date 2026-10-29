@@ -60,7 +60,8 @@ fx.pass({
   1/n resolution per axis; the last samples that bilinearly while writing
   full resolution. For low-frequency passes: `blur` uses 2 from 8 device
   px of radius (its axes run at half resolution, the copy upsamples).
-  Region passes ignore it. `fx.scale` / `fx.src_scale` are the device px
+  Region passes honour it too (their last stage, the composite, stays
+  full resolution). `fx.scale` / `fx.src_scale` are the device px
   per texel of the stage's output and source (1 at full resolution);
   `uv`, `sample` and `fx.texel` stay in full-resolution terms.
 - `idle` (region passes): true while the fragment can't change anything

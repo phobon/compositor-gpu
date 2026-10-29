@@ -766,10 +766,16 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           each tween under that. Headless (three cards, their inner
           blurs 14 → 0): once idle, frames draw main + copy only (with
           the cache off: each card's group and shadow passes),
-          pixel-identical; test:fx as before. Desktop rerun pending
-    - [ ] Region passes at full resolution: `downsample` applies to
-          fullscreen passes only; the reveals' region blurs (radius 14,
-          28 device px) run their two stages at full size
+          pixel-identical; test:fx as before
+    - [x] Rerun (02:16): flat (356 dropped; runs vary by ±20). 7.0
+          kept, 6.1 rendered: nested region and region 2.2 each (from
+          2.9), nested transform 0.6 (a card around its tilted screen).
+          Region passes now honour `downsample` (fullscreen only
+          before): the reveals' unblur (radius 14, 28 device px) runs
+          its two axes at half resolution, a quarter of the pixels.
+          Within 6/255 of full resolution headless (dpr 1 and 2, radius
+          3–14); fx-blur, fx-region, fx-progressive unchanged. Desktop
+          rerun pending
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's

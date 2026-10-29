@@ -269,6 +269,9 @@ interface PassState {
   downsample: (dpr: number) => number
   /** PassOptions.idle. */
   idle: (dpr: number) => boolean
+  /** Region passes: the resolution divisor this frame's encode used
+   * (composite reads the last intermediate stage at it). */
+  regionDown?: number
   life: Lifecycle
   paramsBuf: GPUBuffer | null
   stages: Stage[]
@@ -1282,7 +1285,8 @@ function buildEffects(compositor: Compositor): Effects {
     f: RegionFrame,
     src: Source,
     dst: { x: number; y: number },
-    alpha: number
+    alpha: number,
+    scale = 1
   ): void => {
     const t = p.region
     const r = t?.rect
@@ -1313,7 +1317,7 @@ function buildEffects(compositor: Compositor): Effects {
     d[6] = docX
     d[7] = docY
     d[8] = s
-    d[9] = 0
+    d[9] = scale
     d[10] = bx
     d[11] = by
     d[12] = src.x
@@ -1327,10 +1331,18 @@ function buildEffects(compositor: Compositor): Effects {
     d[20] = f.ctx.scrollX
     d[21] = f.ctx.scrollY
     d[22] = alpha
-    d[23] = 0
+    d[23] = src.scale
     device.queue.writeBuffer(stage.effect, 0, d)
   }
-  const regionSource = (p: PassState, i: number, f: RegionFrame): Source => {
+  /** A region pass's stage i reads the group texture (i = 0) or the
+   * previous stage's ping texture, at `down` device px per texel (every
+   * stage but the last runs at that: PassOptions.downsample). */
+  const regionSource = (
+    p: PassState,
+    i: number,
+    f: RegionFrame,
+    down: number
+  ): Source => {
     const view = i > 0 ? p.ping[(i - 1) % 2] : undefined
     if (!view) {
       return {
@@ -1348,11 +1360,11 @@ function buildEffects(compositor: Compositor): Effects {
       view: viewOf(view),
       x: f.x,
       y: f.y,
-      w: f.width,
-      h: f.height,
+      w: Math.ceil(f.width / down),
+      h: Math.ceil(f.height / down),
       texW: view.width,
       texH: view.height,
-      scale: 1
+      scale: down
     }
   }
   const regionHandler = (p: PassState): RegionHandler => ({
@@ -1367,8 +1379,10 @@ function buildEffects(compositor: Compositor): Effects {
         device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
       }
       const n = p.stages.length
+      const down = n > 1 ? p.downsample(graph.shared.dpr) : 1
+      p.regionDown = down
       if (n > 1) {
-        regionPing(p, f.width, f.height)
+        regionPing(p, Math.ceil(f.width / down), Math.ceil(f.height / down))
       }
       for (let i = 0; i < n - 1; i++) {
         const stage = p.stages[i]
@@ -1376,8 +1390,8 @@ function buildEffects(compositor: Compositor): Effects {
         if (!stage || !out) {
           continue
         }
-        const src = regionSource(p, i, f)
-        writeRegion(p, stage, f, src, { x: f.x, y: f.y }, 1)
+        const src = regionSource(p, i, f, down)
+        writeRegion(p, stage, f, src, { x: f.x, y: f.y }, 1, down)
         const rp = f.encoder.beginRenderPass({
           label: `fx:${p.name}`,
           ...timed(graph.shared.timer, `fx:${p.name}`),
@@ -1391,7 +1405,12 @@ function buildEffects(compositor: Compositor): Effects {
           ]
         })
         rp.setBindGroup(0, graph.shared.frameBindGroup)
-        rp.setScissorRect(0, 0, f.width, f.height)
+        rp.setScissorRect(
+          0,
+          0,
+          Math.ceil(f.width / down),
+          Math.ceil(f.height / down)
+        )
         rp.setPipeline(stage.pipeline)
         rp.setBindGroup(1, regionSrcGroup(src.view))
         rp.setBindGroup(2, stage.group())
@@ -1406,7 +1425,7 @@ function buildEffects(compositor: Compositor): Effects {
       if (!stage?.over) {
         return
       }
-      const src = regionSource(p, i, f)
+      const src = regionSource(p, i, f, p.regionDown ?? 1)
       writeRegion(p, stage, f, src, { x: 0, y: 0 }, f.alpha)
       rp.setPipeline(stage.over)
       rp.setBindGroup(1, regionSrcGroup(src.view))
