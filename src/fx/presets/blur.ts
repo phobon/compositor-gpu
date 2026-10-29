@@ -5,13 +5,15 @@ import type { Target } from '../target'
 // `radius` param (CSS px, the kernel's reach; σ = radius / 3), then a copy.
 // From DOWNSAMPLE_AT device px of radius the two blur stages run at half
 // resolution and the copy upsamples (bilinear) to full: a quarter of the
-// pixels, and half the taps, for a kernel too wide to show the difference.
+// pixels, and half the taps, for a kernel too wide to show the difference;
+// from QUARTER_AT, at a quarter (a sixteenth of the pixels).
 // Taps are one per source or target texel, whichever is coarser, capped
 // at MAX_TAPS per side and spread evenly past that, with the sampler's
 // bilinear filter covering the gaps.
 
 const MAX_TAPS = 16
 const DOWNSAMPLE_AT = 8
+const QUARTER_AT = 24
 
 const axis = (dir: string): string => /* wgsl */ `
 fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
@@ -63,7 +65,10 @@ export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
     fragment: [axis('vec2f(1.0, 0.0)'), axis('vec2f(0.0, 1.0)'), copy],
     params: schema,
     radius: (p) => p.radius,
-    downsample: (p, dpr) => (p.radius * dpr >= DOWNSAMPLE_AT ? 2 : 1),
+    downsample: (p, dpr) => {
+      const r = p.radius * dpr
+      return r >= QUARTER_AT ? 4 : r >= DOWNSAMPLE_AT ? 2 : 1
+    },
     // Under half a device px the stages sample their input as is.
     idle: (p, dpr) => p.radius * dpr < 0.5,
     enabled: opts.enabled,

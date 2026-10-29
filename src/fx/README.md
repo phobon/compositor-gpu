@@ -59,7 +59,8 @@ fx.pass({
 - `downsample: n` runs every stage of a fullscreen pass but its last at
   1/n resolution per axis; the last samples that bilinearly while writing
   full resolution. For low-frequency passes: `blur` uses 2 from 8 device
-  px of radius (its axes run at half resolution, the copy upsamples).
+  px of radius and 4 from 24 (its axes run at half or quarter resolution,
+  the copy upsamples).
   Region passes honour it too (their last stage, the composite, stays
   full resolution). `fx.scale` / `fx.src_scale` are the device px
   per texel of the stage's output and source (1 at full resolution);

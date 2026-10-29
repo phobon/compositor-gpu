@@ -774,8 +774,18 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           before): the reveals' unblur (radius 14, 28 device px) runs
           its two axes at half resolution, a quarter of the pixels.
           Within 6/255 of full resolution headless (dpr 1 and 2, radius
-          3–14); fx-blur, fx-region, fx-progressive unchanged. Desktop
-          rerun pending
+          3–14); fx-blur, fx-region, fx-progressive unchanged
+    - [x] Rerun (02:24): 356 → 217 dropped (scroll 213 → 101, fling
+          105 → 61), GPU p95 15.8 → 12.5 ms, fling GPU p50 15.4 →
+          11.5 ms; fx:blur pass time about halved. 7.9 kept, 6.6
+          rendered a frame
+    - [x] `blur` drops to quarter resolution from 24 device px of
+          radius (the reveals' 28): a sixteenth of the pixels for its two
+          axes. Headless against full resolution, radius 12–56 device
+          px: within 15/255, the differences along blurred edges;
+          fx-blur, fx-region, fx-progressive unchanged (their radii are
+          under 24). Desktop rerun pending; worth a look at a reveal for
+          shimmer while it moves
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's
