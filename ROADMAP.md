@@ -784,14 +784,40 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           axes. Headless against full resolution, radius 12–56 device
           px: within 15/255, the differences along blurred edges;
           fx-blur, fx-region, fx-progressive unchanged (their radii are
-          under 24). Desktop rerun pending; worth a look at a reveal for
-          shimmer while it moves
+          under 24); worth a look at a reveal for shimmer while it moves
+    - [x] Rerun (02:46): 217 → 153 dropped (the run's noise is about
+          ±20), scroll 101 → 72, bento 0, lightbox 44 → 26; fling GPU
+          p50 only 11.5 → 11.2 ms. Blur pixels are no longer what fling
+          pays for: it runs ~40 passes a frame (layer 11, filter 11,
+          fx:blur 11, region 5.5), because each card whose reveal is
+          playing re-renders with its drop shadow (nested region 5.7 a
+          frame). On the M1 the per-pass timestamps all overlap (every
+          pass "starts" near 0), so pass counts are the measure there
+    - [ ] Fewer passes for a card around a live reveal: its shadow comes
+          from its silhouette, which the inner blur doesn't change
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's
           uniforms change
   - [ ] The lightbox: a 64 ms full read (body[style] from the scroll lock
-        and a font load in the same frame, 271 elements)
+        and a font load in the same frame, 271 elements). At 02:46 still
+        36 ms, after a 92 ms long frame nothing names (needs a DevTools
+        trace). Its two causes no longer read everything:
+    - [x] An inline style change on the root reads everything only when
+          the root's computed style changes, past what only scrolls (on
+          <body> with <html> not clipping, `overflow-*` goes to the
+          viewport) or a custom property is involved; any other root
+          attribute still does (it can match selectors below)
+    - [x] A font load (DomSync `loadingdone`, faces prepared, a baked
+          family's fallback) re-reads only the elements whose text names
+          the family (`SceneReader.elementsWithFont`, up to 64), and
+          uploads all text again (the atlas drops its glyphs on
+          `loadingdone`; a new face moves the text pass's tables).
+          Headless: a late web font re-reads 1 element, pixel-identical
+          to a full read, emoji and CJK atlas glyphs included; overflow
+          toggles on <body> read nothing; color, `--x` and a class on
+          <body> still read everything; test:edit and the text visual
+          sections unchanged. Desktop rerun pending
   - [x] Hitches with no GPU timing for their frame (readbacks in flight
         are capped) were unattributed: `hitchAt` passes the frames
         around's GPU times and a busy GPU reads "GPU likely"

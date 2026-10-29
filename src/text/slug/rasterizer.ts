@@ -178,7 +178,9 @@ export class SlugText implements TextBackend {
   private queued = 0
   /** Called when a face is registered after a deferred parse (the
    * compositor re-reads styles then). */
-  onFace: (() => void) | null = null
+  /** A face became drawable after the fact: `family` when known (a
+   * baked family's fallback), else anything may draw differently. */
+  onFace: ((family?: string) => void) | null = null
 
   /** Fonts handed to loadFontBuffer still waiting for the parser, or
    * baked files (and the faces they fall back to) still loading. */
@@ -336,7 +338,7 @@ export class SlugText implements TextBackend {
     )
     this.queued++
     void this.prepare(faces, true)
-      .then(() => this.onFace?.())
+      .then(() => this.onFace?.(fam))
       .finally(() => {
         this.queued--
       })

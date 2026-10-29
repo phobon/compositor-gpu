@@ -734,6 +734,40 @@ export class SceneReader {
     return { els, deadline: Number.POSITIVE_INFINITY }
   }
 
+  /** Elements whose text the last read drew with a stack naming one of
+   * `families` (a web font that just loaded), or null past `cap` or
+   * before the first read: a font load re-reads just those
+   * (DomSync.invalidateFonts) instead of everything. */
+  elementsWithFont(families: readonly string[], cap: number): Element[] | null {
+    if (!this.tree) {
+      return null
+    }
+    const want = new Set(families.map(familyKey))
+    const out: Element[] = []
+    const stack: ElNode[] = [this.tree]
+    for (let n = stack.pop(); n; n = stack.pop()) {
+      let uses = false
+      for (const k of n.kids) {
+        if (k.kind === 'element') {
+          stack.push(k)
+        } else if (
+          !uses &&
+          k.kind === 'text' &&
+          k.fontStack.split(',').some((f) => want.has(familyKey(f)))
+        ) {
+          uses = true
+        }
+      }
+      if (uses) {
+        if (out.length >= cap) {
+          return null
+        }
+        out.push(n.el)
+      }
+    }
+    return out
+  }
+
   movedStickies(): Element[] {
     const out: Element[] = []
     if (this.stickies.size === 0) {
@@ -1670,4 +1704,12 @@ export function subtreeZ(node: ElNode): [number, number] | null {
   }
   visit(node)
   return lo <= hi ? [lo, hi] : null
+}
+
+/** A CSS font-family name, unquoted and lowercased. */
+function familyKey(f: string): string {
+  return f
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .toLowerCase()
 }

@@ -952,6 +952,19 @@ export async function createCompositor(
     return out
   }
   const sync = new DomSync(root, () => scheduler.request())
+  sync.fontScope = (families) =>
+    reader.elementsWithFont(families, FONT_SCOPE_MAX)
+  // Every glyph uploads again: atlas glyphs re-rasterise (the atlas
+  // drops them on `loadingdone`) and a new face moves the text pass's
+  // glyph tables.
+  sync.onFonts = () => scene.markDirty('text')
+  /** Faces of `families` became drawable: re-read the text using them,
+   * or everything when that can't be scoped. */
+  const fontsReady = (families: readonly string[]): void => {
+    if (!sync.invalidateFonts(families)) {
+      pendingReadFlags |= Dirty.STYLE
+    }
+  }
 
   // Faces reach the text pass as the page uses them. 'auto' (the
   // default) takes the document's faces the browser has loaded or is
@@ -967,7 +980,7 @@ export async function createCompositor(
     void text
       .prepare(faces)
       .then(() => {
-        pendingReadFlags |= Dirty.STYLE
+        fontsReady(faces.map((f) => f.family))
       })
       .finally(() => {
         fontsPending--
@@ -982,8 +995,12 @@ export async function createCompositor(
     text.useAssets(options.assets)
   }
   if (text) {
-    text.onFace = () => {
-      pendingReadFlags |= Dirty.STYLE
+    text.onFace = (family) => {
+      if (family) {
+        fontsReady([family])
+      } else {
+        pendingReadFlags |= Dirty.STYLE
+      }
       scheduler.request()
     }
     const fonts = options.fonts ?? 'auto'
@@ -1459,6 +1476,10 @@ interface MediaState {
   changed: boolean
 }
 const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
+
+/** Elements a font load re-reads at most before it reads everything
+ * (DomSync.invalidateFonts). */
+const FONT_SCOPE_MAX = 64
 
 function fullReadCause(flags: number, last: string): string {
   const names: string[] = []

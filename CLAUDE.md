@@ -880,8 +880,11 @@ provenance. Pipeline:
    emoji keep their colours. Both pipelines share ONE instance index space:
    every glyph writes a real instance to one buffer and a zero instance to the
    other, so `draw(first, count)` stays aligned with scene glyph order. The
-   atlas is cleared on `document.fonts` `loadingdone` (the observer also forces
-   a full re-read then). `stats().fallback` counts atlas glyphs per frame.
+   atlas is cleared on `document.fonts` `loadingdone`; the observer then
+   re-reads the elements whose text names the loaded families
+   (`DomSync.invalidateFonts`, `SceneReader.elementsWithFont`; past 64, or
+   unknown families, a full read) and `onFonts` re-uploads all text so
+   atlas glyphs re-rasterise. `stats().fallback` counts atlas glyphs per frame.
 
 `textRasterizer.ts` is the seam: any backend (e.g. MSDF) can implement
 `TextBackend`. `FontFace` doesn't expose its bytes, so `prepare(FontFace[])`
@@ -890,7 +893,8 @@ matches each face to an `@font-face` rule and fetches its `url()`
 faces the browser has loaded or is loading, then each face on
 `loadingdone`, so unused faces are never fetched. Bytes can also be handed
 over with `compositor.text.loadFontBuffer()` (queued until opentype.js has
-loaded; `onFace` then re-reads).
+loaded; `onFace` then re-reads: just that family's elements when it says
+which, as for prepared faces).
 
 ## Constraints that shape the code
 

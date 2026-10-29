@@ -345,6 +345,21 @@ function hookScriptAnimations(): void {
   }
 }
 
+/** Computed properties of the root that change how it scrolls or takes
+ * input, not what's drawn (DomSync.rootStyleChanged). */
+const SCROLL_ONLY = new Set([
+  'overscroll-behavior-x',
+  'overscroll-behavior-y',
+  'overscroll-behavior-block',
+  'overscroll-behavior-inline',
+  'touch-action',
+  'pointer-events',
+  'cursor',
+  'user-select',
+  '-webkit-user-select',
+  'scroll-behavior'
+])
+
 /** Video events that need a frame (they don't bubble: captured). */
 const MEDIA_EVENTS = ['playing', 'seeked', 'loadeddata'] as const
 
@@ -411,7 +426,17 @@ export class DomSync {
     const t = r.target
     if (r.type === 'attributes') {
       if (t === this.root) {
-        return Dirty.STYLE
+        // A scroll lock's `overflow: hidden` on <body> changes nothing
+        // drawn. Its inline style reaches the subtree only by inheritance
+        // (captured in the root's computed style) or custom properties;
+        // any other attribute can match selectors below it.
+        const inline = this.root.getAttribute('style') ?? ''
+        const vars = inline.includes('--') || this.rootInline.includes('--')
+        this.rootInline = inline
+        const changed = this.rootStyleChanged()
+        return r.attributeName !== 'style' || vars || changed
+          ? Dirty.STYLE
+          : Dirty.NONE
       }
       const p = t.parentElement
       // Detached: its removal is a childList record on the old parent.
@@ -449,6 +474,40 @@ export class DomSync {
     }
     this.scopes.add(el)
     return Dirty.MUTATION
+  }
+
+  /** The root's computed style at the last check (rootStyleChanged). */
+  private rootStyle: string | null = null
+  /** The root's style attribute at the last root attribute change. */
+  private rootInline = ''
+
+  /** Whether the root's computed style differs from the last check, but
+   * for scrolling-only properties: overflow (when the root is <body> and
+   * <html> doesn't clip, the viewport takes it over), overscroll, touch
+   * and pointer behaviour. */
+  private rootStyleChanged(): boolean {
+    const cs = getComputedStyle(this.root)
+    const de = document.documentElement
+    const propagates =
+      this.root === document.body &&
+      getComputedStyle(de).overflowX === 'visible' &&
+      getComputedStyle(de).overflowY === 'visible'
+    let key = ''
+    for (let i = 0; i < cs.length; i++) {
+      const p = cs.item(i)
+      if (
+        SCROLL_ONLY.has(p) ||
+        (propagates &&
+          p.startsWith('overflow-') &&
+          p !== 'overflow-clip-margin')
+      ) {
+        continue
+      }
+      key += `${p}:${cs.getPropertyValue(p)};`
+    }
+    const changed = this.rootStyle === null || key !== this.rootStyle
+    this.rootStyle = key
+    return changed
   }
 
   private mark(flag: number): void {
@@ -490,9 +549,43 @@ export class DomSync {
     this.trace?.('viewport')
     this.mark(Dirty.LAYOUT)
   }
-  private onFontsLoaded = (): void => {
-    this.trace?.('font')
-    this.mark(Dirty.CONTENT)
+  private onFontsLoaded = (e: Event): void => {
+    const faces = (e as FontFaceSetLoadEvent).fontfaces ?? []
+    if (!this.invalidateFonts(faces.map((f) => f.family))) {
+      this.trace?.('font')
+      this.mark(Dirty.CONTENT)
+    }
+  }
+
+  /** Elements whose text uses one of the given families
+   * (SceneReader.elementsWithFont), or null when it can't say. */
+  fontScope: ((families: string[]) => Element[] | null) | null = null
+  /** Called when a font load was scoped (invalidateFonts): what a full
+   * read would have refreshed beyond the DOM (the glyph atlas, cleared on
+   * `loadingdone`, and the text pass's face tables). */
+  onFonts: (() => void) | null = null
+
+  /** Web fonts of `families` finished loading (or their faces were
+   * prepared): re-read the elements whose text names them, a partial
+   * read whose rect check escalates when the new metrics move anything.
+   * False when that can't be scoped (the caller reads everything). */
+  invalidateFonts(families: readonly string[]): boolean {
+    const els =
+      families.length > 0 && this.fontScope
+        ? this.fontScope([...families])
+        : null
+    if (!els) {
+      return false
+    }
+    for (const el of els) {
+      if (this.root.contains(el)) {
+        this.trace?.('font', el)
+        this.scopes.add(el)
+      }
+    }
+    this.onFonts?.()
+    this.mark(Dirty.MUTATION)
+    return true
   }
 
   // Focus changes no attribute, but `:focus` / `:focus-visible` styles
@@ -739,6 +832,8 @@ export class DomSync {
     // Each later font load reflows text and invalidates atlas glyphs drawn
     // with a fallback face: full re-read.
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
+    this.rootInline = this.root.getAttribute('style') ?? ''
+    this.rootStyleChanged()
   }
 
   /** Drop mutation records not yet delivered: the compositor's own
@@ -746,6 +841,8 @@ export class DomSync {
    * changed since the read. */
   discardPending(): void {
     this.mo.takeRecords()
+    // Those writes may have been to the root (replace mode hides it).
+    this.rootStyleChanged()
   }
 
   stop(): void {
