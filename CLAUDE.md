@@ -722,13 +722,15 @@ Conventions each pass must follow:
   (`scaleSettling` keeps the loop and the layers' rows live until then);
   `clipGrid` rounds the cut to the parent out to 256 device px. A leaf
   unchanged two frames running leaves the atlas for a kept texture
-  (`steady`). Keys are per frame unique (`keyOf`: a second group of the
-  same element gets its reader node). A material batch signs with
+  (`steady`). Keys are per frame unique (`keyOf`). A material batch signs with
   `Renderer.materialKey`: a constant while the material is off or its
   `reach()` (MaterialEntry, from MaterialOptions.reach) misses the
   group's untransformed box in viewport px, else its `version` (bumped
   each frame `changed()`); no `changed` means it can't be kept. Scale
-  and cut rounding only for groups kept last frame (`unkept`).
+  and cut rounding applies to every transformed group, kept or not
+  (children's placement follows their parent's). keyOf gives an
+  element's further groups in a frame stand-in keys kept per element
+  and order (not reader nodes, which re-reads replace).
   Anything that changes without a new record makes a group uncacheable
   (dynamic images, materials, extras, nested xf/region, viewport space,
   image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,

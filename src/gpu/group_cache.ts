@@ -82,9 +82,9 @@ export class GroupCache {
   private readonly hashes = new WeakMap<object, number>()
   /** This frame's keys by group, and the keys taken (keyOf). */
   private readonly keys = new Map<OpacityGroup, object | undefined>()
-  private readonly used = new Set<object>()
-  private unkeptLast = new Set<object>()
-  private unkeptNow = new Set<object>()
+  private readonly used = new Map<object, number>()
+  /** Stand-in keys for an element's further groups (keyOf). */
+  private readonly more = new WeakMap<object, object[]>()
   /** Leaves' signatures by frame (steady()). */
   private seen = new Map<object, { sig: number; frame: number }>()
   private nextId = 1
@@ -113,32 +113,32 @@ export class GroupCache {
     this.rendered = []
     this.keys.clear()
     this.used.clear()
-    const t = this.unkeptLast
-    this.unkeptLast = this.unkeptNow
-    this.unkeptNow = t
-    t.clear()
   }
 
-  /** Whether `key`'s group couldn't be kept last frame (signature()
-   * refused it). */
-  unkept(key: object): boolean {
-    return this.unkeptLast.has(key)
-  }
-
-  /** `g`'s key this frame: its element (cacheKey), unless another group
-   * already has that this frame (a layout morph's held snapshot and the
-   * live element), then its reader node. The same for every call with
-   * `g` in a frame. */
+  /** `g`'s key this frame: its element (cacheKey); a further group of
+   * the same element this frame (an element with both a layer transform
+   * and opacity, a layout morph's held snapshot) gets a stand-in kept
+   * for that element and its order among them, so it lasts across
+   * frames and re-reads. The same for every call with `g` in a frame. */
   keyOf(g: OpacityGroup): object | undefined {
     if (this.keys.has(g)) {
       return this.keys.get(g)
     }
     let k = cacheKey(g)
-    if (k && this.used.has(k)) {
-      k = g.key && !this.used.has(g.key) ? g.key : undefined
-    }
     if (k) {
-      this.used.add(k)
+      const n = this.used.get(k) ?? 0
+      this.used.set(k, n + 1)
+      if (n > 0) {
+        let more = this.more.get(k)
+        if (!more) {
+          more = []
+          this.more.set(k, more)
+        }
+        while (more.length < n) {
+          more.push({})
+        }
+        k = more[n - 1]
+      }
     }
     this.keys.set(g, k)
     return k
@@ -247,10 +247,6 @@ export class GroupCache {
   ): number | null {
     const no = (why: RenderReason): null => {
       this.reason = why
-      const k = this.keys.get(g)
-      if (k) {
-        this.unkeptNow.add(k)
-      }
       return null
     }
     if (!g.key) {

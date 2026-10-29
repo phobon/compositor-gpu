@@ -843,12 +843,9 @@ export class Renderer {
       return rp
     }
 
-    // Rounding a group's scale and cut up only helps a texture that can
-    // be kept: not one that couldn't be last frame.
-    const keepable = (g: OpacityGroup): boolean => {
-      const key = this.groupCache.keyOf(g)
-      return key !== undefined && !this.groupCache.unkept(key)
-    }
+    // Rounded for every transformed group, kept or not: a group that
+    // can't be kept is the parent whose scale and cut its children's
+    // placement follows (a scrubbed card around a kept screenshot).
     // A transformed group's scale: exact once it has held SCALE_SETTLE
     // frames, rounded up to a step while it changes (a kept texture lasts
     // the step).
@@ -865,7 +862,7 @@ export class Renderer {
       ky: number
     ): [number, number] => {
       const key = this.groupCache.keyOf(g)
-      if (!key || !keepable(g)) {
+      if (!key) {
         return [kx, ky]
       }
       const was = lastScale.get(key)
@@ -894,7 +891,7 @@ export class Renderer {
       maxTexture: this.device.limits.maxTextureDimension2D,
       groupAtlas: this.groupAtlas,
       scaleOf: cacheOn ? scaleOf : undefined,
-      clipGrid: cacheOn ? (g) => (keepable(g) ? CLIP_GRID : 0) : undefined
+      clipGrid: cacheOn ? () => CLIP_GRID : undefined
     }
     /** Render the groups `level` (group_plan.ts) places in `parent`:
      * children before parents, each in its own pass; leaves share one

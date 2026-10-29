@@ -740,8 +740,22 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           only to groups that were kept last frame
           (`GroupCache.unkept`). Headless, spotlight over 15 cards while
           scrolling and moving the pointer: 389 renders in 46 frames
-          (1146 off), pixel-identical; test:fx as before. Desktop rerun
-          pending
+          (1146 off), pixel-identical; test:fx as before
+    - [x] Rerun (01:18): worse, 341 → 417 dropped, kept 4.7 → 2.6 a
+          frame. Material re-renders were gone, but 'moved' rose to 4.9:
+          restricting the scale/cut rounding to groups kept last frame
+          took it off the scrubbed cards (now 'nested region', for the
+          reveal's unblur inside them), so their scale changed every
+          scroll frame and every group inside them moved with it.
+          Reverted: every transformed group rounds again. And an
+          element's second group in a frame (a layer transform plus
+          opacity) was keyed by its reader node, which a re-read
+          replaces ('new' every partial read): it now gets a stand-in
+          key kept per element and order (`GroupCache.keyOf`). test:fx
+          as before. Desktop rerun pending
+    - [ ] Nested regions (2.7 a frame): a card can't be kept while the
+          reveal's unblur region inside it lives; a region could sign
+          with its handler's state instead
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's

@@ -244,3 +244,20 @@ test('a material signs with its key, or keeps the group from being kept', () => 
   assert.equal(cache.signature(c, g, 0, 2, place(), 0, []), null)
   assert.equal(cache.reason, 'material')
 })
+
+test('a second group of the same element keeps one stand-in key', () => {
+  const { cache } = setup()
+  const el = {}
+  const a = group({ key: { el } })
+  const b = group({ key: { el } })
+  cache.begin()
+  const ka = cache.keyOf(a)
+  const kb = cache.keyOf(b)
+  assert.equal(ka, el)
+  assert.notEqual(kb, el)
+  assert.equal(cache.keyOf(b), kb)
+  // Next frame, re-read (new reader nodes): the same keys.
+  cache.begin()
+  assert.equal(cache.keyOf(group({ key: { el } })), el)
+  assert.equal(cache.keyOf(group({ key: { el } })), kb)
+})
