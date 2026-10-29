@@ -126,10 +126,10 @@ export interface PlanInput {
    * scale up to a step so a scale animation re-renders a kept texture
    * once a step rather than every frame (group_cache.ts). */
   scaleOf?: (g: OpacityGroup, kx: number, ky: number) => [number, number]
-  /** Round where a transformed group is cut to its parent out to this
-   * many parent device px (0: exactly), so a small move doesn't change a
-   * kept texture's extent. */
-  clipGrid?: number
+  /** Parent device px to round where a transformed group is cut to its
+   * parent out to (0: exactly), so a small move doesn't change a kept
+   * texture's extent. */
+  clipGrid?: (g: OpacityGroup) => number
 }
 
 /** Index of the pop matching the push of `group` at `i`. */
@@ -247,7 +247,7 @@ export function planLevel(
             extent(),
             input.maxTexture,
             input.scaleOf,
-            input.clipGrid
+            input.clipGrid?.(g) ?? 0
           )
         : null
     if (!g || !place) {

@@ -1,4 +1,4 @@
-import type { MaterialEntry, RenderGraph } from '../gpu/graph'
+import type { MaterialEntry, MaterialReach, RenderGraph } from '../gpu/graph'
 import type { MaterialKind } from '../gpu/material'
 import type { FrameContext } from '../types'
 import type { EffectsClock } from './clock'
@@ -119,6 +119,12 @@ export interface MaterialOptions<S extends ParamSchema = ParamSchema> {
   hold?: boolean
   /** Called every frame while enabled. `time` is the page clock, s. */
   update?: (material: Material<S>, time: number, ctx: FrameContext) => void
+  /** Where, this frame, `fragment` can return anything but `m.color`:
+   * 'none', 'all', or a circle in viewport CSS px. Outside it a group's
+   * kept texture doesn't depend on the material (gpu/group_cache.ts), so
+   * a light that follows the pointer re-renders only what it falls on.
+   * Ignored with `vertex` or `raw`. Default 'all'. */
+  reach?: (material: Material<S>, ctx: FrameContext) => MaterialReach
   /** Read this trail's field in the hooks: `trail_at(p)` (viewport CSS
    * px), `trail_page(p)`, `trail_cell(p)`, `trail_snap(p)`. */
   trail?: Trail
@@ -259,6 +265,14 @@ export function createMaterial<S extends ParamSchema>(
     (c) => typeof c === 'string' && /\bpointer\s*\./.test(c)
   )
   let changedNow = true
+  let reachNow: MaterialReach = 'all'
+  const reachOf =
+    o.reach && !o.vertex && !o.raw
+      ? (o.reach as unknown as (
+          m: Material<ParamSchema>,
+          ctx: FrameContext
+        ) => MaterialReach)
+      : null
   let fresh = true
   let trailWasLive = false
   const lastFx: number[] = []
@@ -350,6 +364,8 @@ export function createMaterial<S extends ParamSchema>(
     target: target.el,
     active: () => life.enabled && !life.destroyed,
     changed: () => changedNow,
+    version: 0,
+    reach: () => reachNow,
     // A pipeline finished compiling: draw with it.
     ready: () => {
       if (life.enabled) {
@@ -453,6 +469,10 @@ export function createMaterial<S extends ParamSchema>(
         }
       }
       changedNow = changed
+      if (changed) {
+        entry.version = (entry.version ?? 0) + 1
+      }
+      reachNow = reachOf ? reachOf(handle, ctx) : 'all'
       device.queue.writeBuffer(fxBuf, 0, f)
     },
     destroy() {

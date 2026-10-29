@@ -229,3 +229,18 @@ test('a leaf is steady once it signs the same two frames running', () => {
   cache.begin()
   assert.equal(cache.steady(key, 6), false)
 })
+
+test('a material signs with its key, or keeps the group from being kept', () => {
+  const { g, list, ctx, cache } = setup()
+  list[1] = { layer: 'boxes', first: 0, count: 2, material: 3 }
+  let key: number | null = 1
+  const c = { ...ctx, materialKey: () => key }
+  const a = cache.signature(c, g, 0, 2, place(), 0, [])
+  assert.notEqual(a, null)
+  assert.equal(cache.signature(c, g, 0, 2, place(), 0, []), a)
+  key = 0x10000 + 5
+  assert.notEqual(cache.signature(c, g, 0, 2, place(), 0, []), a)
+  key = null
+  assert.equal(cache.signature(c, g, 0, 2, place(), 0, []), null)
+  assert.equal(cache.reason, 'material')
+})

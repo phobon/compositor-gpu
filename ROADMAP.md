@@ -724,7 +724,24 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           resampling mid-scale; test:fx OK with only the mid-morph
           `fx-layout-half` shots (resampling, max 68/255) and the
           real-clock `fx-reduced` ones differing from a cache-off run;
-          test:visual group sections unchanged. Desktop rerun pending
+          test:visual group sections unchanged
+    - [x] Rerun (15:30): dropped 460 → 341, GPU p50 7.55 → 5.64 ms,
+          bento 12 → 1 dropped; filter passes a scroll frame 8.9 → 4.7.
+          4.7 kept a frame, 9.3 rendered: material 5.8 (the bento's
+          `spotlight`, on the cards and zoom badges), region 3.0 (the
+          reveals' unblur, live while they play). Fling got worse (82 →
+          103): groups that couldn't be kept were still rendered at the
+          rounded-up scale and cut, more pixels for nothing. Now: a
+          material signs a kept texture with its version (bumped when
+          `changed()`), or with a constant where it can't change the
+          group: off, or `reach` (new MaterialOptions; spotlight: its
+          radius around the follower, 'none' before the pointer is seen)
+          missing the group's box; and the scale/cut rounding applies
+          only to groups that were kept last frame
+          (`GroupCache.unkept`). Headless, spotlight over 15 cards while
+          scrolling and moving the pointer: 389 renders in 46 frames
+          (1146 off), pixel-identical; test:fx as before. Desktop rerun
+          pending
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's

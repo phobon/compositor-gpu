@@ -61,7 +61,14 @@ export function spotlight(
     kinds: opts.kinds ?? ['box'],
     fragment: FRAGMENT,
     params: schema,
-    enabled: opts.enabled
+    enabled: opts.enabled,
+    // Nothing until the pointer is seen; then the eased follower's radius.
+    reach: (m, ctx) => {
+      const p = ctx.pointer
+      return p?.seen
+        ? { x: p.follow.x, y: p.follow.y, r: m.params.radius }
+        : 'none'
+    }
   })
   const p = mat.params
   for (const k of ['radius', 'intensity', 'rim', 'rimWidth'] as const) {

@@ -70,6 +70,10 @@ export interface CacheContext {
   imagesVolatile: boolean
   /** Text glyphs move without a new record (onGlyph). */
   textVolatile: boolean
+  /** What material `id` contributes to `g`'s texture this frame: a key
+   * that changes when its drawing over `g` can, or null when it can't be
+   * kept (Renderer.materialKey). */
+  materialKey?: (id: number, g: OpacityGroup) => number | null
 }
 
 export class GroupCache {
@@ -79,6 +83,8 @@ export class GroupCache {
   /** This frame's keys by group, and the keys taken (keyOf). */
   private readonly keys = new Map<OpacityGroup, object | undefined>()
   private readonly used = new Set<object>()
+  private unkeptLast = new Set<object>()
+  private unkeptNow = new Set<object>()
   /** Leaves' signatures by frame (steady()). */
   private seen = new Map<object, { sig: number; frame: number }>()
   private nextId = 1
@@ -107,6 +113,16 @@ export class GroupCache {
     this.rendered = []
     this.keys.clear()
     this.used.clear()
+    const t = this.unkeptLast
+    this.unkeptLast = this.unkeptNow
+    this.unkeptNow = t
+    t.clear()
+  }
+
+  /** Whether `key`'s group couldn't be kept last frame (signature()
+   * refused it). */
+  unkept(key: object): boolean {
+    return this.unkeptLast.has(key)
   }
 
   /** `g`'s key this frame: its element (cacheKey), unless another group
@@ -231,6 +247,10 @@ export class GroupCache {
   ): number | null {
     const no = (why: RenderReason): null => {
       this.reason = why
+      const k = this.keys.get(g)
+      if (k) {
+        this.unkeptNow.add(k)
+      }
       return null
     }
     if (!g.key) {
@@ -317,7 +337,11 @@ export class GroupCache {
         continue
       }
       if (b.material !== undefined) {
-        return no('material')
+        const mk = c.materialKey?.(b.material, g) ?? null
+        if (mk === null) {
+          return no('material')
+        }
+        mix(mk)
       }
       mix(4)
       if (b.layer === 'text') {

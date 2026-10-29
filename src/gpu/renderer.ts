@@ -215,6 +215,46 @@ export class Renderer {
    * (the profiler's FrameWhy.groups). */
   lastGroupWhy: Record<string, number> = {}
   lastGroupRendered: Rendered[] = []
+  /** What material `id` contributes to group `g`'s kept texture this
+   * frame (CacheContext.materialKey): off, or not reaching the group's
+   * box (MaterialEntry.reach), it draws as the records' own colours (a
+   * constant); reaching it, its version (bumped whenever it can draw
+   * differently); null when it can't say. */
+  private materialKey(
+    id: number,
+    g: OpacityGroup,
+    ctx: FrameContext
+  ): number | null {
+    const m = this.materials.get(id)
+    if (m?.builtin) {
+      return 2 + id
+    }
+    if (!m?.active()) {
+      return 0
+    }
+    const reach = m.reach?.() ?? 'all'
+    const b = g.bounds
+    if (reach === 'none') {
+      return 1
+    }
+    if (reach !== 'all' && b) {
+      // The group's box in viewport px (its records, untransformed: a
+      // material shades them before a layer transform applies).
+      const x0 = b.x - ctx.scrollX
+      const y0 = b.y - ctx.scrollY
+      const dx = Math.max(x0 - reach.x, 0, reach.x - (x0 + b.width))
+      const dy = Math.max(y0 - reach.y, 0, reach.y - (y0 + b.height))
+      if (dx * dx + dy * dy > (reach.r + 1) * (reach.r + 1)) {
+        return 1
+      }
+    }
+    if (m.changed === undefined || m.version === undefined) {
+      return null
+    }
+    // Apart from the builtins' ids.
+    return 0x10000 + m.version
+  }
+
   /** Transformed groups' scales last frame, by cache key (scaleOf). */
   private lastScale = new Map<
     object,
@@ -689,7 +729,8 @@ export class Renderer {
       list: scene.batches,
       dpr,
       imagesVolatile: this.imagesVolatile,
-      textVolatile: this.textVolatile
+      textVolatile: this.textVolatile,
+      materialKey: (id, g) => this.materialKey(id, g, ctx)
     }
     if (scene.backdrops.length > 0) {
       this.backdrop ??= new BackdropPass(this.shared)
@@ -802,6 +843,12 @@ export class Renderer {
       return rp
     }
 
+    // Rounding a group's scale and cut up only helps a texture that can
+    // be kept: not one that couldn't be last frame.
+    const keepable = (g: OpacityGroup): boolean => {
+      const key = this.groupCache.keyOf(g)
+      return key !== undefined && !this.groupCache.unkept(key)
+    }
     // A transformed group's scale: exact once it has held SCALE_SETTLE
     // frames, rounded up to a step while it changes (a kept texture lasts
     // the step).
@@ -818,7 +865,7 @@ export class Renderer {
       ky: number
     ): [number, number] => {
       const key = this.groupCache.keyOf(g)
-      if (!key) {
+      if (!key || !keepable(g)) {
         return [kx, ky]
       }
       const was = lastScale.get(key)
@@ -847,7 +894,7 @@ export class Renderer {
       maxTexture: this.device.limits.maxTextureDimension2D,
       groupAtlas: this.groupAtlas,
       scaleOf: cacheOn ? scaleOf : undefined,
-      clipGrid: cacheOn ? CLIP_GRID : 0
+      clipGrid: cacheOn ? (g) => (keepable(g) ? CLIP_GRID : 0) : undefined
     }
     /** Render the groups `level` (group_plan.ts) places in `parent`:
      * children before parents, each in its own pass; leaves share one

@@ -419,9 +419,16 @@ fx.material({
   hideSource?: !!(vertex || raw),   // hide the element's DOM paint
   hold?: false,                     // don't draw until compiled
   enabled?: true, continuous?: false,
-  update?: (material, time, ctx) => void
+  update?: (material, time, ctx) => void,
+  reach?: (material, ctx) => 'none' | 'all' | { x, y, r }  // default 'all'
 }) -> Material { name, params, target, enabled, continuous, destroy() }
 ```
+
+`reach` says where, this frame, `fragment` can return anything other
+than `m.color` (a viewport CSS px circle, or nowhere). Opacity groups the
+reach misses keep their textures between frames (gpu/group_cache.ts), so
+a pointer light re-renders only the cards it falls on; `spotlight` sets
+it to its radius around `pointer.follow`. Ignored with `vertex` or `raw`.
 
 A Material swaps the hooks the record passes are built around: the
 records keep their own anti-aliasing, clipping, blending and paint

@@ -147,7 +147,17 @@ export interface MaterialEntry extends MaterialBinding {
    * frame's scene only while every active material says false; absent,
    * an active non-builtin material counts as changing. */
   changed?(): boolean
+  /** Bumped every frame changed() is true (kept group textures sign
+   * with it; gpu/group_cache.ts). */
+  version?: number
+  /** Where this frame's fragment can differ from the record's own
+   * colour (MaterialOptions.reach); absent: anywhere. */
+  reach?(): MaterialReach
 }
+
+/** Where a material changes what it's drawn over: 'none' (nowhere this
+ * frame), 'all', or a circle, viewport CSS px. */
+export type MaterialReach = 'none' | 'all' | { x: number; y: number; r: number }
 
 /** Per-frame participant registered through RenderGraph.addHook. */
 export interface FrameHook {
