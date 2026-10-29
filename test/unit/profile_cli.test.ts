@@ -9,7 +9,8 @@ import {
   summarize
 } from '../../src/profile/profiler'
 import { checkBudget, formatBudget } from '../../tools/profile/budget'
-import { compareReports } from '../../tools/profile/compare'
+import { compareReports, compareRuns } from '../../tools/profile/compare'
+import { medianRun, runLine } from '../../tools/profile/runs'
 import {
   describeStep,
   scrollScenario,
@@ -151,4 +152,54 @@ test('the comparison covers phases both runs have and GPU labels', async () => {
   assert.ok(c.rows.some((r) => r.scope === 'a' && r.metric === 'late frames'))
   assert.ok(c.rows.some((r) => r.scope === 'b'))
   assert.ok(c.rows.every((r) => r.scope !== 'gpu'))
+})
+
+const withDropped = (dropped: number): ProfileReport => {
+  const r = report()
+  return {
+    ...r,
+    dropped,
+    phases: r.phases.map((p, i) => ({
+      ...p,
+      summary: { ...p.summary, dropped: i === 0 ? dropped : 0 }
+    }))
+  }
+}
+
+test('several runs: the median run, a line each', () => {
+  const runs = [withDropped(126), withDropped(67), withDropped(80)]
+  assert.equal(medianRun(runs), 2)
+  assert.equal(medianRun([withDropped(10), withDropped(30)]), 0)
+  assert.match(
+    runLine(runs[1] as ProfileReport, 1),
+    /^run 2: dropped 67 \(a 67\), late 1$/
+  )
+})
+
+test('runs compare by median, with each run as the spread', async () => {
+  const { compareRuns: rows } = await import('../../src/profile/compare')
+  const now = [withDropped(70), withDropped(135), withDropped(78)]
+  const base = [withDropped(36), withDropped(77)]
+  const dropped = rows(now, base).rows.find(
+    (r) => r.scope === 'run' && r.metric === 'dropped frames'
+  )
+  assert.equal(dropped?.now, 78)
+  assert.equal(dropped?.base, 56.5)
+  assert.deepEqual(dropped?.nowRuns, [70, 135, 78])
+  const lines = compareRuns(now, base)
+  assert.ok(
+    lines.some((l) =>
+      /^dropped frames\s+56\.50 →\s+78\.00\s+\+21\.50\s+\[36–77 → 70–135, within spread\]$/.test(
+        l
+      )
+    )
+  )
+  const apart = compareRuns([withDropped(10), withDropped(12)], base)
+  assert.ok(apart.some((l) => /^dropped frames.*\[36–77 → 10–12\]$/.test(l)))
+  // One run a side: as before, no spread.
+  assert.ok(
+    compareReports(withDropped(5), withDropped(9)).some((l) =>
+      /^dropped frames\s+9\.00 →\s+5\.00\s+-4\.00$/.test(l)
+    )
+  )
 })

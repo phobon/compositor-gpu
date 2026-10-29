@@ -108,6 +108,16 @@ mount the library themselves).
 - **Budgets.** A budget file (dropped frames, p95 CPU/GPU, per-phase
   limits) gives a pass/fail exit code.
 - **Baselines.** `--baseline <recording>` compares against a saved run.
+- **Runs.** `--runs N` records the scenario N times, each in a fresh
+  page, and prints a line per run. The report, the budget and
+  `recording.cgprof` use the run nearest the median dropped frames, and
+  each run is kept as `run-N.cgprof`. Against a baseline (a recording, or
+  a profile-out directory, whose `run-N.cgprof` all count), each metric
+  is the median, followed by every run's range and `within spread` when
+  the two ranges overlap. On the M1 Pro, /duo at one build ranged from 67
+  to 135 dropped frames run to run (2026-10-29), all from GPU time for
+  the same passes, so compare 3–5 runs a side before believing a change
+  under ~30 frames.
 
 ## Order
 

@@ -21,6 +21,7 @@
 //   npm run profile -- <url> --steps '[{"scroll":"#showcase"},{"wait":3000}]'
 //   npm run profile -- <url> --inject --root "#app" --mode replace
 //   npm run profile -- <url> --budget budget.json --baseline before.cgprof
+//   npm run profile -- --scenario duo.json --runs 5 --baseline profile-out/duo-…
 // Options:
 //   --scroll          scroll down and back (the default with no steps);
 //                     --speed px per frame (12)
@@ -33,13 +34,28 @@
 //   --out dir         profile-out/<name>-<time>
 //   --title text      the report's title
 //   --no-filmstrip    no pictures of the page in the report
-//   --baseline file   compare with an earlier recording (printed, and the
-//                     report's Compare tab)
+//   --runs N          record the scenario N times, each in a fresh page:
+//                     prints a line per run, writes run-N.cgprof, and
+//                     reports, budgets and compares the run nearest the
+//                     median (the comparison: medians, and each run's
+//                     value as the spread). One run of a page can swing
+//                     by tens of dropped frames, so compare 3 or 5.
+//   --baseline path   compare with an earlier recording (printed, and the
+//                     report's Compare tab): a .cgprof, or a profile-out
+//                     directory, whose run-N.cgprof files all count
 // From another project: `npx tsx path/to/compositor-gpu/tools/profile.ts`.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { resolve } from 'node:path'
 import { type Browser, chromium } from 'playwright'
+import { median } from '../src/profile/compare'
 import { formatReport, type ProfileReport } from '../src/profile/profiler'
 import {
   decodeRecording,
@@ -54,8 +70,9 @@ import {
   checkBudget,
   formatBudget
 } from './profile/budget'
-import { compareReports } from './profile/compare'
+import { compareRuns } from './profile/compare'
 import { reportHtml } from './profile/html'
+import { medianRun, runLine } from './profile/runs'
 import {
   runSteps,
   type Scenario,
@@ -90,12 +107,158 @@ const VALUE_FLAGS = [
   'root',
   'mode',
   'budget',
-  'baseline'
+  'baseline',
+  'runs'
 ]
 const log = (s: string): void => console.log(`[profile] ${s}`)
 
+/** A baseline's recordings: the file, or a profile-out directory's
+ * runs (run-N.cgprof, else its recording.cgprof). */
+function baselineFiles(path: string): string[] {
+  if (!statSync(path).isDirectory()) {
+    return [path]
+  }
+  const runs = readdirSync(path)
+    .flatMap((f) => {
+      const m = /^run-(\d+)\.cgprof$/.exec(f)
+      return m ? [{ f, n: Number(m[1]) }] : []
+    })
+    .sort((a, b) => a.n - b.n)
+    .map(({ f }) => resolve(path, f))
+  return runs.length > 0 ? runs : [resolve(path, 'recording.cgprof')]
+}
+
 const readJson = <T>(path: string): T =>
   JSON.parse(readFileSync(resolve(path), 'utf8')) as T
+
+interface RunContext {
+  url: string
+  steps: Step[]
+  global: string
+  viewport: { width: number; height: number }
+  dpr: number
+  outDir: string
+  software: boolean
+}
+
+/** One recording of the scenario, in a fresh page. */
+async function record(
+  browser: Browser,
+  ctx: RunContext
+): Promise<{ report: ProfileReport; software: boolean }> {
+  const { url, steps, global, viewport, dpr, outDir } = ctx
+  const page = await browser.newPage({ viewport, deviceScaleFactor: dpr })
+  try {
+    await page.addInitScript('globalThis.__name = (f) => f')
+    page.on('pageerror', (e) => console.error('[page]', e.message))
+    log(`open ${url}`)
+    await page.goto(url, { waitUntil: 'load' })
+
+    if (flag('inject')) {
+      const bundle = await ensureInjectBundle(
+        resolve(outDir, '..', '.cache'),
+        'profile'
+      )
+      await injectBundle(page, bundle)
+      await page.evaluate(
+        async ({ root, mode, global }) => {
+          const w = window as unknown as Record<string, unknown> & {
+            __createCompositor: (o: unknown) => Promise<{ start(): void }>
+          }
+          const c = await w.__createCompositor({
+            root: document.querySelector(root) ?? document.body,
+            mode,
+            fonts: 'auto'
+          })
+          c.start()
+          w[global] = c
+        },
+        { root: arg('root') ?? 'body', mode: arg('mode') ?? 'overlay', global }
+      )
+    }
+    try {
+      await page.waitForFunction(
+        (g) => Boolean((window as unknown as Record<string, unknown>)[g]),
+        global,
+        { timeout: 60_000 }
+      )
+    } catch {
+      throw new Error(
+        `no compositor on window.${global} after 60 s: does the page mount one (the React provider's \`global\`, a ?gpu=1 flag)? Or use --inject.`
+      )
+    }
+    const state = await page.evaluate(async (g) => {
+      const c = (window as unknown as Record<string, unknown>)[g] as {
+        active: boolean
+        ready?: Promise<void>
+      }
+      if (c.active) {
+        await c.ready
+      }
+      const a = await navigator.gpu?.requestAdapter()
+      return {
+        active: c.active,
+        adapter: a
+          ? `${a.info.vendor} ${a.info.architecture} ${a.info.description}`.trim()
+          : null,
+        fallback:
+          (a?.info as { isFallbackAdapter?: boolean } | undefined)
+            ?.isFallbackAdapter === true
+      }
+    }, global)
+    if (!state.active) {
+      throw new Error(
+        `the compositor on window.${global} is inactive (no WebGPU adapter in this browser: ${state.adapter ?? 'none'})`
+      )
+    }
+    const software =
+      ctx.software || state.fallback || /swiftshader/i.test(state.adapter ?? '')
+    log(
+      `adapter ${state.adapter ?? 'unknown'}${software ? ' — SOFTWARE: GPU and pacing numbers describe it, not this machine' : ''}`
+    )
+    await page.waitForTimeout(Number(arg('wait') ?? 1500))
+
+    // Record the scenario.
+    await page.evaluate(
+      ({ g, film }) => {
+        const p = (
+          window as unknown as Record<
+            string,
+            {
+              profile: {
+                start(): void
+                filmstrip?(on: boolean): void
+              }
+            }
+          >
+        )[g]?.profile
+        // Pictures of the page for the report (older builds lack it).
+        p?.filmstrip?.(film)
+        p?.start()
+      },
+      { g: global, film: !flag('no-filmstrip') }
+    )
+    await runSteps(page, steps, global, (s) => log(`  ${s}`))
+    const report = (await page.evaluate(
+      (g) =>
+        (
+          window as unknown as Record<
+            string,
+            { profile: { stop(): Promise<unknown> } }
+          >
+        )[g]?.profile.stop(),
+      global
+    )) as ProfileReport | null
+    if (!report || report.samples.length === 0) {
+      throw new Error(
+        'the recording has no frames (did anything change on the page?)'
+      )
+    }
+    return { report, software }
+  } finally {
+    await page.close()
+  }
+}
 
 async function main(): Promise<void> {
   const scenarioPath = arg('scenario')
@@ -189,125 +352,56 @@ async function main(): Promise<void> {
   log(`browser ${browser.version()}${flag('headless') ? ' (headless)' : ''}`)
   let exit = 0
   try {
-    const page = await browser.newPage({ viewport, deviceScaleFactor: dpr })
-    await page.addInitScript('globalThis.__name = (f) => f')
-    page.on('pageerror', (e) => console.error('[page]', e.message))
-    log(`open ${url}`)
-    await page.goto(url, { waitUntil: 'load' })
-
-    if (flag('inject')) {
-      const bundle = await ensureInjectBundle(
-        resolve(outDir, '..', '.cache'),
-        'profile'
-      )
-      await injectBundle(page, bundle)
-      await page.evaluate(
-        async ({ root, mode, global }) => {
-          const w = window as unknown as Record<string, unknown> & {
-            __createCompositor: (o: unknown) => Promise<{ start(): void }>
-          }
-          const c = await w.__createCompositor({
-            root: document.querySelector(root) ?? document.body,
-            mode,
-            fonts: 'auto'
-          })
-          c.start()
-          w[global] = c
-        },
-        { root: arg('root') ?? 'body', mode: arg('mode') ?? 'overlay', global }
-      )
-    }
-    try {
-      await page.waitForFunction(
-        (g) => Boolean((window as unknown as Record<string, unknown>)[g]),
+    const runs = Math.max(1, Math.floor(Number(arg('runs') ?? 1)))
+    const reports: ProfileReport[] = []
+    for (let i = 0; i < runs; i++) {
+      if (runs > 1) {
+        log(`run ${i + 1} of ${runs}`)
+      }
+      const r = await record(browser, {
+        url,
+        steps,
         global,
-        { timeout: 60_000 }
-      )
-    } catch {
-      throw new Error(
-        `no compositor on window.${global} after 60 s: does the page mount one (the React provider's \`global\`, a ?gpu=1 flag)? Or use --inject.`
-      )
+        viewport,
+        dpr,
+        outDir,
+        software
+      })
+      software = r.software
+      reports.push(r.report)
     }
-    const state = await page.evaluate(async (g) => {
-      const c = (window as unknown as Record<string, unknown>)[g] as {
-        active: boolean
-        ready?: Promise<void>
-      }
-      if (c.active) {
-        await c.ready
-      }
-      const a = await navigator.gpu?.requestAdapter()
-      return {
-        active: c.active,
-        adapter: a
-          ? `${a.info.vendor} ${a.info.architecture} ${a.info.description}`.trim()
-          : null,
-        fallback:
-          (a?.info as { isFallbackAdapter?: boolean } | undefined)
-            ?.isFallbackAdapter === true
-      }
-    }, global)
-    if (!state.active) {
-      throw new Error(
-        `the compositor on window.${global} is inactive (no WebGPU adapter in this browser: ${state.adapter ?? 'none'})`
-      )
-    }
-    software ||= state.fallback || /swiftshader/i.test(state.adapter ?? '')
-    log(
-      `adapter ${state.adapter ?? 'unknown'}${software ? ' — SOFTWARE: GPU and pacing numbers describe it, not this machine' : ''}`
-    )
-    await page.waitForTimeout(Number(arg('wait') ?? 1500))
-
-    // Record the scenario.
-    await page.evaluate(
-      ({ g, film }) => {
-        const p = (
-          window as unknown as Record<
-            string,
-            {
-              profile: {
-                start(): void
-                filmstrip?(on: boolean): void
-              }
-            }
-          >
-        )[g]?.profile
-        // Pictures of the page for the report (older builds lack it).
-        p?.filmstrip?.(film)
-        p?.start()
-      },
-      { g: global, film: !flag('no-filmstrip') }
-    )
-    await runSteps(page, steps, global, (s) => log(`  ${s}`))
-    const report = (await page.evaluate(
-      (g) =>
-        (
-          window as unknown as Record<
-            string,
-            { profile: { stop(): Promise<unknown> } }
-          >
-        )[g]?.profile.stop(),
-      global
-    )) as ProfileReport | null
-    if (!report || report.samples.length === 0) {
-      throw new Error(
-        'the recording has no frames (did anything change on the page?)'
-      )
-    }
+    const pick = medianRun(reports)
+    const report = reports[pick] as ProfileReport
 
     // Write and print.
     const title = arg('title') ?? `${name} — ${new Date().toLocaleString()}`
-    const recording = toRecording(report, 'recording', title)
-    const gz = await encodeRecording(recording)
+    const encode = (r: ProfileReport): Promise<Uint8Array> =>
+      encodeRecording(toRecording(r, 'recording', title))
+    const gz = await encode(report)
     writeFileSync(resolve(outDir, 'recording.cgprof'), gz)
+    if (reports.length > 1) {
+      for (const [i, r] of reports.entries()) {
+        writeFileSync(resolve(outDir, `run-${i + 1}.cgprof`), await encode(r))
+      }
+    }
     const rows: BudgetRow[] | null = budget ? checkBudget(report, budget) : null
     let baseline: string[] | null = null
     let baseGz: Uint8Array | null = null
     const basePath = arg('baseline')
     if (basePath) {
-      baseGz = new Uint8Array(readFileSync(resolve(basePath)))
-      const base = await decodeRecording(baseGz)
-      baseline = compareReports(report, base.report)
+      const files = baselineFiles(resolve(basePath))
+      const bases: ProfileReport[] = []
+      const gzs: Uint8Array[] = []
+      for (const f of files) {
+        const g = new Uint8Array(readFileSync(f))
+        gzs.push(g)
+        bases.push((await decodeRecording(g)).report)
+      }
+      baseGz = gzs[medianRun(bases)] ?? null
+      baseline = compareRuns(reports, bases)
+      if (files.length > 1) {
+        log(`baseline: ${files.length} runs in ${basePath}`)
+      }
     }
     writeFileSync(
       resolve(outDir, 'report.html'),
@@ -325,6 +419,13 @@ async function main(): Promise<void> {
         .filter((l) => !l.startsWith('  hitch ')),
       ''
     ]
+    if (reports.length > 1) {
+      lines.push(
+        `${reports.length} runs; the numbers below are run ${pick + 1}'s, nearest the median (${median(reports.map((r) => r.dropped))} dropped)`,
+        ...reports.map(runLine),
+        ''
+      )
+    }
     for (const h of report.hitches.slice(0, 6)) {
       lines.push(
         `late +${(h.at / 1000).toFixed(2)} s: ${h.dt.toFixed(1)} ms gap, ${h.missed} missed`
