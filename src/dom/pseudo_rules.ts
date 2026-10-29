@@ -6,8 +6,8 @@ import { splitTopLevel } from '../util/css'
 // box only exists when a rule gives it `content`, so reading every
 // element's two pseudo styles (most of them `content: none`) can be
 // skipped for elements no such rule's selector matches. When a sheet
-// can't be read (cross-origin) or a rule is beyond this scan (nested
-// CSS), every element is read as before.
+// can't be read (cross-origin) or a rule is beyond this scan (a nested
+// rule under a pseudo-element), every element is read as before.
 
 export type PseudoName = '::before' | '::after' | '::marker'
 
@@ -49,6 +49,18 @@ const UA_HOSTS: Record<PseudoName, string[]> = {
   '::marker': []
 }
 
+/** A nested rule's selector against its parent's: `&` stands for the
+ * parent, and a part without one is a descendant of it. */
+export function nestSelector(sel: string, parent: string): string {
+  const of = `:is(${parent})`
+  return splitTopLevel(sel, ',')
+    .map((part) => {
+      const p = part.trim()
+      return p.includes('&') ? p.replaceAll('&', of) : `${of} ${p}`
+    })
+    .join(', ')
+}
+
 /** Host selectors of every rule that gives a pseudo-element `content`,
  * or null when some rule or sheet can't be modelled. */
 export function scanRules(rules: Iterable<CSSRule>): Hosts | null {
@@ -58,49 +70,60 @@ export function scanRules(rules: Iterable<CSSRule>): Hosts | null {
     '::marker': [...UA_HOSTS['::marker']],
     fixed: []
   }
-  const visit = (list: Iterable<CSSRule>): boolean => {
+  const declare = (selector: string, style: CSSStyleDeclaration): boolean => {
+    if (style.getPropertyValue('position') === 'fixed') {
+      for (const part of splitTopLevel(selector, ',')) {
+        const h = hostSelector(part.trim())
+        out.fixed.push(h ? h.host : part.trim())
+      }
+    }
+    if (!PSEUDO.test(selector) || !style.getPropertyValue('content')) {
+      return true
+    }
+    for (const part of splitTopLevel(selector, ',')) {
+      const h = hostSelector(part.trim())
+      if (h) {
+        out[h.name].push(h.host)
+      } else if (PSEUDO.test(part)) {
+        return false
+      }
+    }
+    return true
+  }
+  const visit = (list: Iterable<CSSRule>, parent: string | null): boolean => {
     for (const r of list) {
       const style = (r as CSSStyleRule).style
-      const selector = (r as CSSStyleRule).selectorText
+      const own = (r as CSSStyleRule).selectorText
       const kids = (r as CSSGroupingRule).cssRules
-      if (typeof selector === 'string' && style) {
-        if (kids && kids.length > 0) {
+      if (typeof own === 'string' && style) {
+        const selector = parent === null ? own : nestSelector(own, parent)
+        if (!declare(selector, style)) {
           return false
         }
-        if (style.getPropertyValue('position') === 'fixed') {
-          for (const part of splitTopLevel(selector, ',')) {
-            const h = hostSelector(part.trim())
-            out.fixed.push(h ? h.host : part.trim())
+        if (kids && kids.length > 0) {
+          if (PSEUDO.test(selector) || !visit(Array.from(kids), selector)) {
+            return false
           }
         }
-        if (!PSEUDO.test(selector) || !style.getPropertyValue('content')) {
-          continue
-        }
-        for (const part of splitTopLevel(selector, ',')) {
-          const h = hostSelector(part.trim())
-          if (!h) {
-            if (PSEUDO.test(part)) {
-              return false
-            }
-            continue
-          }
-          out[h.name].push(h.host)
+      } else if (style && parent !== null) {
+        if (!declare(parent, style)) {
+          return false
         }
       } else if (kids) {
-        if (!visit(Array.from(kids))) {
+        if (!visit(Array.from(kids), parent)) {
           return false
         }
       } else {
         const sheet = (r as CSSImportRule).styleSheet
         const sub = sheet ? rulesOf(sheet) : []
-        if (!sub || !visit(sub)) {
+        if (!sub || !visit(sub, null)) {
           return false
         }
       }
     }
     return true
   }
-  return visit(rules) ? out : null
+  return visit(rules, null) ? out : null
 }
 
 function rulesOf(sheet: CSSStyleSheet): CSSRule[] | null {
@@ -146,6 +169,11 @@ export class PseudoRules {
           '::marker': found['::marker'].join(',') || null
         }
       : null
+  }
+
+  /** Whether the scan could model every rule's `position: fixed`. */
+  get knowsFixed(): boolean {
+    return this.fixed !== null
   }
 
   /** Whether something in `el`'s subtree can be `position: fixed`

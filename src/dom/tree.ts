@@ -796,6 +796,7 @@ export class SceneReader {
     const w = this.readWindow
     if (
       !w ||
+      !this.pseudoRules.knowsFixed ||
       node.space !== 'doc' ||
       node.fragmented ||
       position === 'fixed' ||
@@ -833,6 +834,7 @@ export class SceneReader {
     const w = this.readWindow
     if (
       !w ||
+      !this.pseudoRules.knowsFixed ||
       parent.space !== 'doc' ||
       this.inIgnored ||
       SKIP_TAGS.has(el.tagName) ||

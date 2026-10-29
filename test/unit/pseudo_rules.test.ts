@@ -3,7 +3,7 @@
 // Run: npm run test:unit
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { hostSelector, scanRules } from '../../src/dom/pseudo_rules'
+import { hostSelector, nestSelector, scanRules } from '../../src/dom/pseudo_rules'
 
 test('the host of a pseudo-element selector', () => {
   assert.deepEqual(hostSelector('.a:hover::before'), {
@@ -54,12 +54,29 @@ test('grouping rules are walked; what it cannot model gives up', () => {
   assert.deepEqual(scanRules([media])?.['::after'], ['q', '.m'])
   // A pseudo followed by more than pseudo-classes.
   assert.equal(scanRules([rule('.a::before .b', '""')]), null)
-  // Nested style rules.
+  // A rule nested under a pseudo-element.
+  const under = {
+    ...rule('.p::before', '""'),
+    cssRules: [rule('& .x', '')]
+  } as unknown as CSSRule
+  assert.equal(scanRules([under]), null)
+})
+
+test('nested rules resolve against their parent', () => {
+  assert.equal(nestSelector('& [data-theme="dark"]', ':root'), ':is(:root) [data-theme="dark"]')
+  assert.equal(nestSelector('.b, &:hover', '.a, .c'), ':is(.a, .c) .b, :is(.a, .c):hover')
+  const declarations = {
+    selectorText: undefined,
+    style: rule('', '', 'fixed').style
+  } as unknown as CSSRule
+  const media = { cssRules: [rule('& .m', '', 'fixed')] } as unknown as CSSRule
   const nested = {
     ...rule('.n', ''),
-    cssRules: [rule('&::before', '""')]
+    cssRules: [rule('&::before', '""'), rule('.k', '', 'fixed'), media, declarations]
   } as unknown as CSSRule
-  assert.equal(scanRules([nested]), null)
+  const found = scanRules([nested, { ...rule(':root', ''), cssRules: [rule('& [data-theme]', '')] } as unknown as CSSRule])
+  assert.deepEqual(found?.['::before'], ['q', ':is(.n)'])
+  assert.deepEqual(found?.fixed, [':is(.n) .k', ':is(.n) .m', '.n'])
 })
 
 test('rules making an element fixed are collected, pseudo hosts included', () => {

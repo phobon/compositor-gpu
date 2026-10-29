@@ -63,8 +63,10 @@ Deferring assumes a subtree paints near its root's box. What breaks that:
   Guarded: like `PseudoRules`, a scan of the document's style rules
   collects the selectors of every rule setting `position: fixed`, plus
   `[style*="fixed" i]` for inline styles. A root whose subtree matches
-  one (`el.querySelector(list)`, one native call) isn't deferred. An
-  unreadable sheet (cross-origin) or nested CSS turns lazy reads off.
+  one (`el.querySelector(list)`, one native call) isn't deferred. Nested
+  rules are resolved against their parent (`&` as `:is(parent)`). An
+  unreadable sheet (cross-origin), or a rule nested under a
+  pseudo-element, turns lazy reads off.
 - **Absolute positioning against a containing block outside the
   subtree**, and **large transforms**, can move content more than
   `lazySafe` away. Not detectable cheaply; `lazySafe` is the margin for
@@ -109,6 +111,13 @@ until it's read (its rect still triggers escalation if layout moved).
   restyling and removing far content, and after jumping back to the
   top. The whole of test:visual and test:edit with `lazyRead` forced
   on: unchanged.
+
+- 2026-10-29, first desktop runs: both sites' sheets hold nested rules
+  (Panda's empty `:root { & [data-theme] {} }`, a nested rule in /duo's
+  commons.css), which the first scan gave up on, so lazy reads never
+  engaged. The scan now resolves nesting; in the browser it finds both
+  sites' fixed rules (`.pos_fixed`; /duo's ScrollTop and nprogress) and
+  misses no element with a fixed position or pseudo-element content.
 
 ## What else changes
 
