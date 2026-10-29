@@ -261,3 +261,21 @@ test('a second group of the same element keeps one stand-in key', () => {
   assert.equal(cache.keyOf(group({ key: { el } })), el)
   assert.equal(cache.keyOf(group({ key: { el } })), kb)
 })
+
+test('a nested isolated group: kept unless its pass or transform is live', () => {
+  const { scene, list, ctx, cache } = setup()
+  const outer = group()
+  const inner = group({ depth: 1, region: 7 })
+  ;(scene as { groups: OpacityGroup[] }).groups = [outer, inner]
+  list.splice(1, 0, { kind: 'push', group: 1 })
+  list.splice(3, 0, { kind: 'pop', group: 1 })
+  list[4] = { kind: 'pop', group: 0 }
+  assert.equal(cache.signature(ctx, outer, 0, 4, place(), 0, []), null)
+  assert.equal(cache.reason, 'nested region')
+  let live: string | null = null
+  const c = { ...ctx, nestedLive: () => live }
+  assert.notEqual(cache.signature(c, outer, 0, 4, place(), 0, []), null)
+  live = 'nested transform'
+  assert.equal(cache.signature(c, outer, 0, 4, place(), 0, []), null)
+  assert.equal(cache.reason, 'nested transform')
+})

@@ -103,6 +103,11 @@ export interface PassOptions<S extends ParamSchema = ParamSchema> {
    * (re-evaluated each frame); 1 (default) keeps full resolution, up to
    * 4. Fullscreen passes only. */
   downsample?: number | ((params: ParamValues<S>, dpr: number) => number)
+  /** Region passes: true while the fragment can't change anything (a
+   * blur of radius 0): the element is then drawn in place, not isolated
+   * and passed through, and the group around it can keep its texture
+   * (gpu/group_cache.ts). Re-evaluated each frame. */
+  idle?: (params: ParamValues<S>, dpr: number) => boolean
   /** Default true. */
   enabled?: boolean
   /** Keep the frame loop running while enabled (time-based motion).
@@ -262,6 +267,8 @@ interface PassState {
   radius: () => number
   /** Resolution divisor for all stages but the last (PassOptions). */
   downsample: (dpr: number) => number
+  /** PassOptions.idle. */
+  idle: (dpr: number) => boolean
   life: Lifecycle
   paramsBuf: GPUBuffer | null
   stages: Stage[]
@@ -332,6 +339,14 @@ function downsampleFn<S extends ParamSchema>(
   return () => n
 }
 
+function idleFn<S extends ParamSchema>(
+  opts: PassOptions<S>,
+  values: ParamValues<S>
+): (dpr: number) => boolean {
+  const f = opts.idle
+  return f ? (dpr) => f(values, dpr) : () => false
+}
+
 function radiusFn<S extends ParamSchema>(
   opts: PassOptions<S>,
   values: ParamValues<S>
@@ -397,6 +412,7 @@ function inertEffects(): Effects {
         block,
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
+        idle: idleFn(opts, block.values),
         life: new Lifecycle({
           enabled: opts.enabled ?? true,
           continuous: passContinuous(opts),
@@ -1341,7 +1357,11 @@ function buildEffects(compositor: Compositor): Effects {
   }
   const regionHandler = (p: PassState): RegionHandler => ({
     pad: () => p.radius(),
-    active: () => p.life.enabled && p.stages.length > 0 && !destroyed,
+    active: () =>
+      p.life.enabled &&
+      p.stages.length > 0 &&
+      !destroyed &&
+      !p.idle(graph.shared.dpr),
     encode(f) {
       if (p.block.dirty && p.paramsBuf) {
         device.queue.writeBuffer(p.paramsBuf, 0, p.block.pack())
@@ -1438,6 +1458,7 @@ function buildEffects(compositor: Compositor): Effects {
         block: generic,
         radius: radiusFn(opts, block.values),
         downsample: downsampleFn(opts, block.values),
+        idle: idleFn(opts, block.values),
         life,
         paramsBuf: null,
         stages: [],

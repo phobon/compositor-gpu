@@ -182,7 +182,14 @@ export function planLevel(
     const t = effect?.kind === 'transform' ? effect.transform : undefined
     const tAlpha = t ? layerAlpha(t) : 1
     const xf = input.xfs[batch.group] ?? null
-    if (t && g && !xf && tAlpha === 1 && g.alpha === 1 && !g.filter) {
+    if (
+      g &&
+      ((t && !xf && tAlpha === 1) ||
+        // Isolated for a region pass that's idle this frame.
+        (g.region !== undefined && !effect && !g.blend)) &&
+      g.alpha === 1 &&
+      !g.filter
+    ) {
       // A layer transform at rest: its records draw in place.
       steps.push({
         kind: 'in-place',

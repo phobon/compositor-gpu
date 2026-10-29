@@ -730,7 +730,10 @@ Conventions each pass must follow:
   and cut rounding applies to every transformed group, kept or not
   (children's placement follows their parent's). keyOf gives an
   element's further groups in a frame stand-in keys kept per element
-  and order (not reader nodes, which re-reads replace).
+  and order (not reader nodes, which re-reads replace). A region pass
+  whose `idle()` (PassOptions.idle) is true reports inactive: its group
+  plans in place (group_plan.ts, with alpha 1, no filter or blend), and
+  `nestedLive` lets a parent be kept around it.
   Anything that changes without a new record makes a group uncacheable
   (dynamic images, materials, extras, nested xf/region, viewport space,
   image fades, `onGlyph`), and nothing is kept until `cacheReady` (fonts,

@@ -48,7 +48,8 @@ fx.pass({
   downsample?: number | (params, dpr) => number,  // 1-4, see below
   enabled?: true,
   continuous?: false,
-  region?: target | element         // see Region passes
+  region?: target | element,        // see Region passes
+  idle?: (params, dpr) => boolean   // region passes: nothing to do now
 }) -> Pass { name, params, enabled, continuous, radius, region, destroy() }
 ```
 
@@ -62,6 +63,10 @@ fx.pass({
   Region passes ignore it. `fx.scale` / `fx.src_scale` are the device px
   per texel of the stage's output and source (1 at full resolution);
   `uv`, `sample` and `fx.texel` stay in full-resolution terms.
+- `idle` (region passes): true while the fragment can't change anything
+  (`blur` below half a device px of radius). The element then draws in
+  place, not isolated and passed through, and an opacity group around it
+  can keep its texture between frames.
 - "Fullscreen" is the **visible viewport**. The chain writes the viewport
   grown by the largest `radius` of the enabled passes (× dpr, clamped to
   the canvas); the rest of the canvas (it is up to three viewports tall)

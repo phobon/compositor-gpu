@@ -64,6 +64,8 @@ export function blur(fx: Effects, opts: BlurOptions = {}): Pass<BlurSchema> {
     params: schema,
     radius: (p) => p.radius,
     downsample: (p, dpr) => (p.radius * dpr >= DOWNSAMPLE_AT ? 2 : 1),
+    // Under half a device px the stages sample their input as is.
+    idle: (p, dpr) => p.radius * dpr < 0.5,
     enabled: opts.enabled,
     region: opts.region
   })

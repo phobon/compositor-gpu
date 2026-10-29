@@ -730,7 +730,15 @@ export class Renderer {
       dpr,
       imagesVolatile: this.imagesVolatile,
       textVolatile: this.textVolatile,
-      materialKey: (id, g) => this.materialKey(id, g, ctx)
+      materialKey: (id, g) => this.materialKey(id, g, ctx),
+      nestedLive: (i) => {
+        const e = fx.effectOf(scene.groups[i])
+        if (e?.kind === 'region') {
+          return 'nested region'
+        }
+        // Called while groups render, after xfs is filled below.
+        return e?.kind === 'transform' && xfs[i] ? 'nested transform' : null
+      }
     }
     if (scene.backdrops.length > 0) {
       this.backdrop ??= new BackdropPass(this.shared)

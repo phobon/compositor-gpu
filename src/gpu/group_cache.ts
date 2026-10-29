@@ -74,6 +74,10 @@ export interface CacheContext {
    * that changes when its drawing over `g` can, or null when it can't be
    * kept (Renderer.materialKey). */
   materialKey?: (id: number, g: OpacityGroup) => number | null
+  /** Why the nested group `scene.groups[i]` draws differently from frame
+   * to frame without a new record ('nested region': a live region pass;
+   * 'nested transform': a layer transform away from rest), or null. */
+  nestedLive?: (i: number) => RenderReason | null
 }
 
 export class GroupCache {
@@ -293,8 +297,14 @@ export class GroupCache {
       if (b.kind === 'push' || b.kind === 'pop') {
         mix(b.kind === 'push' ? 1 : 2)
         const n = scene.groups[b.group]
-        if (!n || n.region !== undefined) {
+        if (!n) {
           return no('nested region')
+        }
+        if (n.region !== undefined) {
+          const live = c.nestedLive ? c.nestedLive(b.group) : 'nested region'
+          if (live) {
+            return no(live)
+          }
         }
         if (n.vbounds) {
           return no('viewport')

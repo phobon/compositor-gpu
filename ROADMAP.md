@@ -752,10 +752,24 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           opacity) was keyed by its reader node, which a re-read
           replaces ('new' every partial read): it now gets a stand-in
           key kept per element and order (`GroupCache.keyOf`). test:fx
-          as before. Desktop rerun pending
-    - [ ] Nested regions (2.7 a frame): a card can't be kept while the
-          reveal's unblur region inside it lives; a region could sign
-          with its handler's state instead
+          as before
+    - [x] Rerun (01:49): back to 341 dropped, bento 0, lightbox 27 →
+          18; 7.0 kept, 6.9 rendered a frame: region 2.9 and nested
+          region 2.9, all the reveals' unblur (a region blur on each
+          card's inner element, live for the whole tween and released
+          at its end). Now a region pass can be idle (new PassOptions
+          `idle`; blur: radius under half a device px, where its stages
+          sample their input as is): its element draws in place, not
+          isolated, and the card around it can be kept
+          (`CacheContext.nestedLive`; a nested layer transform at rest
+          doesn't stop it either). The reveal's ease spends the tail of
+          each tween under that. Headless (three cards, their inner
+          blurs 14 → 0): once idle, frames draw main + copy only (with
+          the cache off: each card's group and shadow passes),
+          pixel-identical; test:fx as before. Desktop rerun pending
+    - [ ] Region passes at full resolution: `downsample` applies to
+          fullscreen passes only; the reveals' region blurs (radius 14,
+          28 device px) run their two stages at full size
     - [ ] Regions (2.8 a frame): a group under a region pass (an fx
           effect: blur, displace, the layout morph) is rendered afresh
           every frame; its texture could be kept when only the pass's
