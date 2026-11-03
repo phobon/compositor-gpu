@@ -958,6 +958,12 @@ export class SceneReader {
     return out.sort((a, b) => a.d - b.d).map((o) => o.el)
   }
 
+  /** Elements whose style can use one of the custom properties `names`
+   * (PseudoRules.varUsers), or null when that can't be told. */
+  varUsers(names: readonly string[]): Element[] | null {
+    return this.pseudoRules.varUsers(names, this.root)
+  }
+
   /** Measure where the deferred subtrees are now (`dueDeferred` then uses
    * these), or stop (null). Their stored rects are what the partial
    * read's escalation check compares against, so they stay as read: a

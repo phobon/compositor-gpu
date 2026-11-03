@@ -38,7 +38,16 @@ export function hostSelector(
 type Hosts = Record<PseudoName, string[]> & {
   /** Selectors of rules setting `position: fixed`. */
   fixed: string[]
+  /** Selectors of the rules using each custom property (`var(--x)`) in a
+   * property's value. */
+  vars: Record<string, string[]>
+  /** The custom properties whose own value uses each one (`--a:
+   * var(--x)` makes --a depend on --x). */
+  chains: Record<string, string[]>
 }
+
+const VAR_USE = /var\(\s*(--[\w-]+)/g
+const DECL = /(?:^|;)\s*([-\w]+)\s*:\s*([^;]*)/g
 
 /** Pseudo-elements the browser's own stylesheet gives content, which
  * isn't in document.styleSheets (Chrome's: `q::before { content:
@@ -68,9 +77,30 @@ export function scanRules(rules: Iterable<CSSRule>): Hosts | null {
     '::before': [...UA_HOSTS['::before']],
     '::after': [...UA_HOSTS['::after']],
     '::marker': [...UA_HOSTS['::marker']],
-    fixed: []
+    fixed: [],
+    vars: {},
+    chains: {}
   }
   const declare = (selector: string, style: CSSStyleDeclaration): boolean => {
+    // The declarations' text, shorthands included (a longhand set from a
+    // shorthand with var() reads empty).
+    const text = style.cssText
+    if (text.includes('var(')) {
+      const hosts = splitTopLevel(selector, ',').map((part) => {
+        const h = hostSelector(part.trim())
+        return h ? h.host : part.trim()
+      })
+      for (const d of text.matchAll(DECL)) {
+        const prop = d[1] as string
+        for (const m of (d[2] as string).matchAll(VAR_USE)) {
+          const name = m[1] as string
+          const into = prop.startsWith('--') ? out.chains : out.vars
+          const list = into[name] ?? []
+          into[name] = list
+          list.push(...(prop.startsWith('--') ? [prop] : hosts))
+        }
+      }
+    }
     if (style.getPropertyValue('position') === 'fixed') {
       for (const part of splitTopLevel(selector, ',')) {
         const h = hostSelector(part.trim())
@@ -142,6 +172,10 @@ export class PseudoRules {
   /** Selector list matching an element that can be `position: fixed`
    * (rules, and inline styles naming it), or null when unknown. */
   private fixed: string | null = null
+  private vars: {
+    uses: Record<string, string[]>
+    chains: Record<string, string[]>
+  } | null = null
 
   /** Rescan if the document's sheets changed since the last call. */
   refresh(): void {
@@ -158,9 +192,11 @@ export class PseudoRules {
     if (lists.some((l) => l === null)) {
       this.hosts = null
       this.fixed = null
+      this.vars = null
       return
     }
     const found = scanRules(lists.flatMap((l) => l ?? []))
+    this.vars = found ? { uses: found.vars, chains: found.chains } : null
     this.fixed = found ? [...found.fixed, '[style*="fixed" i]'].join(',') : null
     this.hosts = found
       ? {
@@ -169,6 +205,34 @@ export class PseudoRules {
           '::marker': found['::marker'].join(',') || null
         }
       : null
+  }
+
+  /** Elements under `root` whose style can use one of `names` (custom
+   * properties): matched by a rule using it, or naming it in an inline
+   * style, or using a custom property defined from one; null when
+   * unknown (an unreadable sheet). */
+  varUsers(names: readonly string[], root: Element): Element[] | null {
+    this.refresh()
+    const vars = this.vars
+    if (!vars) {
+      return null
+    }
+    // The named properties and every custom property defined from them.
+    const all = new Set(names)
+    for (const n of all) {
+      for (const d of vars.chains[n] ?? []) {
+        all.add(d)
+      }
+    }
+    const sel: string[] = []
+    for (const n of all) {
+      sel.push(...(vars.uses[n] ?? []), `[style*="${CSS.escape(n)}"]`)
+    }
+    try {
+      return Array.from(root.querySelectorAll(sel.join(',')))
+    } catch {
+      return null
+    }
   }
 
   /** Whether the scan could model every rule's `position: fixed`. */

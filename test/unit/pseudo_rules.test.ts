@@ -28,10 +28,16 @@ test('the host of a pseudo-element selector', () => {
   assert.equal(hostSelector('.a::before .b'), null)
 })
 
-const rule = (selectorText: string, content: string, position = ''): CSSRule =>
+const rule = (
+  selectorText: string,
+  content: string,
+  position = '',
+  cssText = ''
+): CSSRule =>
   ({
     selectorText,
     style: {
+      cssText,
       getPropertyValue: (p: string) =>
         p === 'content' ? content : p === 'position' ? position : ''
     }
@@ -49,8 +55,28 @@ test('only rules giving a pseudo-element content count', () => {
     '::before': ['q', '.tag'],
     '::after': ['q', '.q'],
     '::marker': [],
-    fixed: []
+    fixed: [],
+    vars: {},
+    chains: {}
   })
+})
+
+test('rules using a custom property are collected by name, at their hosts', () => {
+  const found = scanRules([
+    rule('.a, .b::before', '', '', 'opacity: var(--fade, 1);'),
+    rule('.c', '', '', 'margin: var(--gap) var( --fade );'),
+    rule('.d', '', '', 'color: red;')
+  ])
+  assert.deepEqual(found?.vars, {
+    '--fade': ['.a', '.b', '.c'],
+    '--gap': ['.c']
+  })
+  // A custom property defined from another depends on it.
+  const chain = scanRules([
+    rule('.e', '', '', '--a: var(--fade); color: var(--a);')
+  ])
+  assert.deepEqual(chain?.chains, { '--fade': ['--a'] })
+  assert.deepEqual(chain?.vars, { '--a': ['.e'] })
 })
 
 test('grouping rules are walked; what it cannot model gives up', () => {

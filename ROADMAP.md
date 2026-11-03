@@ -907,9 +907,15 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       stylesheet or a class on <html> wasn't mirrored until something
       else read. Both now read everything; an inline style on <html>
       only when its computed style changes past the overflow a scroll
-      lock sets (or a custom property is named). Headless: a <style>
-      added to <head>, a class and a custom property on <html> each read
-      everything; `overflow: hidden` on <html> reads nothing
+      lock sets. A custom property set on <html> re-reads only the
+      elements whose rules (or inline style) use it, following custom
+      properties defined from it (dom/pseudo_rules.ts `varUsers`):
+      marketplace drives `--chrome-in`/`--chrome-out` there every frame
+      of a route fade, and reading everything for it made `back` drop
+      28–75 frames. Headless: a <style> added to <head> and a class on
+      <html> read everything; an unused custom property and
+      `overflow: hidden` read nothing; one used through an alias reads
+      its users
 - [ ] TypeGPU for every shader (2026-11-03). The ~100 WGSL sources are
       template strings (`/* wgsl */`) assembled by interpolation
       (`${FRAME_WGSL}`, a material's `${wrap}`, preset fragments pasted

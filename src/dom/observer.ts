@@ -155,6 +155,25 @@ export function outerRestyles(r: MutationRecord): boolean {
   return t instanceof Element && t.matches(STYLESHEET)
 }
 
+/** <html>'s computed style past what only scrolls (custom properties
+ * apart: those are compared by name). */
+function htmlStyleKey(): string {
+  const cs = getComputedStyle(document.documentElement)
+  let key = ''
+  for (let i = 0; i < cs.length; i++) {
+    const p = cs.item(i)
+    if (
+      p.startsWith('--') ||
+      SCROLL_ONLY.has(p) ||
+      (p.startsWith('overflow-') && p !== 'overflow-clip-margin')
+    ) {
+      continue
+    }
+    key += `${p}:${cs.getPropertyValue(p)};`
+  }
+  return key
+}
+
 /** An inline style change on <html>. */
 function htmlStyle(r: MutationRecord): boolean {
   return (
@@ -417,7 +436,7 @@ export class DomSync {
   /** Outside the root: stylesheets in <head> and <html>'s attributes
    * (a theme class), either of which can restyle anything. */
   private outer: MutationObserver
-  private htmlInline = ''
+  private htmlVars = new Map<string, string>()
   private htmlKey = ''
   private io: IntersectionObserver
   private started = false
@@ -454,16 +473,25 @@ export class DomSync {
       this.mark(flag)
     })
     this.outer = new MutationObserver((records) => {
-      const r = records.find(
-        (x) => outerRestyles(x) && (!htmlStyle(x) || this.htmlStyleChanged())
-      )
-      if (r) {
-        this.diag.last = `${r.type} ${describeEl(r.target)}${
-          r.attributeName ? `[${r.attributeName}]` : ''
-        }`
-        this.trace?.(r.type, r.target, r.attributeName ?? undefined)
-        this.mark(Dirty.CONTENT)
+      let flag = Dirty.NONE
+      for (const r of records) {
+        let f = Dirty.NONE
+        if (htmlStyle(r)) {
+          f = this.htmlStyleFlag()
+        } else if (outerRestyles(r)) {
+          f = Dirty.CONTENT
+          // A stylesheet or <html> class can restyle <html> itself.
+          this.htmlKey = htmlStyleKey()
+        }
+        if (f !== Dirty.NONE) {
+          this.diag.last = `${r.type} ${describeEl(r.target)}${
+            r.attributeName ? `[${r.attributeName}]` : ''
+          }`
+          this.trace?.(r.type, r.target, r.attributeName ?? undefined)
+        }
+        flag |= f
       }
+      this.mark(flag)
     })
     this.io = new IntersectionObserver(() => {
       this.trace?.('intersection')
@@ -560,30 +588,55 @@ export class DomSync {
     return changed
   }
 
-  /** <html>'s computed style changed past what only scrolls (its
-   * overflow is the viewport's), or its inline style names a custom
-   * property: a scroll lock's `overflow: hidden` on <html> reads nothing. */
-  private htmlStyleChanged(): boolean {
+  /** An inline style change on <html>: everything when its computed
+   * style changed past what only scrolls (its overflow is the
+   * viewport's: a scroll lock reads nothing); for custom properties set
+   * there, the elements whose style uses them (`varUsers`; everything
+   * when that can't be told). A page driving a custom property every
+   * frame (marketplace's chrome fade) then reads only its users. */
+  private htmlStyleFlag(): number {
     const de = document.documentElement
-    const inline = de.getAttribute('style') ?? ''
-    const vars = inline.includes('--') || this.htmlInline.includes('--')
-    this.htmlInline = inline
-    const cs = getComputedStyle(de)
-    let key = ''
-    for (let i = 0; i < cs.length; i++) {
-      const p = cs.item(i)
-      if (
-        SCROLL_ONLY.has(p) ||
-        (p.startsWith('overflow-') && p !== 'overflow-clip-margin')
-      ) {
+    const vars = new Map<string, string>()
+    for (let i = 0; i < de.style.length; i++) {
+      const p = de.style.item(i)
+      if (p.startsWith('--')) {
+        vars.set(p, de.style.getPropertyValue(p))
+      }
+    }
+    const changed: string[] = []
+    for (const n of new Set([...vars.keys(), ...this.htmlVars.keys()])) {
+      if (vars.get(n) !== this.htmlVars.get(n)) {
+        changed.push(n)
+      }
+    }
+    this.htmlVars = vars
+    const key = htmlStyleKey()
+    const computed = key !== this.htmlKey
+    this.htmlKey = key
+    if (computed) {
+      return Dirty.CONTENT
+    }
+    if (changed.length === 0) {
+      return Dirty.NONE
+    }
+    const users = this.varUsers?.(changed) ?? null
+    if (users === null) {
+      return Dirty.CONTENT
+    }
+    let flag = Dirty.NONE
+    for (const el of users) {
+      if (isIgnored(el)) {
         continue
       }
-      key += `${p}:${cs.getPropertyValue(p)};`
+      this.scopes.add(el === this.root ? el : (el.parentElement ?? el))
+      flag = Dirty.MUTATION
     }
-    const changed = key !== this.htmlKey
-    this.htmlKey = key
-    return changed || vars
+    return flag
   }
+
+  /** Elements whose style can use one of the named custom properties, or
+   * null when unknown (set by the compositor: SceneReader.varUsers). */
+  varUsers: ((names: readonly string[]) => Element[] | null) | null = null
 
   private mark(flag: number): void {
     if (flag === Dirty.NONE) {
@@ -905,7 +958,7 @@ export class DomSync {
     }
     if (html !== this.root) {
       this.outer.observe(html, { attributes: true })
-      this.htmlStyleChanged()
+      this.htmlStyleFlag()
     }
     window.addEventListener('scroll', this.onScroll, { passive: true })
     window.addEventListener('resize', this.onResize, { passive: true })
@@ -917,7 +970,10 @@ export class DomSync {
     this.root.addEventListener('focusin', this.onFocus, true)
     this.root.addEventListener('focusout', this.onFocus, true)
     document.addEventListener('selectionchange', this.onSelection)
-    document.fonts?.ready.then(() => this.mark(Dirty.CONTENT))
+    document.fonts?.ready.then(() => {
+      this.htmlKey = htmlStyleKey()
+      this.mark(Dirty.CONTENT)
+    })
     // Each later font load reflows text and invalidates atlas glyphs drawn
     // with a fallback face: full re-read.
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)

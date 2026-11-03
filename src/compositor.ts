@@ -1066,6 +1066,7 @@ export async function createCompositor(
     }
     return queued > 0
   }
+  sync.varUsers = (names) => reader.varUsers(names)
   sync.fontScope = (families) =>
     reader.elementsWithFont(families, FONT_SCOPE_MAX)
   // Every glyph uploads again: atlas glyphs re-rasterise (the atlas
