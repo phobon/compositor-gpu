@@ -174,6 +174,10 @@ export interface FrameHook {
   /** What keeps it running, by name (the profiler; called only while it
    * samples and keepAlive() is true). */
   alive?(): string[]
+  /** True while a transition shows its held snapshot instead of the page
+   * (its copy taken): lazy reads then read the page in budgeted pieces
+   * before the hold is released (docs/LAZY_READ.md). */
+  holding?(): boolean
 }
 
 /** The compositor's extension surface for the effects layer. */

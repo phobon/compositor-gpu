@@ -485,6 +485,10 @@ export class SceneReader {
    * frame, and how far outside them an element's subtree must lie to be
    * deferred; null reads everything. */
   readWindow: { y0: number; y1: number; safe: number } | null = null
+  /** The window full and escalated reads use instead, when set: while a
+   * transition holds its snapshot the page isn't shown, so a whole read
+   * defers all it can and the rest is read in budgeted pieces. */
+  holdWindow: { y0: number; y1: number; safe: number } | null = null
   /** Nodes whose children were deferred. */
   private deferredNodes = new Set<ElNode>()
   /** Partial reads that completed without escalating. */
@@ -957,7 +961,13 @@ export class SceneReader {
     this.stickies.clear()
     this.rootTrapsFixed = ancestorsTrapFixed(this.root)
     this.rootInRootContext = !ancestorsMakeContext(this.root)
-    this.tree = this.readNode(this.root, null, null, true, null, null, null)
+    const normal = this.readWindow
+    this.readWindow = this.holdWindow ?? normal
+    try {
+      this.tree = this.readNode(this.root, null, null, true, null, null, null)
+    } finally {
+      this.readWindow = normal
+    }
     this.rebuildScene()
   }
 

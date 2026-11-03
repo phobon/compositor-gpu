@@ -119,6 +119,29 @@ until it's read (its rect still triggers escalation if layout moved).
   sites' fixed rules (`.pos_fixed`; /duo's ScrollTop and nprogress) and
   misses no element with a fixed position or pseudo-element content.
 
+## While a transition holds its snapshot
+
+An `fx.transition` shows a copy of the outgoing page from capture() until
+settled() finds the incoming mirror complete, so for those frames nothing
+of the page is drawn. A route change's whole read lands in exactly that
+window, in the frame the site renders the new route (marketplace,
+2026-10-29: ~30 ms of reading ~1,000 elements on top of ~30 ms of React,
+a 50–67 ms frame).
+
+With lazy reads on, a full or escalated read made while a hold is
+showing (`FrameHook.holding()`: the copy taken, not yet released) uses
+`SceneReader.holdWindow` instead: the viewport's middle row with no
+margin, so everything off it is deferred or stubbed and the read is
+the ancestors along that row. The deferred subtrees are then read as lazy
+scopes, nearest the middle first, within `HOLD_BUDGET_MS` (6) a frame
+and with no subtree forced because the canvas reaches it. The graph's
+`mirrorComplete()` stays false while any deferred subtree the canvas
+reaches is unread, so settled() resolves only once the canvas is fully
+read; the fade then starts on a complete page. The cost moves from one
+long frame to a few budgeted ones before the fade (at most the
+transition's timeout, 1500 ms by default, after which the normal rules
+read whatever the canvas reaches).
+
 ## What else changes
 
 - `ElNode.deferred`, `SceneReader.deferred` (roots and rects), and the

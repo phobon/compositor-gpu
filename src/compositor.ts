@@ -760,7 +760,8 @@ export async function createCompositor(
     warmMaterial: (entry) => renderer.warmMaterial(entry),
     nextMaterialId: () => nextMaterial++,
     materialsPending: () => materialPipelinesPending(),
-    mirrorComplete: () => mirrorComplete() && pendingReadFlags === Dirty.NONE,
+    mirrorComplete: () =>
+      mirrorComplete() && pendingReadFlags === Dirty.NONE && !holdPending(),
     hideSource(el, hidden) {
       if (!(el instanceof HTMLElement) || destroyed || lost) {
         return
@@ -962,25 +963,54 @@ export async function createCompositor(
   const lazy = options.lazyRead === true && options.canvasPin !== 'viewport'
   /** ms a read spends per element, from the last reads (lazy budget). */
   let msPerElement = 0.05
-  /** Set the read window for this frame's reads and queue the deferred
-   * subtrees now inside it: those the canvas reaches all, the rest
-   * nearest first within the budget. True when it queued any. */
-  const lazyScopes = (scopes: Set<Element>): boolean => {
+  /** A transition shows its held snapshot instead of the page. */
+  const holding = (): boolean => {
+    for (const h of hooks) {
+      if (h.holding?.()) {
+        return true
+      }
+    }
+    return false
+  }
+  /** The canvas region's rows, doc CSS px. */
+  const canvasRows = (): [number, number] => {
     const vh = window.innerHeight
     const sy = window.scrollY
     const margin = Math.max(0, options.canvasMargin ?? vh)
+    return [sy - margin, sy + vh + margin]
+  }
+  /** Deferred subtrees the canvas reaches are still unread while a
+   * transition holds: its hold waits for them (mirrorComplete). */
+  const holdPending = (): boolean => {
+    if (!lazy || reader.deferredCount === 0 || !holding()) {
+      return false
+    }
+    const [c0, c1] = canvasRows()
+    return reader.dueDeferred(c0, c1, 0).length > 0
+  }
+  /** Set the read window for this frame's reads and queue the deferred
+   * subtrees now inside it: those the canvas reaches all, the rest
+   * nearest first within the budget. True when it queued any. While a
+   * transition holds its snapshot (nothing of the page is shown), a full
+   * read defers everything off the viewport's middle row and every
+   * subtree waits its turn in a larger budget. */
+  const lazyScopes = (scopes: Set<Element>): boolean => {
+    const vh = window.innerHeight
+    const sy = window.scrollY
     const extra = Math.max(0, options.lazyMargin ?? vh)
-    const c0 = sy - margin
-    const c1 = sy + vh + margin
+    const [c0, c1] = canvasRows()
+    const held = holding()
     reader.readWindow = {
       y0: c0 - extra,
       y1: c1 + extra,
       safe: Math.max(0, options.lazySafe ?? vh)
     }
+    const mid = sy + vh / 2
+    reader.holdWindow = held ? { y0: mid, y1: mid, safe: 0 } : null
     if (reader.deferredCount === 0) {
       return false
     }
-    const budget = options.lazyBudget ?? 2
+    const budget = held ? HOLD_BUDGET_MS : (options.lazyBudget ?? 2)
     let spent = 0
     let queued = 0
     for (const el of reader.dueDeferred(c0 - extra, c1 + extra, sy + vh / 2)) {
@@ -990,7 +1020,7 @@ export async function createCompositor(
       // The nearest one each frame regardless, so a subtree larger than
       // the budget still gets read.
       if (
-        !onCanvas &&
+        (held || !onCanvas) &&
         queued > 0 &&
         (spent + cost > budget || queued >= LAZY_SCOPES_MAX)
       ) {
@@ -1536,6 +1566,9 @@ const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
 /** Deferred subtrees queued in one frame at most beyond those the canvas
  * reaches (partial reads past MAX_BOUNDARIES read everything). */
 const LAZY_SCOPES_MAX = 32
+/** ms a frame of lazy reads gets while a transition holds its snapshot
+ * (the page isn't shown, so its read can take a few frames). */
+const HOLD_BUDGET_MS = 6
 
 /** Elements a font load re-reads at most before it reads everything
  * (DomSync.invalidateFonts). */

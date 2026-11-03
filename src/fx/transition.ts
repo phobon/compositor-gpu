@@ -137,6 +137,11 @@ export class Snapshot {
     })
   }
 
+  /** Showing the copy in place of the page (taken, not yet released). */
+  holdingCopy(): boolean {
+    return this.hold && !this.want
+  }
+
   /** Waiting on a copy or on the incoming mirror (keeps the loop alive). */
   busy(): boolean {
     return this.want || this.waiting !== null

@@ -1069,6 +1069,9 @@ function buildEffects(compositor: Compositor): Effects {
         releaseTargets()
       }
     },
+    holding() {
+      return passes.some((p) => p.snap?.holdingCopy() === true)
+    },
     keepAlive() {
       return keepAlive(
         lives(),

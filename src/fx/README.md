@@ -702,8 +702,11 @@ progress: return exactly `prev(uv)` at 0 and exactly `sample(uv)` at 1
 and the ends match the two pages pixel for pixel (shots
 `fx-transition-0`, `fx-transition-1`). The snapshot is the scene before
 any pass, so passes created before the transition apply to the incoming
-page only. `playground/transition.html` is a reveal from the pointer;
-`npx tsx test/transition/run.ts` times it.
+page only. With `lazyRead` on, a whole read made while the hold shows
+reads only along the viewport's middle row and the rest in budgeted
+pieces over the next frames; `settled()` waits for those the canvas
+reaches (docs/LAZY_READ.md). `playground/transition.html` is a reveal
+from the pointer; `npx tsx test/transition/run.ts` times it.
 
 `t.addLayer(layer)` takes a Layer out of the page's paint order and
 draws it on its own each frame, for the fragment to read with
