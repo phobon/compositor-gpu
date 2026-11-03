@@ -119,6 +119,31 @@ until it's read (its rect still triggers escalation if layout moved).
   sites' fixed rules (`.pos_fixed`; /duo's ScrollTop and nprogress) and
   misses no element with a fixed position or pseudo-element content.
 
+## Elements effects draw from (2026-11-03)
+
+An effect that draws from an element (a pass sampling an image, a
+material's subtree, a layer placed before or after one, a region or
+transform target, an SDF field) needs it read wherever it lies. Each
+such element is pinned the first time the effects layer asks for it
+(`graph.nodeOf`, `graph.imageOf`, material tagging, layer anchors,
+isolation): `SceneReader.pin` keeps it, its subtree and its ancestors
+from being deferred or stubbed, and the deferred subtrees hiding it are
+read on the next frame. Pins drop when their element leaves the
+document. test:fx with lazy reads forced on found the gap
+(`fx-pass-image` sampled nothing: its image sat in a deferred subtree).
+
+## Changes inside a deferred subtree
+
+An image load or a mutation inside a subtree that is still deferred
+used to read the whole subtree (its nearest read node is the deferred
+one), so a page of far cards loading their images read every card
+(marketplace after a route change: ~270 elements in one frame, a
+dropped frame). Now such a boundary is only checked: its border box is
+measured against the stored one (escalating if it moved, as any
+boundary would) and its content is left to be read when the canvas
+nears it, when the image will be loaded anyway. Lazy and pinned scopes
+(the deferred node itself) are read as before.
+
 ## While a transition holds its snapshot
 
 An `fx.transition` shows a copy of the outgoing page from capture() until

@@ -870,8 +870,44 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         529 elements at the top (200 → 61 ms) and 339 at the bottom
         (214 → 32 ms), pixel-identical to an eager read while scrolling
         through, after far edits, removals and a jump back; the whole of
-        test:visual and test:edit with it forced on: unchanged. Desktop:
-        marketplace and /duo with it on, pending
+        test:visual and test:edit with it forced on: unchanged. Desktop
+        (2026-11-03): on for marketplace, off for /duo (~620 elements,
+        nothing to gain). Marketplace production build, `--runs 5`:
+        median 16 → 13 dropped with a hovered click; route changes read
+        70 elements instead of 1,015 (the transition-hold read below)
+    - [x] While an `fx.transition` holds its snapshot, whole reads and
+          the changed subtree defer everything off the viewport's middle
+          row; the rest is read 4 ms a frame (a measured deadline in the
+          read, not an estimate) and settled() waits for it
+    - [x] Elements effects draw from are pinned (never deferred), and a
+          change inside a still-deferred subtree only checks its box
+          (docs/LAZY_READ.md). test:fx with it forced on: fx-pass-image
+          fixed, every transition, morph and layout shot 0.00; test:edit
+          unchanged
+    - [ ] fx-mat-wave and fx-mat-all with it forced on: the heading's
+          glyph material indices come out shifted by a few glyphs (the
+          wave's phase moves along the heading; 0.79%). Not traced yet:
+          the bases `tagSubtree` gives each run against what the text
+          upload last used. Needed before lazy reads can default on
+- [ ] TypeGPU for every shader (2026-11-03). The ~100 WGSL sources are
+      template strings (`/* wgsl */`) assembled by interpolation
+      (`${FRAME_WGSL}`, a material's `${wrap}`, preset fragments pasted
+      into pass templates). So each storage or uniform struct is kept in
+      step with the code that packs it by hand (box_renderer.ts's `Box`
+      against its 32 floats an instance, effect params, the frame
+      uniforms), a mistake shows up only when the pipeline compiles or
+      as wrong pixels, and the shared helpers (`sd_box`, `edge_cov`,
+      `frame_clip_cov`, `to_clip`) are copied in as text rather than
+      imported. Move them to TypeGPU: data schemas for the buffer
+      layouts (one definition for the WGSL struct and the JS writes),
+      `tgpu.fn` for shared functions and per-pass entry points, and its
+      bind group layouts where they fit. /fx already takes `tgpu.fn`
+      hooks (TypeGPU externals), and typegpu 0.12 and unplugin-typegpu
+      are dependencies. Order: the shared Frame (every pass uses it),
+      then boxes (the largest struct and the hottest shader), text,
+      images, then the fx passes and presets. Gate per step: test:visual
+      and test:fx at 0.00 against goldens from before it, no change in
+      GPU time a frame or in pipeline compile time at start
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

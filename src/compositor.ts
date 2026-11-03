@@ -781,8 +781,12 @@ export async function createCompositor(
         releaseFx(el)
       }
     },
-    nodeOf: (el) => reader.nodeOf(el),
+    nodeOf: (el) => {
+      pinRead(el)
+      return reader.nodeOf(el)
+    },
     imageOf(el) {
+      pinRead(el)
       const own = reader.nodeOf(el)?.own
       const rec = own?.find((r) => r.kind === 'image')
       return rec && imagePass ? imagePass.regionOf(rec) : null
@@ -818,6 +822,7 @@ export async function createCompositor(
     }
     if (want) {
       reader.isolated.set(el, id)
+      pinRead(el)
     } else {
       reader.isolated.delete(el)
       regionIds.delete(el)
@@ -852,6 +857,7 @@ export async function createCompositor(
       return { id, z: belowZ(), depth: 0 }
     }
     const before = 'before' in place
+    pinRead(before ? place.before : place.after)
     const node = reader.nodeOf(before ? place.before : place.after)
     const range = node ? subtreeZ(node) : null
     if (!node || !range) {
@@ -931,6 +937,9 @@ export async function createCompositor(
     }
     tagged = []
     for (const m of renderer.materials.values()) {
+      if (m.active() && !m.builtin) {
+        pinRead(m.target)
+      }
       const node =
         m.active() && !m.builtin ? reader.nodeOf(m.target) : undefined
       if (node) {
@@ -968,6 +977,20 @@ export async function createCompositor(
    * it may spend on them. */
   const lazyCut = new Set<Element>()
   let lazyBudgetMs = 0
+  /** An effect draws from `el` (lazy reads): keep it read, and read the
+   * deferred subtrees hiding it on the next frame. */
+  const pinRead = (el: Element): void => {
+    if (!lazy) {
+      return
+    }
+    const due = reader.pin(el)
+    for (const d of due) {
+      isolationScopes.add(d)
+    }
+    if (due.length > 0) {
+      scheduler.request()
+    }
+  }
   /** A transition shows its held snapshot instead of the page. */
   const holding = (): boolean => {
     for (const h of hooks) {

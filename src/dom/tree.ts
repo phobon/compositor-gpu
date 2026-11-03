@@ -496,6 +496,9 @@ export class SceneReader {
   lazyDeadline: { at: number; els: ReadonlySet<Element> } | null = null
   /** Lazy scopes the last partial read left for later. */
   lazySkipped = 0
+  /** Elements effects draw from (an image, a glyph run, a material's
+   * subtree): never deferred, nor anything holding one or inside one. */
+  private readonly pinned = new Set<Element>()
   /** Nodes whose children were deferred. */
   private deferredNodes = new Set<ElNode>()
   /** Partial reads that completed without escalating. */
@@ -672,6 +675,18 @@ export class SceneReader {
         this.escalate('unread boundary', b)
         return
       }
+      if (old.deferred && !scopes.has(b)) {
+        // A change inside a deferred subtree (an image loading, a
+        // mutation), not a read of the subtree itself (a lazy or pinned
+        // scope): it is read in full when the canvas nears it; until then
+        // only its box matters to the rest of the page.
+        const rect = this.pass.at(old.space).docRect(b.getBoundingClientRect())
+        if (!sameRect(old.rect, rect)) {
+          this.escalate('deferred boundary moved', b)
+          return
+        }
+        continue
+      }
       const p = old.parent
       // Drop the old subtree's entries: elements gone from it (removed,
       // display:none) must not resolve to stale nodes.
@@ -836,7 +851,8 @@ export class SceneReader {
       region !== undefined ||
       hold ||
       !el.firstChild ||
-      el.hasAttribute(EAGER_ATTR)
+      el.hasAttribute(EAGER_ATTR) ||
+      this.touchesPinned(el)
     ) {
       return false
     }
@@ -873,7 +889,8 @@ export class SceneReader {
       el.hasAttribute(IGNORE_ATTR) ||
       el.hasAttribute(EAGER_ATTR) ||
       this.isolated.has(el) ||
-      this.holds.has(el)
+      this.holds.has(el) ||
+      this.touchesPinned(el)
     ) {
       return undefined
     }
@@ -936,6 +953,45 @@ export class SceneReader {
       }
     }
     return out.sort((a, b) => a.d - b.d).map((o) => o.el)
+  }
+
+  /** Keep `el` and its subtree read from now on (lazy reads); returns the
+   * deferred subtrees to read now for that: the nearest read ancestor
+   * when it is deferred, or those inside `el`. */
+  pin(el: Element): Element[] {
+    if (!this.pinned.has(el)) {
+      this.pinned.add(el)
+    }
+    if (this.deferredNodes.size === 0) {
+      return []
+    }
+    for (let a: Element | null = el; a; a = a.parentElement) {
+      const n = this.nodes.get(a)
+      if (n) {
+        if (n.deferred) {
+          return [a]
+        }
+        break
+      }
+    }
+    const out: Element[] = []
+    for (const n of this.deferredNodes) {
+      if (el.contains(n.el)) {
+        out.push(n.el)
+      }
+    }
+    return out
+  }
+
+  private touchesPinned(el: Element): boolean {
+    for (const p of this.pinned) {
+      if (!p.isConnected) {
+        this.pinned.delete(p)
+      } else if (el.contains(p) || p.contains(el)) {
+        return true
+      }
+    }
+    return false
   }
 
   /** Nodes whose children are deferred (stats). */
