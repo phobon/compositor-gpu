@@ -134,7 +134,7 @@ escalates when the route's content resizes its container) (`FrameHook.holding()`
 `SceneReader.holdWindow` instead: the viewport's middle row with no
 margin, so everything off it is deferred or stubbed and the read is
 the ancestors along that row. The deferred subtrees are then read as lazy
-scopes, nearest the middle first, within `HOLD_BUDGET_MS` (6) a frame
+scopes, nearest the middle first, within `HOLD_BUDGET_MS` (4) a frame
 (`SceneReader.lazyDeadline`: the read stops taking them once the
 budget is spent, so a misjudged size can't overrun it)
 and with no subtree forced because the canvas reaches it. The graph's

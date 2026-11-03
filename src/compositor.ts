@@ -1568,8 +1568,10 @@ const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
  * reaches (partial reads past MAX_BOUNDARIES read everything). */
 const LAZY_SCOPES_MAX = 32
 /** ms a frame of lazy reads gets while a transition holds its snapshot
- * (the page isn't shown, so its read can take a few frames). */
-const HOLD_BUDGET_MS = 6
+ * (the page isn't shown, so its read can take a few frames). The scene
+ * patch or rebuild after the read comes on top (~2-3 ms for a few dozen
+ * subtrees). */
+const HOLD_BUDGET_MS = 4
 
 /** Elements a font load re-reads at most before it reads everything
  * (DomSync.invalidateFonts). */
