@@ -99,10 +99,10 @@ until it's read (its rect still triggers escalation if layout moved).
   in `dom/tree.ts`, `dueDeferred()` for the compositor; fixed-position
   selectors from `dom/pseudo_rules.ts` (`mayHoldFixed`).
 - The compositor (`lazyScopes`) queues due nodes as partial-read scopes:
-  all that the canvas reaches, then nearest first within `lazyBudget`
-  (estimated from the subtree's element count and the measured cost per
-  element), always at least one a frame, at most 32; it asks for another
-  frame while any are due.
+  all that the canvas reaches, then nearest first, at most 32. The read
+  takes the latter until `lazyBudget` ms have passed (measured, not
+  estimated: `SceneReader.lazyDeadline`), always at least one a frame;
+  the compositor asks for another frame while any are due.
 - Headless (a 1,100 px viewport over a 400-card grid, a numbered list,
   a fixed nav inside a static header): a full read at the top 3,268 →
   529 elements, 200 → 61 ms; at the bottom 3,260 → 339, 214 → 32 ms;
@@ -129,11 +129,14 @@ window, in the frame the site renders the new route (marketplace,
 a 50–67 ms frame).
 
 With lazy reads on, a full or escalated read made while a hold is
-showing (`FrameHook.holding()`: the copy taken, not yet released) uses
+showing, and the partial read of a changed subtree before it (which
+escalates when the route's content resizes its container) (`FrameHook.holding()`: the copy taken, not yet released) uses
 `SceneReader.holdWindow` instead: the viewport's middle row with no
 margin, so everything off it is deferred or stubbed and the read is
 the ancestors along that row. The deferred subtrees are then read as lazy
 scopes, nearest the middle first, within `HOLD_BUDGET_MS` (6) a frame
+(`SceneReader.lazyDeadline`: the read stops taking them once the
+budget is spent, so a misjudged size can't overrun it)
 and with no subtree forced because the canvas reaches it. The graph's
 `mirrorComplete()` stays false while any deferred subtree the canvas
 reaches is unread, so settled() resolves only once the canvas is fully

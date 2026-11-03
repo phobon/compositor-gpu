@@ -435,14 +435,17 @@ export async function createCompositor(
       read = 'full'
     } else if (flags & Dirty.MUTATION) {
       const t0 = performance.now()
+      reader.lazyDeadline =
+        lazyCut.size > 0 ? { at: t0 + lazyBudgetMs, els: lazyCut } : null
       reader.partialRead(dirty.scopes, paintOnly)
+      reader.lazyDeadline = null
       readMs = frameReadMs = performance.now() - t0
       read = reader.lastRead.kind
+      if (reader.lazySkipped > 0) {
+        scheduler.request()
+      }
     }
-    if (lazy && reader.readElements > 50) {
-      msPerElement =
-        0.8 * msPerElement + (0.2 * frameReadMs) / reader.readElements
-    }
+    lazyCut.clear()
     // After the reads (layout is clean, so docSize() costs no extra
     // reflow when it doesn't toggle the canvas), and in the same task as
     // render(), so the new position and the new pixels land in one paint.
@@ -961,8 +964,10 @@ export async function createCompositor(
   }
   const sync = new DomSync(root, () => scheduler.request())
   const lazy = options.lazyRead === true && options.canvasPin !== 'viewport'
-  /** ms a read spends per element, from the last reads (lazy budget). */
-  let msPerElement = 0.05
+  /** This frame's lazy scopes the read may leave for later, and the ms
+   * it may spend on them. */
+  const lazyCut = new Set<Element>()
+  let lazyBudgetMs = 0
   /** A transition shows its held snapshot instead of the page. */
   const holding = (): boolean => {
     for (const h of hooks) {
@@ -1010,23 +1015,19 @@ export async function createCompositor(
     if (reader.deferredCount === 0) {
       return false
     }
-    const budget = held ? HOLD_BUDGET_MS : (options.lazyBudget ?? 2)
-    let spent = 0
+    lazyBudgetMs = held ? HOLD_BUDGET_MS : (options.lazyBudget ?? 2)
     let queued = 0
     for (const el of reader.dueDeferred(c0 - extra, c1 + extra, sy + vh / 2)) {
       const r = el.getBoundingClientRect()
       const onCanvas = r.bottom + sy >= c0 && r.top + sy <= c1
-      const cost = el.getElementsByTagName('*').length * msPerElement
-      // The nearest one each frame regardless, so a subtree larger than
-      // the budget still gets read.
-      if (
-        (held || !onCanvas) &&
-        queued > 0 &&
-        (spent + cost > budget || queued >= LAZY_SCOPES_MAX)
-      ) {
-        continue
+      if (held || !onCanvas) {
+        if (queued >= LAZY_SCOPES_MAX) {
+          continue
+        }
+        // The read stops taking these once the budget is spent
+        // (SceneReader.lazyDeadline); the rest wait for a later frame.
+        lazyCut.add(el)
       }
-      spent += cost
       queued++
       scopes.add(el)
       sync.trace?.('lazy', el)

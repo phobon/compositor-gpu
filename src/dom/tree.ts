@@ -485,10 +485,17 @@ export class SceneReader {
    * frame, and how far outside them an element's subtree must lie to be
    * deferred; null reads everything. */
   readWindow: { y0: number; y1: number; safe: number } | null = null
-  /** The window full and escalated reads use instead, when set: while a
-   * transition holds its snapshot the page isn't shown, so a whole read
-   * defers all it can and the rest is read in budgeted pieces. */
+  /** The window whole reads and changed subtrees use instead, when set
+   * (lazy scopes keep readWindow): while a transition holds its snapshot
+   * the page isn't shown, so a read defers all it can and the rest is
+   * read in budgeted pieces. */
   holdWindow: { y0: number; y1: number; safe: number } | null = null
+  /** Lazy scopes a partial read may leave unread once `at`
+   * (performance.now()) has passed, after reading at least one; they
+   * stay deferred for a later frame. */
+  lazyDeadline: { at: number; els: ReadonlySet<Element> } | null = null
+  /** Lazy scopes the last partial read left for later. */
+  lazySkipped = 0
   /** Nodes whose children were deferred. */
   private deferredNodes = new Set<ElNode>()
   /** Partial reads that completed without escalating. */
@@ -611,6 +618,7 @@ export class SceneReader {
     paintOnly?: ReadonlySet<Element>
   ): void {
     this.startPass()
+    this.lazySkipped = 0
     this.lastRead = {
       kind: 'partial',
       reason: '',
@@ -649,7 +657,16 @@ export class SceneReader {
       }
     }
     const swaps: [ElNode, ElNode][] = []
+    const cut = this.lazyDeadline
+    let lazyDone = 0
     for (const b of bounds) {
+      if (cut?.els.has(b)) {
+        if (lazyDone > 0 && performance.now() >= cut.at) {
+          this.lazySkipped++
+          continue
+        }
+        lazyDone++
+      }
       const old = this.nodes.get(b)
       if (!old) {
         this.escalate('unread boundary', b)
@@ -663,15 +680,26 @@ export class SceneReader {
       // element: its own transition or attribute change made it a scope)
       // must stay ignored: the attribute is on the wrapper, not on it.
       this.inIgnored = b.parentElement !== null && isIgnored(b.parentElement)
-      const fresh = this.readNode(
-        b,
-        p,
-        p ? p.childClip : null,
-        p === null,
-        p ? p.lin : null,
-        p ? p.decor : null,
-        p ? p.cb : null
-      )
+      // While a hold shows, a changed subtree defers like a whole read
+      // (it may well escalate); a lazy scope reads under the normal window.
+      const normal = this.readWindow
+      if (this.holdWindow && !cut?.els.has(b)) {
+        this.readWindow = this.holdWindow
+      }
+      let fresh: ElNode | null
+      try {
+        fresh = this.readNode(
+          b,
+          p,
+          p ? p.childClip : null,
+          p === null,
+          p ? p.lin : null,
+          p ? p.decor : null,
+          p ? p.cb : null
+        )
+      } finally {
+        this.readWindow = normal
+      }
       this.inIgnored = false
       const trusted = paintOnly?.has(b) === true
       const why = !fresh
