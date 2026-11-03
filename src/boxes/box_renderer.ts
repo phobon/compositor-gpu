@@ -1,50 +1,18 @@
 import { shadowPad } from '../dom/styles'
+import { BOX_AT, BOX_DECLS, FLOATS_PER_BOX } from './box_data'
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
-import { SD_BOX_WGSL } from '../gpu/sdf'
+import { SD_EDGE_WGSL } from '../gpu/sdf'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 
-const FLOATS_PER_BOX = 72 // 18 * vec4f
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 
 /** The box shader after its header (gpu/material.ts passShader), with
  * fragment entry point `wrap`. */
 const shader = (wrap: string): string => /* wgsl */ `
 
-struct Box {
-  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
-  xf1    : vec4f,   // tx, ty (doc space), w, h (local size, CSS px)
-  radius : vec4f,   // tl, tr, br, bl
-  fill   : vec4f,   // sRGB rgba
-  bc0    : vec4f,   // top border colour, sRGB rgba
-  params : vec4f,   // border styles (base-4 t,r,b,l), opacity, clip
-                    // shape index (frame_clip_cov; 0 none), space
-  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  grad   : vec4f,   // kind (0 none, 1 linear, 2 radial, 3 conic;
-                    // +8 repeating; -1 dashed, -2 dotted, -3 wavy
-                    // decoration), angle, start, count
-  gradc  : vec4f,   // radial: cx, cy (padding-box fractions), rx, ry (px)
-  sh0    : vec4f,   // shadow: sigma, pad (local px), isShadow, inset;
-                    // plain box: w = gradient tile repeats (1 x, 2 y)
-  sh1    : vec4f,   // shadow: inner box x, y, w, h (local px) — the
-                    // element box (outer) or the shadow box (inset);
-                    // plain box: background-clip insets t, r, b, l
-  shr    : vec4f,   // shadow: inner radii tl, tr, br, bl; plain box:
-                    // dash path arc lengths tl, tr, br, bl
-  bw     : vec4f,   // border widths top, right, bottom, left
-  bc1    : vec4f,   // right border colour
-  bc2    : vec4f,   // bottom border colour
-  bc3    : vec4f,   // left border colour
-  ry     : vec4f,   // vertical radii tl, tr, br, bl (= radius: circular)
-  gt     : vec4f,   // gradient tile x, y (from the padding box), w, h;
-                    // w = 0: the padding box. Shadows: inner vertical
-                    // radii (with shr). Decorations: thickness, start,
-                    // length, wave centreline y
-};
-@group(1) @binding(0) var<storage, read> boxes : array<Box>;
-// Two entries per stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0).
-@group(1) @binding(1) var<storage, read> stops : array<vec4f>;
+${BOX_DECLS}
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -81,21 +49,7 @@ fn vs(@builtin(vertex_index) vi : u32,
   return out;
 }
 
-// Signed distance to a rounded box with per-corner radius.
-fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
-  let top = select(r4.x, r4.y, p.x > 0.0);      // tl / tr
-  let bot = select(r4.w, r4.z, p.x > 0.0);      // bl / br
-  let r = select(top, bot, p.y > 0.0);
-  let q = abs(p) - b + vec2f(r);
-  return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
-}
-
-${SD_BOX_WGSL}
-
-// Coverage of a pixel by the inside (d < 0) of an edge; fw = pixel size.
-fn edge_cov(d : f32, fw : f32) -> f32 {
-  return clamp(0.5 - d / fw, 0.0, 1.0);
-}
+${SD_EDGE_WGSL}
 
 // erf approximation (Abramowitz & Stegun 7.1.27, max error 5e-4).
 fn erf2(x : vec2f) -> vec2f {
@@ -778,8 +732,22 @@ export class BoxPass implements RenderPass {
     const snapW = (v: number) =>
       v > 0 ? Math.max(1, Math.floor(v * dpr + 1e-3)) / dpr : 0
     const keep = (v: number) => v
-    let o = 0
+    let base = 0
     let so = 0
+    /** Four floats into field `f` of the box at `base` (BoxData). */
+    const put = (
+      f: keyof typeof BOX_AT,
+      x: number,
+      y: number,
+      z: number,
+      w: number
+    ): void => {
+      const i = base + BOX_AT[f]
+      d[i] = x
+      d[i + 1] = y
+      d[i + 2] = z
+      d[i + 3] = w
+    }
     for (const b of boxes) {
       const xf = b.xform
       const sh = b.shadow
@@ -802,53 +770,43 @@ export class BoxPass implements RenderPass {
         ty = y0
       }
       const sw = flat ? snapW : keep
-      d[o++] = xf[0]
-      d[o++] = xf[1]
-      d[o++] = xf[2]
-      d[o++] = xf[3]
-      d[o++] = tx
-      d[o++] = ty
-      d[o++] = w
-      d[o++] = h
-      d[o++] = b.radius[0]
-      d[o++] = b.radius[1]
-      d[o++] = b.radius[2]
-      d[o++] = b.radius[3]
-      d[o++] = b.fill.r
-      d[o++] = b.fill.g
-      d[o++] = b.fill.b
-      d[o++] = b.fill.a
+      put('xf0', xf[0], xf[1], xf[2], xf[3])
+      put('xf1', tx, ty, w, h)
+      put('radius', b.radius[0], b.radius[1], b.radius[2], b.radius[3])
+      put('fill', b.fill.r, b.fill.g, b.fill.b, b.fill.a)
       const top = bd?.colors[0]
-      d[o++] = top?.r ?? 0
-      d[o++] = top?.g ?? 0
-      d[o++] = top?.b ?? 0
-      d[o++] = top?.a ?? 0
-      d[o++] = bd
-        ? bd.styles[0] +
-          bd.styles[1] * 4 +
-          bd.styles[2] * 16 +
-          bd.styles[3] * 64
-        : 0
-      d[o++] = b.opacity
-      d[o++] = scene.clipIndex(b.clip)
-      d[o++] = b.space === 'viewport' ? 1 : 0
+      put('bc0', top?.r ?? 0, top?.g ?? 0, top?.b ?? 0, top?.a ?? 0)
+      put(
+        'params',
+        bd
+          ? bd.styles[0] +
+              bd.styles[1] * 4 +
+              bd.styles[2] * 16 +
+              bd.styles[3] * 64
+          : 0,
+        b.opacity,
+        scene.clipIndex(b.clip),
+        b.space === 'viewport' ? 1 : 0
+      )
       const c = b.clip
-      d[o++] = c ? c.x : -1e9
-      d[o++] = c ? c.y : -1e9
-      d[o++] = c ? c.x + c.width : 1e9
-      d[o++] = c ? c.y + c.height : 1e9
+      put(
+        'clip',
+        c ? c.x : -1e9,
+        c ? c.y : -1e9,
+        c ? c.x + c.width : 1e9,
+        c ? c.y + c.height : 1e9
+      )
       const g = b.gradient
       if (g && g.stops.length >= 2) {
-        d[o++] =
+        put(
+          'grad',
           (g.kind === 'linear' ? 1 : g.kind === 'radial' ? 2 : 3) +
-          (g.repeating ? 8 : 0)
-        d[o++] = g.angle
-        d[o++] = so / FLOATS_PER_STOP
-        d[o++] = g.stops.length
-        d[o++] = g.center[0]
-        d[o++] = g.center[1]
-        d[o++] = g.radii[0]
-        d[o++] = g.radii[1]
+            (g.repeating ? 8 : 0),
+          g.angle,
+          so / FLOATS_PER_STOP,
+          g.stops.length
+        )
+        put('gradc', g.center[0], g.center[1], g.radii[0], g.radii[1])
         for (const st of g.stops) {
           sd[so++] = st.color.r
           sd[so++] = st.color.g
@@ -862,62 +820,57 @@ export class BoxPass implements RenderPass {
       } else {
         // A patterned decoration: kind -1 dashed, -2 dotted, -3 wavy.
         const ln = b.line
-        d[o++] = ln
-          ? -(ln.style === 'dashed' ? 1 : ln.style === 'dotted' ? 2 : 3)
-          : 0
-        for (let k = 0; k < 7; k++) {
-          d[o++] = 0
-        }
+        put(
+          'grad',
+          ln ? -(ln.style === 'dashed' ? 1 : ln.style === 'dotted' ? 2 : 3) : 0,
+          0,
+          0,
+          0
+        )
+        put('gradc', 0, 0, 0, 0)
       }
       if (sh) {
-        d[o++] = sh.blur * 0.5
-        d[o++] = sh.inset ? 0 : shadowPad(sh.blur)
-        d[o++] = 1
-        d[o++] = sh.inset ? 1 : 0
-        d[o++] = sh.inner.x
-        d[o++] = sh.inner.y
-        d[o++] = sh.inner.w
-        d[o++] = sh.inner.h
-        d[o++] = sh.inner.radius[0]
-        d[o++] = sh.inner.radius[1]
-        d[o++] = sh.inner.radius[2]
-        d[o++] = sh.inner.radius[3]
+        put(
+          'sh0',
+          sh.blur * 0.5,
+          sh.inset ? 0 : shadowPad(sh.blur),
+          1,
+          sh.inset ? 1 : 0
+        )
+        put('sh1', sh.inner.x, sh.inner.y, sh.inner.w, sh.inner.h)
+        const r = sh.inner.radius
+        put('shr', r[0], r[1], r[2], r[3])
       } else {
-        d[o++] = 0
-        d[o++] = 0
-        d[o++] = 0
-        d[o++] = (g?.repeat?.[0] ? 1 : 0) + (g?.repeat?.[1] ? 2 : 0)
+        put('sh0', 0, 0, 0, (g?.repeat?.[0] ? 1 : 0) + (g?.repeat?.[1] ? 2 : 0))
         const bi = b.bgInset
-        for (let k = 0; k < 4; k++) {
-          d[o++] = bi ? sw(bi[k] ?? 0) : 0
-        }
+        const inset = (k: number) => (bi ? sw(bi[k] ?? 0) : 0)
+        put('sh1', inset(0), inset(1), inset(2), inset(3))
         // Dashed/dotted rounded borders: Skia's measured length of each
         // corner's centreline arc (see border_style_cov).
         const dashy = bd?.styles.some((s) => s === 1 || s === 2) ?? false
         const ins = (k: number) => Math.floor(sw(bd?.widths[k] ?? 0) / 2) / 2
-        for (let k = 0; k < 4; k++) {
+        const arc = (k: number): number => {
           // Corners tl, tr, br, bl; sides top, right, bottom, left.
           const side = k === 0 || k === 1 ? 0 : 2
           const other = k === 0 || k === 3 ? 3 : 1
           const r = (b.radius[k] ?? 0) - ins(side) - ins(other)
-          d[o++] = dashy ? skQuarterArc(Math.max(r, 0)) : 0
+          return dashy ? skQuarterArc(Math.max(r, 0)) : 0
         }
+        put('shr', arc(0), arc(1), arc(2), arc(3))
       }
       // Shadow records ignore `border`: zero widths keep the ring empty.
-      for (let k = 0; k < 4; k++) {
-        d[o++] = sh || !bd ? 0 : sw(bd.widths[k] ?? 0)
+      const bw = (k: number) => (sh || !bd ? 0 : sw(bd.widths[k] ?? 0))
+      put('bw', bw(0), bw(1), bw(2), bw(3))
+      for (const [k, f] of [
+        [1, 'bc1'],
+        [2, 'bc2'],
+        [3, 'bc3']
+      ] as const) {
+        const col = bd?.colors[k]
+        put(f, col?.r ?? 0, col?.g ?? 0, col?.b ?? 0, col?.a ?? 0)
       }
-      for (let k = 1; k < 4; k++) {
-        const c = bd?.colors[k]
-        d[o++] = c?.r ?? 0
-        d[o++] = c?.g ?? 0
-        d[o++] = c?.b ?? 0
-        d[o++] = c?.a ?? 0
-      }
-      const ry = b.radiusY
-      for (let k = 0; k < 4; k++) {
-        d[o++] = ry ? (ry[k] ?? 0) : (b.radius[k] ?? 0)
-      }
+      const ry = b.radiusY ?? b.radius
+      put('ry', ry[0] ?? 0, ry[1] ?? 0, ry[2] ?? 0, ry[3] ?? 0)
       // Shadows: the inner box's vertical radii; decorations: the line;
       // boxes: the gradient tile.
       const ln = b.line
@@ -926,9 +879,8 @@ export class BoxPass implements RenderPass {
         : ln
           ? [ln.thickness, ln.start, ln.length, ln.mid]
           : b.gradient?.tile
-      for (let k = 0; k < 4; k++) {
-        d[o++] = gt ? (gt[k] ?? 0) : 0
-      }
+      put('gt', gt?.[0] ?? 0, gt?.[1] ?? 0, gt?.[2] ?? 0, gt?.[3] ?? 0)
+      base += FLOATS_PER_BOX
     }
     this.boxes.write(0, this.count)
     if (so > 0) {

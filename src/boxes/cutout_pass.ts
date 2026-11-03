@@ -1,5 +1,5 @@
 import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
-import { SD_BOX_WGSL } from '../gpu/sdf'
+import { SD_EDGE_WGSL } from '../gpu/sdf'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -57,19 +57,7 @@ fn vs(@builtin(vertex_index) vi : u32,
 
 // Same SDF and edge ramp as the box pass, so a hole lines up with a box
 // of the same geometry.
-${SD_BOX_WGSL}
-
-fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
-  let top = select(r4.x, r4.y, p.x > 0.0);
-  let bot = select(r4.w, r4.z, p.x > 0.0);
-  let r = select(top, bot, p.y > 0.0);
-  let q = abs(p) - b + vec2f(r);
-  return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
-}
-
-fn edge_cov(d : f32, fw : f32) -> f32 {
-  return clamp(0.5 - d / fw, 0.0, 1.0);
-}
+${SD_EDGE_WGSL}
 
 // Output alpha = coverage; the pipeline blends it destination-out
 // (dst * (1 - a)), erasing what was drawn before.

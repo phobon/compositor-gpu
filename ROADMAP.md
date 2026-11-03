@@ -940,6 +940,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         and the four shared functions in gpu/frame.ts; `FRAME_WGSL`
         resolved from them, sizes and the Frame packing offsets from the
         schemas
+  - [x] Boxes: `BoxData`/`boxLayout` in boxes/box_data.ts (shader
+        struct and bindings resolved from them, packing through
+        `BOX_AT`); `sd_round_box`, `sd_box`, `edge_cov` as shared
+        `tgpu.fn`s in gpu/sdf.ts instead of pasted copies
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

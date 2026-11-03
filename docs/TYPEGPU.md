@@ -44,9 +44,16 @@ before it, and no change in GPU time a frame or pipeline compile time.
 2. **Passes resolve their own shaders** with the frame items as
    externals instead of prepending `FRAME_WGSL`, so each pipeline gets
    only what it uses.
-3. **Boxes**: the `Box` struct (17 vec4s, the largest) as a schema the
-   instance packing writes through, `sd_box` / `edge_cov` and the shadow
-   helpers as `tgpu.fn`s.
+3. **Boxes** (done, 2026-11-03): `BoxData` (18 vec4s) and `boxLayout`
+   (bind group 1: `boxes`, `stops`) in `boxes/box_data.ts`; the shader's
+   struct and bindings are resolved from them (`BOX_DECLS`), and the
+   instance packing writes each field at `BOX_AT[field]`, with the
+   stride from `d.sizeOf`. `sd_round_box`, `sd_box` and `edge_cov` are
+   `tgpu.fn`s in `gpu/sdf.ts`, replacing three pasted copies of
+   `sd_round_box` and two of `edge_cov` (`SD_BOX_WGSL` for images,
+   `SD_EDGE_WGSL` for boxes and cutouts). The shadow, gradient and
+   dash helpers stay text in the box shader: nothing else uses them, so
+   they move with step 2, when the pass resolves its own shader.
 4. **Text, images, paths** the same way.
 5. **The fx passes and presets**, whose fragments already accept
    `tgpu.fn` (`src/fx/gpu.ts` externals): their templates and

@@ -548,7 +548,10 @@ positioned or with an origin other than the padding box carries
 `gradient.repeat` wraps per axis (`sh0.w`: 1 x, 2 y). Radii are per axis (`readCornerRadii`):
 records carry `radius` (horizontal) and `radiusY` only when elliptical;
 the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
-`sd_round_box` exactly when circular. Shadows are elliptical too
+`sd_round_box` exactly when circular. The box instance layout is
+`BoxData` (`boxes/box_data.ts`): the shader's `Box` struct is resolved
+from it and the packing writes `BOX_AT[field]`, so a new field goes
+there, not into the shader text. Shadows are elliptical too
 (`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
 `gt`), and reduce to the circular expressions when `radiusY` equals
 `radius`. **Clip shapes:** a clip rect (`Rect`) can carry `shape`

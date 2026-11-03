@@ -126,14 +126,6 @@ fn vs(@builtin(vertex_index) vi : u32,
 // Signed distance to a rounded box with per-corner radius.
 ${SD_BOX_WGSL}
 
-fn sd_round_box(p : vec2f, b : vec2f, r4 : vec4f) -> f32 {
-  let top = select(r4.x, r4.y, p.x > 0.0);      // tl / tr
-  let bot = select(r4.w, r4.z, p.x > 0.0);      // bl / br
-  let r = select(top, bot, p.y > 0.0);
-  let q = abs(p) - b + vec2f(r);
-  return min(max(q.x, q.y), 0.0) + length(max(q, vec2f(0.0))) - r;
-}
-
 // Set by base_fs for material hooks (mat_sample): the fragment's source
 // uv before the atlas mapping, its derivatives and the record.
 var<private> mat_uv : vec2f;
