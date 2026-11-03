@@ -1605,6 +1605,7 @@ function buildEffects(compositor: Compositor): Effects {
               sampler,
               timer: graph.shared.timer,
               complete: () => graph.mirrorComplete(),
+              reading: () => graph.readPending(),
               wake: () => graph.requestFrame()
             },
             opts.timeout ?? 1500

@@ -884,11 +884,32 @@ Params model, element-keyed Targets, a runtime pointer uniform):
           (docs/LAZY_READ.md). test:fx with it forced on: fx-pass-image
           fixed, every transition, morph and layout shot 0.00; test:edit
           unchanged
-    - [ ] fx-mat-wave and fx-mat-all with it forced on: the heading's
-          glyph material indices come out shifted by a few glyphs (the
-          wave's phase moves along the heading; 0.79%). Not traced yet:
-          the bases `tagSubtree` gives each run against what the text
-          upload last used. Needed before lazy reads can default on
+    - [x] fx-mat-wave and fx-mat-all with it forced on (0.79%): not
+          lazy reads but the playground's wave material, which phased
+          its glyphs by `record` (the instance index: it moves with how
+          much text precedes the heading) where `mat_index(record)` is
+          the stable per-glyph index (src/fx/README.md says so). It uses
+          `mat_index` now; regenerate those two goldens once
+          (`npm run test:fx -- --update --only fx-mat-wave`, then
+          `--only fx-mat-then-off`). With lazy reads forced on both
+          match goldens taken with them off
+    - [x] A transition's hold ended before the canvas was read:
+          marketplace's crossfade has `timeout: 0` (it won't wait on
+          images), so settled() resolved on its first frame and the
+          next frame read ~30 cards the canvas reached at once (263
+          elements, 9–12 ms). The hold now outlasts its timeout while
+          lazy reads still owe the canvas (`SnapshotDeps.reading`, up
+          to 250 ms more), and while it shows, deferred subtrees are
+          measured where they are (`measureDeferred`), not where they
+          were read
+- [x] Stylesheets in <head> and <html>'s attributes (2026-11-03): the
+      observer watched only the root, so a theme switched by a <head>
+      stylesheet or a class on <html> wasn't mirrored until something
+      else read. Both now read everything; an inline style on <html>
+      only when its computed style changes past the overflow a scroll
+      lock sets (or a custom property is named). Headless: a <style>
+      added to <head>, a class and a custom property on <html> each read
+      everything; `overflow: hidden` on <html> reads nothing
 - [ ] TypeGPU for every shader (2026-11-03). The ~100 WGSL sources are
       template strings (`/* wgsl */`) assembled by interpolation
       (`${FRAME_WGSL}`, a material's `${wrap}`, preset fragments pasted

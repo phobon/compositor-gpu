@@ -348,13 +348,15 @@ async function boot(): Promise<void> {
     vertex: /* wgsl */ `
       fn vertex(local : vec2f, size : vec2f, uv : vec2f, record : u32)
           -> vec2f {
-        let ph = f32(record) * 0.55 + fx.time * 4.0;
+        // mat_index: the glyph's index in the heading (record is the
+        // instance index, which moves with whatever text was read first).
+        let ph = f32(mat_index(record)) * 0.55 + fx.time * 4.0;
         return local + vec2f(0.0, sin(ph) * params.amount);
       }`,
     fragment: /* wgsl */ `
       fn fragment(m : MatIn) -> vec4f {
         // Tint by the same phase, so the wave reads in colour too.
-        let k = 0.5 + 0.5 * sin(f32(m.record) * 0.55 + fx.time * 4.0);
+        let k = 0.5 + 0.5 * sin(f32(mat_index(m.record)) * 0.55 + fx.time * 4.0);
         let rgb = mix(vec3f(1.0), vec3f(0.96, 0.62, 0.04), k);
         return vec4f(rgb * m.color.a, m.color.a);
       }`

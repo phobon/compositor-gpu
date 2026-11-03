@@ -135,6 +135,35 @@ function paintOnlyAnimations(el: Element): boolean {
 }
 
 /** Could adding/removing this node change which stylesheets apply? */
+/** A record from outside the root that can restyle the page: an
+ * attribute on <html>, or a stylesheet in <head> added, removed, edited
+ * or switched (media, disabled, href). */
+export function outerRestyles(r: MutationRecord): boolean {
+  const t = r.target
+  if (t === document.documentElement) {
+    return r.type === 'attributes'
+  }
+  if (r.type === 'childList') {
+    return (
+      [...r.addedNodes, ...r.removedNodes].some(carriesStylesheet) ||
+      (t instanceof Element && t.matches(STYLESHEET))
+    )
+  }
+  if (r.type === 'characterData') {
+    return t.parentElement?.matches(STYLESHEET) === true
+  }
+  return t instanceof Element && t.matches(STYLESHEET)
+}
+
+/** An inline style change on <html>. */
+function htmlStyle(r: MutationRecord): boolean {
+  return (
+    r.target === document.documentElement &&
+    r.type === 'attributes' &&
+    r.attributeName === 'style'
+  )
+}
+
 function carriesStylesheet(n: Node): boolean {
   if (n.nodeType !== Node.ELEMENT_NODE) {
     return false
@@ -152,9 +181,10 @@ function carriesStylesheet(n: Node): boolean {
  * childList → the target; characterData → the text node's parent element;
  * attributes on T → T's parent (T's margin box may change and move its
  * siblings; the parent's own style did not change). An <img> `load` scopes
- * to the image itself. Anything touching a stylesheet, an attribute on the
- * root, and every non-mutation source (resize, fonts, other loads) is a
- * full read.
+ * to the image itself. Anything touching a stylesheet (in the root or in
+ * <head>), an attribute on the root or on <html> (past a scroll lock's
+ * overflow), and every non-mutation source (resize, fonts, other loads)
+ * is a full read.
  *
  * CSS transitions and animations change computed style without producing
  * mutation records. Their targets are tracked from the animation events
@@ -384,6 +414,11 @@ export class DomSync {
   private spare = new Set<Element>()
   private ro: ResizeObserver
   private mo: MutationObserver
+  /** Outside the root: stylesheets in <head> and <html>'s attributes
+   * (a theme class), either of which can restyle anything. */
+  private outer: MutationObserver
+  private htmlInline = ''
+  private htmlKey = ''
   private io: IntersectionObserver
   private started = false
   private animating = new Set<Element>()
@@ -417,6 +452,18 @@ export class DomSync {
         flag |= f
       }
       this.mark(flag)
+    })
+    this.outer = new MutationObserver((records) => {
+      const r = records.find(
+        (x) => outerRestyles(x) && (!htmlStyle(x) || this.htmlStyleChanged())
+      )
+      if (r) {
+        this.diag.last = `${r.type} ${describeEl(r.target)}${
+          r.attributeName ? `[${r.attributeName}]` : ''
+        }`
+        this.trace?.(r.type, r.target, r.attributeName ?? undefined)
+        this.mark(Dirty.CONTENT)
+      }
     })
     this.io = new IntersectionObserver(() => {
       this.trace?.('intersection')
@@ -511,6 +558,31 @@ export class DomSync {
     const changed = this.rootStyle === null || key !== this.rootStyle
     this.rootStyle = key
     return changed
+  }
+
+  /** <html>'s computed style changed past what only scrolls (its
+   * overflow is the viewport's), or its inline style names a custom
+   * property: a scroll lock's `overflow: hidden` on <html> reads nothing. */
+  private htmlStyleChanged(): boolean {
+    const de = document.documentElement
+    const inline = de.getAttribute('style') ?? ''
+    const vars = inline.includes('--') || this.htmlInline.includes('--')
+    this.htmlInline = inline
+    const cs = getComputedStyle(de)
+    let key = ''
+    for (let i = 0; i < cs.length; i++) {
+      const p = cs.item(i)
+      if (
+        SCROLL_ONLY.has(p) ||
+        (p.startsWith('overflow-') && p !== 'overflow-clip-margin')
+      ) {
+        continue
+      }
+      key += `${p}:${cs.getPropertyValue(p)};`
+    }
+    const changed = key !== this.htmlKey
+    this.htmlKey = key
+    return changed || vars
   }
 
   private mark(flag: number): void {
@@ -821,6 +893,20 @@ export class DomSync {
       // Any attribute can drive CSS (`data-*`, `aria-*`, `hidden`, `open`).
       attributes: true
     })
+    const html = document.documentElement
+    if (document.head && !this.root.contains(document.head)) {
+      this.outer.observe(document.head, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['media', 'disabled', 'href', 'rel']
+      })
+    }
+    if (html !== this.root) {
+      this.outer.observe(html, { attributes: true })
+      this.htmlStyleChanged()
+    }
     window.addEventListener('scroll', this.onScroll, { passive: true })
     window.addEventListener('resize', this.onResize, { passive: true })
     // <img> load doesn't bubble; capture it to mirror images once decoded.
@@ -856,6 +942,7 @@ export class DomSync {
     scriptAnimationSyncs.delete(this)
     this.ro.disconnect()
     this.mo.disconnect()
+    this.outer.disconnect()
     this.io.disconnect()
     window.removeEventListener('scroll', this.onScroll)
     window.removeEventListener('resize', this.onResize)

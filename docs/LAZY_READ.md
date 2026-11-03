@@ -165,7 +165,11 @@ budget is spent, so a misjudged size can't overrun it)
 and with no subtree forced because the canvas reaches it. The graph's
 `mirrorComplete()` stays false while any deferred subtree the canvas
 reaches is unread, so settled() resolves only once the canvas is fully
-read; the fade then starts on a complete page. The cost moves from one
+read; the fade then starts on a complete page. A transition with a short
+`timeout` (marketplace's is 0: it won't wait on images) still waits for
+these reads, up to 250 ms past it (`SnapshotDeps.reading`): without
+that, the hold ended on the first frame and the next one read every
+card the canvas reached at once (263 elements, 9–12 ms). The cost moves from one
 long frame to a few budgeted ones before the fade (at most the
 transition's timeout, 1500 ms by default, after which the normal rules
 read whatever the canvas reaches).

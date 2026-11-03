@@ -50,6 +50,10 @@ export interface Transition<S extends ParamSchema = ParamSchema>
   addLayer(layer: Layer): () => void
 }
 
+/** ms a hold may outlast its timeout while lazy reads finish the canvas
+ * (SnapshotDeps.reading). */
+const READ_GRACE_MS = 250
+
 /** Marks a PassOptions object as a transition's (internal). */
 export const SNAPSHOT = Symbol('fx.snapshot')
 
@@ -89,6 +93,10 @@ export interface SnapshotDeps {
   timer: GpuTimer | null
   /** The mirror is complete as of this frame's read. */
   complete(): boolean
+  /** Lazy reads still owe the canvas content: the hold outlasts
+   * `timeout` for them (they are budgeted, so it is a few frames),
+   * up to READ_GRACE_MS more. */
+  reading(): boolean
   wake(): void
 }
 
@@ -183,7 +191,12 @@ export class Snapshot {
       return
     }
     w.ok = this.d.complete() ? w.ok + 1 : 0
-    if (w.ok >= 2 || performance.now() >= w.deadline) {
+    const now = performance.now()
+    if (
+      w.ok >= 2 ||
+      (now >= w.deadline &&
+        (now >= w.deadline + READ_GRACE_MS || !this.d.reading()))
+    ) {
       this.release()
     }
   }

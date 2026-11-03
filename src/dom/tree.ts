@@ -499,6 +499,8 @@ export class SceneReader {
   /** Elements effects draw from (an image, a glyph run, a material's
    * subtree): never deferred, nor anything holding one or inside one. */
   private readonly pinned = new Set<Element>()
+  /** Deferred subtrees' measured rects (measureDeferred), or null. */
+  private liveRects: Map<ElNode, Rect> | null = null
   /** Nodes whose children were deferred. */
   private deferredNodes = new Set<ElNode>()
   /** Partial reads that completed without escalating. */
@@ -945,14 +947,36 @@ export class SceneReader {
   dueDeferred(y0: number, y1: number, focus: number): Element[] {
     const out: { el: Element; d: number }[] = []
     for (const n of this.deferredNodes) {
-      const top = n.rect.y
-      const bottom = n.rect.y + n.rect.height
+      const r = this.liveRects?.get(n) ?? n.rect
+      const top = r.y
+      const bottom = r.y + r.height
       if (bottom >= y0 && top <= y1) {
         const d = bottom < focus ? focus - bottom : Math.max(0, top - focus)
         out.push({ el: n.el, d })
       }
     }
     return out.sort((a, b) => a.d - b.d).map((o) => o.el)
+  }
+
+  /** Measure where the deferred subtrees are now (`dueDeferred` then uses
+   * these), or stop (null). Their stored rects are what the partial
+   * read's escalation check compares against, so they stay as read: a
+   * page that places its content by script after rendering it (a masonry
+   * grid) moves them before they are read, and a transition's hold must
+   * wait for what the canvas reaches by where it is, not where it was. */
+  measureDeferred(on: boolean): void {
+    if (!on) {
+      this.liveRects = null
+      return
+    }
+    const pass = new ReadPass(window.scrollX, window.scrollY)
+    const live = new Map<ElNode, Rect>()
+    for (const n of this.deferredNodes) {
+      if (n.el.isConnected) {
+        live.set(n, pass.at(n.space).docRect(n.el.getBoundingClientRect()))
+      }
+    }
+    this.liveRects = live
   }
 
   /** Keep `el` and its subtree read from now on (lazy reads); returns the

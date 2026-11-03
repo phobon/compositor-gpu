@@ -765,6 +765,7 @@ export async function createCompositor(
     materialsPending: () => materialPipelinesPending(),
     mirrorComplete: () =>
       mirrorComplete() && pendingReadFlags === Dirty.NONE && !holdPending(),
+    readPending: () => holdPending(),
     hideSource(el, hidden) {
       if (!(el instanceof HTMLElement) || destroyed || lost) {
         return
@@ -1013,6 +1014,9 @@ export async function createCompositor(
     if (!lazy || reader.deferredCount === 0 || !holding()) {
       return false
     }
+    // Where they are after this frame's read (a script may have moved
+    // them since they were deferred).
+    reader.measureDeferred(true)
     const [c0, c1] = canvasRows()
     return reader.dueDeferred(c0, c1, 0).length > 0
   }
@@ -1038,6 +1042,7 @@ export async function createCompositor(
     if (reader.deferredCount === 0) {
       return false
     }
+    reader.measureDeferred(held)
     lazyBudgetMs = held ? HOLD_BUDGET_MS : (options.lazyBudget ?? 2)
     let queued = 0
     for (const el of reader.dueDeferred(c0 - extra, c1 + extra, sy + vh / 2)) {

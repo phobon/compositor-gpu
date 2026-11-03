@@ -220,6 +220,9 @@ export interface RenderGraph {
    * image upload or material compile in flight, no viewport `<img>`
    * still loading, no read pending (the replace-mode handoff's test). */
   mirrorComplete(): boolean
+  /** Lazy reads still owe the canvas content while a transition holds
+   * (docs/LAZY_READ.md): a few frames of budgeted reads. */
+  readPending(): boolean
   /** Hide (or restore) `el`'s own paint in the DOM, as replace mode does
    * per element; the mirror is unaffected. */
   hideSource(el: Element, hidden: boolean): void
