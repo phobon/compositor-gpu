@@ -934,7 +934,12 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       then boxes (the largest struct and the hottest shader), text,
       images, then the fx passes and presets. Gate per step: test:visual
       and test:fx at 0.00 against goldens from before it, no change in
-      GPU time a frame or in pipeline compile time at start
+      GPU time a frame or in pipeline compile time at start. Plan and
+      pattern: docs/TYPEGPU.md
+  - [x] The shared Frame: `FrameData`, `FrameClipData`, `frameLayout`
+        and the four shared functions in gpu/frame.ts; `FRAME_WGSL`
+        resolved from them, sizes and the Frame packing offsets from the
+        schemas
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

@@ -12,6 +12,7 @@ import { type EffectSnapshot, snapshotEffects } from './effect_snapshot'
 import { type DrawPlan, type FillInput, FillPlanner } from './fill_planner'
 import {
   CLIP_FLOATS,
+  FRAME_AT,
   FRAME_BYTES,
   MAX_CLIP_SHAPES,
   type RenderPass,
@@ -404,14 +405,14 @@ export class Renderer {
     // viewport-space position p is at doc p + scroll, so canvas p + scroll
     // - canvasX: vscroll is the canvas origin in viewport space.
     const f = this.frameData
-    f[0] = ctx.canvasWidth
-    f[1] = ctx.canvasHeight
-    f[2] = ctx.canvasX
-    f[3] = ctx.canvasY
-    f[4] = ctx.time
-    f[5] = dpr
-    f[6] = ctx.canvasX - ctx.scrollX
-    f[7] = ctx.canvasY - ctx.scrollY
+    f[FRAME_AT.viewport] = ctx.canvasWidth
+    f[FRAME_AT.viewport + 1] = ctx.canvasHeight
+    f[FRAME_AT.scroll] = ctx.canvasX
+    f[FRAME_AT.scroll + 1] = ctx.canvasY
+    f[FRAME_AT.time] = ctx.time
+    f[FRAME_AT.dpr] = dpr
+    f[FRAME_AT.vscroll] = ctx.canvasX - ctx.scrollX
+    f[FRAME_AT.vscroll + 1] = ctx.canvasY - ctx.scrollY
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
 
@@ -1833,18 +1834,18 @@ export class Renderer {
     const ty = oy - ay / sy
     const frame = this.groupFrame(slot)
     const f = this.frameData
-    f[0] = pooled.width / sx
-    f[1] = pooled.height / sy
-    f[2] = tx
-    f[3] = ty
-    f[4] = ctx.time
+    f[FRAME_AT.viewport] = pooled.width / sx
+    f[FRAME_AT.viewport + 1] = pooled.height / sy
+    f[FRAME_AT.scroll] = tx
+    f[FRAME_AT.scroll + 1] = ty
+    f[FRAME_AT.time] = ctx.time
     // Device px per CSS px in this target (Slug's AA pad reads it).
-    f[5] = this.shared.dpr * Math.max(kx, ky)
+    f[FRAME_AT.dpr] = this.shared.dpr * Math.max(kx, ky)
     // The target origin in viewport space, for viewport-space records: doc
     // origin minus the real scroll (not the parent's origin, which is the
     // canvas anchor on the main target).
-    f[6] = tx - ctx.scrollX
-    f[7] = ty - ctx.scrollY
+    f[FRAME_AT.vscroll] = tx - ctx.scrollX
+    f[FRAME_AT.vscroll + 1] = ty - ctx.scrollY
     this.device.queue.writeBuffer(frame.buffer, 0, f)
     const t: Target = {
       view: pooled.view,

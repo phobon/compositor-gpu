@@ -581,7 +581,10 @@ Conventions each pass must follow:
   pass owns **bind group 1**. Any new pipeline layout is
   `[shared.frameLayout, ownLayout]`.
 - Prepend `FRAME_WGSL` to the shader source so `doc_to_clip` and the `Frame`
-  struct are in scope. `FRAME_BYTES` must stay in step with the struct.
+  struct are in scope. It is resolved by TypeGPU from `FrameData` and the
+  `tgpu.fn`s in `gpu/frame.ts`; `FRAME_BYTES`, `CLIP_FLOATS` and the
+  packing offsets (`FRAME_AT`) come from the same schemas
+  (docs/TYPEGPU.md).
 - Instances live in a **storage buffer** indexed by `instance_index`, drawn as
   `encoder.draw(6, count, 0, first)` against a hardcoded 6-vertex quad — there
   are no vertex buffers anywhere. `draw(encoder, first, count)` is called once
