@@ -1151,7 +1151,9 @@ function ensureScratch(w: number, h: number): CanvasRenderingContext2D | null {
             width: w,
             height: h
           })
-    scratchCtx = scratch.getContext('2d') as CanvasRenderingContext2D | null
+    scratchCtx = scratch.getContext('2d', {
+      willReadFrequently: true
+    }) as CanvasRenderingContext2D | null
   } else if (scratch.width < w || scratch.height < h) {
     scratch.width = Math.max(scratch.width, w)
     scratch.height = Math.max(scratch.height, h)
