@@ -4,7 +4,7 @@ import type { GlyphRun } from '../scene/records'
 import type { GlyphGhost, GlyphTable } from '../text/slug/rasterizer'
 import type { FrameContext } from '../types'
 import { reportShaderErrors } from '../util/log'
-import { FRAME_WGSL, type Shared } from './frame'
+import { resolveShader, type Shared } from './frame'
 import type { MaterialBinding } from './material'
 
 // The render-graph hook (docs/EFFECTS.md, core extension points 1 and 4):
@@ -244,8 +244,7 @@ export interface RenderGraph {
   readonly version: number
 }
 
-const COPY_WGSL = /* wgsl */ `
-${FRAME_WGSL}
+const COPY_WGSL: string = resolveShader(/* wgsl */ `
 @group(1) @binding(0) var src : texture_2d<f32>;
 
 @vertex
@@ -258,7 +257,7 @@ fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
   return textureLoad(src, vec2i(pos.xy), 0);
 }
-`
+`)
 
 /** Copies a same-size texture onto the current pass texel for texel (a
  * fullscreen triangle, no blending). */
@@ -315,8 +314,7 @@ export class CopyThrough {
   }
 }
 
-const CLEAR_WGSL = /* wgsl */ `
-${FRAME_WGSL}
+const CLEAR_WGSL: string = resolveShader(/* wgsl */ `
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
@@ -328,7 +326,7 @@ fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 fn fs() -> @location(0) vec4f {
   return vec4f(0.0);
 }
-`
+`)
 
 /** Clears the current pass to transparent inside its scissor rect (a
  * fullscreen triangle, no blending): a load-op clear covers the whole

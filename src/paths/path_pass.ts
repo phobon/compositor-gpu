@@ -1,4 +1,4 @@
-import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
+import { resolveShader, type RenderPass, type Shared } from '../gpu/frame'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -31,8 +31,7 @@ const MAX_BANDS = 128
 const FLOATS_PER_PATH = 44 // 11 * vec4f
 const FLOATS_PER_STROKE_EDGE = 8
 
-const SHADER = /* wgsl */ `
-${FRAME_WGSL}
+const SHADER: string = resolveShader(/* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('path')}
 ${PATH_WGSL}
@@ -162,7 +161,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let k = frame_clip_cov(in.docp, r.xf1.w);
   return vec4f(rgb, a) * k;
 }
-`
+`)
 
 /**
  * Draws PathRecords: fills by winding, strokes by distance, one quad per
@@ -263,10 +262,7 @@ export class PathPass implements RenderPass {
       const h = r.stroke ? r.strokeWidth / 2 : 0
       const reach =
         h *
-        Math.max(
-          r.join === 0 ? r.miterLimit : 1,
-          r.cap === 2 ? Math.SQRT2 : 1
-        )
+        Math.max(r.join === 0 ? r.miterLimit : 1, r.cap === 2 ? Math.SQRT2 : 1)
       // Two device px of anti-aliasing, in path units.
       const aa = 2 / (dpr * Math.max(scaleOf(r.xform), 1e-6))
       const [bx0, by0, bx1, by1] = r.bounds

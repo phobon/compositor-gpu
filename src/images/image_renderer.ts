@@ -1,7 +1,7 @@
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
-import { SD_BOX_WGSL } from '../gpu/sdf'
+import { sdBox } from '../gpu/sdf'
 import { StorageArray } from '../gpu/storage'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
@@ -122,9 +122,6 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.lp = lp0;
   return out;
 }
-
-// Signed distance to a rounded box with per-corner radius.
-${SD_BOX_WGSL}
 
 // Set by base_fs for material hooks (mat_sample): the fragment's source
 // uv before the atlas mapping, its derivatives and the record.
@@ -366,7 +363,8 @@ export class ImagePass implements RenderPass {
       kind: 'image',
       label: 'image',
       layout: this.group1Layout,
-      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS)
+      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS),
+      externals: { sd_box: sdBox }
     })
     this.instances = new StorageArray(device, FLOATS_PER_IMAGE, 16)
   }

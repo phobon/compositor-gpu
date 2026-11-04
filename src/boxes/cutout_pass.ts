@@ -1,5 +1,5 @@
-import { FRAME_WGSL, type RenderPass, type Shared } from '../gpu/frame'
-import { SD_EDGE_WGSL } from '../gpu/sdf'
+import { type RenderPass, resolveShader, type Shared } from '../gpu/frame'
+import { edgeCov, sdBox } from '../gpu/sdf'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -12,8 +12,8 @@ import { reportShaderErrors } from '../util/log'
 
 const FLOATS_PER_CUT = 24 // 6 * vec4f
 
-const SHADER = /* wgsl */ `
-${FRAME_WGSL}
+const SHADER = resolveShader(
+  /* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('cutout')}
 
@@ -55,9 +55,8 @@ fn vs(@builtin(vertex_index) vi : u32,
   return out;
 }
 
-// Same SDF and edge ramp as the box pass, so a hole lines up with a box
+// sd_box and edge_cov, as in the box pass, so a hole lines up with a box
 // of the same geometry.
-${SD_EDGE_WGSL}
 
 // Output alpha = coverage; the pipeline blends it destination-out
 // (dst * (1 - a)), erasing what was drawn before.
@@ -73,7 +72,9 @@ fn fs(in : VOut) -> @location(0) vec4f {
   return vec4f(0.0, 0.0, 0.0,
     edge_cov(d, apx) * frame_clip_cov(in.docp, c.params.y));
 }
-`
+`,
+  { sd_box: sdBox, edge_cov: edgeCov }
+)
 
 /**
  * Erases the mirror under `data-gpu-ignore` elements (CutoutRecords), at

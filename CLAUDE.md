@@ -563,7 +563,7 @@ numbers them per build (index 0 = none); the renderer uploads
 `scene.clipShapes` to a fixed table (`MAX_CLIP_SHAPES`) bound at group
 0 binding 1, and every pass writes the index into a spare instance
 lane and multiplies its output by `frame_clip_cov(docp, index)`
-(`FRAME_WGSL`, anti-aliased from `frame.dpr`, no derivatives); the
+(`gpu/frame.ts`, anti-aliased from `frame.dpr`, no derivatives); the
 group composite does the same for layer transforms. The selection highlight (`dom/selection.ts`) is read
 with the text: boxes at the front of `run.decorations`, re-read on
 `selectionchange` for the text parents the old and new selections touch
@@ -583,11 +583,15 @@ Conventions each pass must follow:
 - **Bind group 0 is the shared `Frame` uniform**, set once by `Renderer`; the
   pass owns **bind group 1**. Any new pipeline layout is
   `[shared.frameLayout, ownLayout]`.
-- Prepend `FRAME_WGSL` to the shader source so `doc_to_clip` and the `Frame`
-  struct are in scope. It is resolved by TypeGPU from `FrameData` and the
-  `tgpu.fn`s in `gpu/frame.ts`; `FRAME_BYTES`, `CLIP_FLOATS` and the
-  packing offsets (`FRAME_AT`) come from the same schemas
-  (docs/TYPEGPU.md).
+- Pass the shader source through `resolveShader(wgsl, externals)`
+  (`gpu/frame.ts`): it declares the Frame items the source names (`frame`,
+  `frame_clips`, `to_clip`, `doc_to_clip`, `frame_clip_cov`) and the
+  pass's own `externals` (a `tgpu.fn`, a struct schema, a layout's
+  bindings via `bindingExternals`), and nothing else; record passes give
+  theirs to `PassPipelines` as `externals`. `FRAME_BYTES`, `CLIP_FLOATS`
+  and the packing offsets (`FRAME_AT`) come from the same schemas
+  (docs/TYPEGPU.md). `FRAME_WGSL` (the whole prelude as text) is for
+  shaders outside the library and the fx passes.
 - Instances live in a **storage buffer** indexed by `instance_index`, drawn as
   `encoder.draw(6, count, 0, first)` against a hardcoded 6-vertex quad — there
   are no vertex buffers anywhere. `draw(encoder, first, count)` is called once

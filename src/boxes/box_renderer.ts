@@ -1,8 +1,7 @@
 import { shadowPad } from '../dom/styles'
-import { BOX_AT, BOX_DECLS, FLOATS_PER_BOX } from './box_data'
+import { BOX_AT, BOX_EXTERNALS, FLOATS_PER_BOX } from './box_data'
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
-import { SD_EDGE_WGSL } from '../gpu/sdf'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 
@@ -11,8 +10,6 @@ const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 /** The box shader after its header (gpu/material.ts passShader), with
  * fragment entry point `wrap`. */
 const shader = (wrap: string): string => /* wgsl */ `
-
-${BOX_DECLS}
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -48,8 +45,6 @@ fn vs(@builtin(vertex_index) vi : u32,
   out.docp = p;
   return out;
 }
-
-${SD_EDGE_WGSL}
 
 // erf approximation (Abramowitz & Stegun 7.1.27, max error 5e-4).
 fn erf2(x : vec2f) -> vec2f {
@@ -697,7 +692,8 @@ export class BoxPass implements RenderPass {
       kind: 'box',
       label: 'box',
       layout: this.group1Layout,
-      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS)
+      body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS),
+      externals: BOX_EXTERNALS
     })
     this.boxes = new StorageArray(device, FLOATS_PER_BOX, 64)
     this.stops = new StorageArray(device, FLOATS_PER_STOP, 16)

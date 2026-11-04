@@ -117,7 +117,10 @@ mount the library themselves).
   the two ranges overlap. On the M1 Pro, /duo at one build ranged from 67
   to 135 dropped frames run to run (2026-10-29), all from GPU time for
   the same passes, so compare 3–5 runs a side before believing a change
-  under ~30 frames.
+  under ~30 frames. GPU p50 there also sits at one of two levels (about 4.2 or
+  5.0 ms on /duo, every pass shifting together, a plain blit included)
+  and can switch mid-session (2026-11-03: runs 1–2 at 4.3, 3–5 at 5.0 on
+  one build), so read the per-run lines, not only the median.
 
 ## Order
 

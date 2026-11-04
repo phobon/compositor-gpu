@@ -2,7 +2,7 @@ import { MAX_FILTER_OPS } from '../scene/filter'
 import type { BackdropRecord } from '../scene/records'
 import { reportShaderErrors } from '../util/log'
 import type { GroupTarget } from './composite'
-import { FRAME_WGSL, type Shared } from './frame'
+import { resolveShader, type Shared } from './frame'
 
 // CSS `backdrop-filter`: draws a filtered copy of a target's backdrop
 // (rendered by the Renderer into a pooled texture aligned to the target's
@@ -14,8 +14,7 @@ import { FRAME_WGSL, type Shared } from './frame'
 const FLOATS = 32
 const FLOATS_PER_MATRIX = 20
 
-const WGSL = /* wgsl */ `
-${FRAME_WGSL}
+const WGSL: string = resolveShader(/* wgsl */ `
 
 struct Back {
   c01  : vec4f,   // record-space corners of the (padded) border box: tl, tr
@@ -87,7 +86,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
     frame_clip_cov(p, b.misc.y);
   return t * cov;
 }
-`
+`)
 
 type Affine = readonly [number, number, number, number, number, number]
 

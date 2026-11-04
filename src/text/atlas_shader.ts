@@ -1,4 +1,4 @@
-import { FRAME_WGSL } from '../gpu/frame'
+import { resolveShader } from '../gpu/frame'
 import { SKELETON_WGSL, skeletonFs } from '../gpu/skeleton'
 
 /** Floats per atlas quad: rect(4) + uv(4) + color(4) + params(4) + clip(4)
@@ -16,8 +16,7 @@ export const ATLAS_QUAD_FLOATS = 28
  *   1 tex     : atlas texture (rgba8unorm, premultiplied)
  *   2 samp    : linear / clamp
  */
-export const ATLAS_WGSL = /* wgsl */ `
-${FRAME_WGSL}
+export const ATLAS_WGSL: string = resolveShader(/* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('fallback')}
 
@@ -75,4 +74,4 @@ fn fs(in : VOut) -> @location(0) vec4f {
   }
   return vec4f(t.rgb * q.color.a * k, a);   // colour: already premultiplied
 }
-`
+`)

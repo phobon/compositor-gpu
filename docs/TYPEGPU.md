@@ -24,9 +24,15 @@ without changing what any shader computes.
   strings were.
 - **Resolution pulls in only what is named.** `tgpu.resolve` follows the
   identifiers in its template (comments included) through `$uses`; an
-  item nothing names isn't emitted. A prelude still used as a string
-  (`FRAME_WGSL`) is a `tgpu['~unstable'].declare` whose text names every
-  item it should carry.
+  item nothing names isn't emitted. A pass's shader is a template
+  resolved by `resolveShader(wgsl, externals)` (`gpu/frame.ts`), which
+  adds the Frame items (`FRAME_EXTERNALS`) to the pass's own; a layout's
+  bindings become externals under their own names through
+  `bindingExternals(layout)` (getters, since `layout.$` exists only
+  during resolution), so the WGSL says `frame.dpr`, not `L.$.frame.dpr`.
+  Externals keep their `$name`s, so the template text is unchanged.
+  `FRAME_WGSL`, the whole prelude as a string, stays for shaders written
+  outside the library.
 
 ## Steps
 
@@ -41,9 +47,16 @@ before it, and no change in GPU time a frame or pipeline compile time.
    The GPU-side `GPUBindGroupLayout` is still made by hand in `Renderer`
    to match `frameLayout` (the GpuContext's root isn't typed as a
    `TgpuRoot` yet).
-2. **Passes resolve their own shaders** with the frame items as
-   externals instead of prepending `FRAME_WGSL`, so each pipeline gets
-   only what it uses.
+2. **Passes resolve their own shaders** (done, 2026-11-03): the record
+   passes (through `PassPipelines`, which takes the pass's `externals`),
+   cutouts, paths, the fallback-glyph atlas, the copy/clear passes, the
+   group composite and the backdrop pass go through `resolveShader`
+   instead of prepending `FRAME_WGSL`, so a pipeline gets only the Frame
+   items it names (most drop `doc_to_clip`; copy and clear drop
+   everything). The box shader takes `Box`, `boxes`, `stops`, `sd_box`
+   and `edge_cov` as externals (`BOX_EXTERNALS`), images `sd_box`, and
+   the `SD_BOX_WGSL`/`SD_EDGE_WGSL`/`BOX_DECLS` strings are gone. The
+   fx passes still prepend `FRAME_WGSL` (step 5).
 3. **Boxes** (done, 2026-11-03): `BoxData` (18 vec4s) and `boxLayout`
    (bind group 1: `boxes`, `stops`) in `boxes/box_data.ts`; the shader's
    struct and bindings are resolved from them (`BOX_DECLS`), and the
@@ -53,7 +66,8 @@ before it, and no change in GPU time a frame or pipeline compile time.
    `sd_round_box` and two of `edge_cov` (`SD_BOX_WGSL` for images,
    `SD_EDGE_WGSL` for boxes and cutouts). The shadow, gradient and
    dash helpers stay text in the box shader: nothing else uses them, so
-   they move with step 2, when the pass resolves its own shader.
+   they can become `tgpu.fn`s now that the pass resolves its own
+   shader.
 4. **Text, images, paths** the same way.
 5. **The fx passes and presets**, whose fragments already accept
    `tgpu.fn` (`src/fx/gpu.ts` externals): their templates and

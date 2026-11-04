@@ -1,8 +1,8 @@
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 
-// The rounded-box SDFs shared by the box, image and cutout passes
-// (docs/TYPEGPU.md).
+// The rounded-box SDFs and edge ramp the box, image and cutout passes
+// share, as externals for resolveShader (docs/TYPEGPU.md).
 
 /** Signed distance to a rounded box (half size b) with per-corner
  * circular radius. */
@@ -58,26 +58,3 @@ export const edgeCov = tgpu
   return clamp(0.5 - d / fw, 0.0, 1.0);
 }`)
   .$name('edge_cov')
-
-/** `sd_round_box` and `sd_box` as WGSL, for passes that still prepend
- * their helpers as text. */
-export const SD_BOX_WGSL: string = tgpu.resolve({
-  template: 'sdf_prelude',
-  externals: {
-    sdf_prelude: tgpu['~unstable']
-      // The names in this comment pull each item into the resolution.
-      .declare('// sd_box')
-      .$uses({ sd_box: sdBox })
-  }
-})
-
-/** `SD_BOX_WGSL` plus `edge_cov`: the box and cutout passes share both, so
- * a hole lines up with a box of the same geometry. */
-export const SD_EDGE_WGSL: string = tgpu.resolve({
-  template: 'sdf_edge_prelude',
-  externals: {
-    sdf_edge_prelude: tgpu['~unstable']
-      .declare('// sd_box edge_cov')
-      .$uses({ sd_box: sdBox, edge_cov: edgeCov })
-  }
-})

@@ -122,11 +122,56 @@ export const toClip = tgpu
   .$uses({ L })
   .$name('to_clip')
 
+/** Items a shader names, by name (tgpu.resolve externals). */
+export type Externals = Record<string, object>
+
+/** `layout`'s bindings as externals under their own names, so a shader
+ * names them bare (`frame.dpr`). A layout's `$` exists only during
+ * resolution, so each is a getter tgpu.resolve reads then, and
+ * non-enumerable so listing the externals doesn't. */
+export function bindingExternals(layout: {
+  readonly entries: Record<string, unknown>
+  readonly $: Record<string, object>
+}): Externals {
+  const out: Externals = {}
+  for (const key of Object.keys(layout.entries)) {
+    Object.defineProperty(out, key, { get: () => layout.$[key] })
+  }
+  return out
+}
+
+const merge = (...sets: Externals[]): Externals =>
+  Object.defineProperties(
+    {},
+    Object.assign({}, ...sets.map((s) => Object.getOwnPropertyDescriptors(s)))
+  )
+
+/** The Frame items by the names shaders call them. */
+export const FRAME_EXTERNALS: Externals = merge(bindingExternals(L), {
+  frame_clip_sd: frameClipSd,
+  frame_clip_cov: frameClipCov,
+  doc_to_clip: docToClip,
+  to_clip: toClip
+})
+
+/** A pass's WGSL with the declarations it names (the Frame items, and
+ * `externals`) resolved ahead of it: only what it uses. Names are kept,
+ * so the text itself is unchanged. */
+export function resolveShader(
+  template: string,
+  externals: Externals = {}
+): string {
+  return tgpu.resolve({
+    template,
+    externals: merge(FRAME_EXTERNALS, externals)
+  })
+}
+
 /** WGSL shared by every pass, resolved from the definitions above: the
  * Frame and FrameClip structs, bind group 0, `frame_clip_sd`,
- * `frame_clip_cov`, `doc_to_clip` and `to_clip`. Passes prepend it
- * (docs/TYPEGPU.md: the first step; later ones resolve their own shaders
- * with these as externals). */
+ * `frame_clip_cov`, `doc_to_clip` and `to_clip`, for shaders written
+ * outside the library (fx's own passes still prepend it). The library's
+ * passes use resolveShader. */
 export const FRAME_WGSL: string = tgpu.resolve({
   template: 'frame_prelude',
   externals: {

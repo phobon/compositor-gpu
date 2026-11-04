@@ -940,6 +940,9 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         and the four shared functions in gpu/frame.ts; `FRAME_WGSL`
         resolved from them, sizes and the Frame packing offsets from the
         schemas
+  - [x] Passes resolve their own shaders (`resolveShader` with the
+        Frame items and the pass's externals); fx still prepends
+        `FRAME_WGSL`
   - [x] Boxes: `BoxData`/`boxLayout` in boxes/box_data.ts (shader
         struct and bindings resolved from them, packing through
         `BOX_AT`); `sd_round_box`, `sd_box`, `edge_cov` as shared

@@ -2,7 +2,7 @@ import type { BlendMode } from '../scene/blend'
 import { MAX_FILTER_OPS } from '../scene/filter'
 import { reportShaderErrors } from '../util/log'
 import { BLEND_COLOR, OVER } from './blend'
-import { FRAME_WGSL, type Shared } from './frame'
+import { resolveShader, type Shared } from './frame'
 
 // Opacity-group compositing: an offscreen texture pool plus a pipeline that
 // draws a group's texture back into its parent target as one textured quad,
@@ -25,8 +25,7 @@ export function rectQuad(r: readonly number[]): number[] {
   return [x0, y0, x1, y0, x0, y1, x1, y1]
 }
 
-export const COMPOSITE_WGSL = /* wgsl */ `
-${FRAME_WGSL}
+export const COMPOSITE_WGSL: string = resolveShader(/* wgsl */ `
 
 struct Comp {
   c01  : vec4f,   // doc-space corners: top-left, top-right
@@ -101,7 +100,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let a = in.alpha * frame_clip_cov(in.docp, in.shape);
   return vec4f(t.rgb * a, t.a * a);
 }
-`
+`)
 
 /** A pooled offscreen render target. */
 export interface GroupTarget {

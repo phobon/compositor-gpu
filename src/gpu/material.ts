@@ -1,5 +1,5 @@
 import { log, reportShaderErrors } from '../util/log'
-import { FRAME_WGSL, type Shared } from './frame'
+import { type Externals, resolveShader, type Shared } from './frame'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -318,17 +318,17 @@ interface SharedPipeline {
   waiting: Set<MaterialBinding>
 }
 
-/** A record pass's shader: the Frame uniform, the material interface and
- * grid, the material's hooks (`MAT_DEFAULT_WGSL` for none) and its cell
- * count, then the pass's own `body` (structs, vertex shader, fragment
- * entry point), which starts on a new line. */
+/** A record pass's shader before resolution (resolveShader adds the
+ * Frame items it names): the material interface and grid, the material's
+ * hooks (`MAT_DEFAULT_WGSL` for none) and its cell count, then the pass's
+ * own `body` (structs, vertex shader, fragment entry point), which starts
+ * on a new line. */
 export function passShader(
   hooks: string,
   subdiv: number,
   body: string
 ): string {
   return `
-${FRAME_WGSL}
 ${MAT_IN_WGSL}
 ${MAT_GRID_WGSL}
 ${hooks}
@@ -368,6 +368,8 @@ export class PassPipelines {
       label: string
       layout: GPUBindGroupLayout
       body: (material: boolean) => string
+      /** What the body names beyond the Frame items (resolveShader). */
+      externals?: Externals
     }
   ) {
     const { device, format, frameLayout } = shared
@@ -379,7 +381,7 @@ export class PassPipelines {
     ): GPURenderPipelineDescriptor => {
       const module = device.createShaderModule({
         label,
-        code: code + skeletonFs(part)
+        code: resolveShader(code + skeletonFs(part), opts.externals)
       })
       reportShaderErrors(module, label)
       const layouts = [frameLayout, opts.layout]

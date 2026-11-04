@@ -1,5 +1,7 @@
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
+import { bindingExternals, type Externals } from '../gpu/frame'
+import { edgeCov, sdBox } from '../gpu/sdf'
 
 // The box pass's instance layout (docs/TYPEGPU.md): one definition for
 // the WGSL struct, the buffer size and the offsets BoxPass.upload packs.
@@ -73,16 +75,12 @@ export const boxLayout = tgpu
   })
   .$idx(1)
 
-/** The Box struct and bind group 1, as WGSL for the box shader. */
-export const BOX_DECLS: string = tgpu.resolve({
-  template: 'box_prelude',
-  externals: {
-    box_prelude: tgpu['~unstable']
-      // The names in this comment pull each item into the resolution.
-      .declare('// L.$.boxes L.$.stops')
-      .$uses({ L: boxLayout })
-  }
-})
+/** What the box shader names beyond the Frame items (resolveShader):
+ * the Box struct, its bindings and the shared SDF helpers. */
+export const BOX_EXTERNALS: Externals = Object.defineProperties(
+  { Box: BoxData, sd_box: sdBox, edge_cov: edgeCov },
+  Object.getOwnPropertyDescriptors(bindingExternals(boxLayout))
+)
 
 /** Floats a box takes in the instance buffer. */
 export const FLOATS_PER_BOX = d.sizeOf(BoxData) / 4
