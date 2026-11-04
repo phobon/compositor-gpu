@@ -38,8 +38,7 @@ export const StrokeEdgeData = d
   .struct({ ab: d.vec4f, pf: d.vec4f })
   .$name('StrokeEdge')
 
-/** Bind group 1 of the path pass (the GPU layout is made by hand in
- * PathPass to match). */
+/** Bind group 1 of the path pass. */
 export const pathLayout = tgpu
   .bindGroupLayout({
     paths: {

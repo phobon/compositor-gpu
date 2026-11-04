@@ -1,4 +1,5 @@
 import { type RenderPass, resolveShader, type Shared } from '../gpu/frame'
+import { bindEntries, gpuLayout } from '../gpu/schema'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -8,7 +9,7 @@ import {
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
-import { CUT_AT, CUT_EXTERNALS, FLOATS_PER_CUT } from './box_data'
+import { CUT_AT, CUT_EXTERNALS, cutLayout, FLOATS_PER_CUT } from './box_data'
 
 const SHADER = resolveShader(
   /* wgsl */ `
@@ -81,15 +82,7 @@ export class CutoutPass implements RenderPass {
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
     this.cuts = new StorageArray(device, FLOATS_PER_CUT, 16)
-    this.group1Layout = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        }
-      ]
-    })
+    this.group1Layout = gpuLayout(shared.root, cutLayout)
     const module = device.createShaderModule({ code: SHADER })
     reportShaderErrors(module, 'cutout')
     const erase: GPUBlendComponent = {
@@ -119,9 +112,9 @@ export class CutoutPass implements RenderPass {
     if (this.cuts.ensure(this.count) || !this.bindGroup) {
       this.bindGroup = this.shared.device.createBindGroup({
         layout: this.group1Layout,
-        entries: [
-          { binding: 0, resource: { buffer: this.cuts.buffer as GPUBuffer } }
-        ]
+        entries: bindEntries(cutLayout, {
+          cuts: { buffer: this.cuts.buffer as GPUBuffer }
+        })
       })
     }
     const d = this.cuts.f32

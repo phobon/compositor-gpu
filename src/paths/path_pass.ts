@@ -1,4 +1,5 @@
 import { type RenderPass, resolveShader, type Shared } from '../gpu/frame'
+import { bindEntries, gpuLayout } from '../gpu/schema'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -13,7 +14,8 @@ import {
   FLOATS_PER_PATH,
   FLOATS_PER_STROKE_EDGE,
   PATH_AT,
-  PATH_EXTERNALS
+  PATH_EXTERNALS,
+  pathLayout
 } from './path_layout'
 import { PATH_WGSL } from './path_wgsl'
 
@@ -173,14 +175,7 @@ export class PathPass implements RenderPass {
     )
     this.bands = new StorageArray(device, 4, 16, 'path bands')
     this.bandIdx = new StorageArray(device, 1, 256, 'path band edges')
-    const storage = (binding: number): GPUBindGroupLayoutEntry => ({
-      binding,
-      visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-      buffer: { type: 'read-only-storage' }
-    })
-    this.group1Layout = device.createBindGroupLayout({
-      entries: [0, 1, 2, 3, 4].map(storage)
-    })
+    this.group1Layout = gpuLayout(shared.root, pathLayout)
     const module = device.createShaderModule({ label: 'path', code: SHADER })
     reportShaderErrors(module, 'path')
     const over: GPUBlendComponent = {
@@ -328,16 +323,13 @@ export class PathPass implements RenderPass {
     if (grew || !this.bindGroup) {
       this.bindGroup = this.shared.device.createBindGroup({
         layout: this.group1Layout,
-        entries: [
-          this.paths,
-          this.fillEdges,
-          this.strokeEdges,
-          this.bands,
-          this.bandIdx
-        ].map((a, binding) => ({
-          binding,
-          resource: { buffer: a.buffer as GPUBuffer }
-        }))
+        entries: bindEntries(pathLayout, {
+          paths: { buffer: this.paths.buffer as GPUBuffer },
+          fill_edges: { buffer: this.fillEdges.buffer as GPUBuffer },
+          stroke_edges: { buffer: this.strokeEdges.buffer as GPUBuffer },
+          bands: { buffer: this.bands.buffer as GPUBuffer },
+          band_idx: { buffer: this.bandIdx.buffer as GPUBuffer }
+        })
       })
     }
     this.paths.write(0, this.count)

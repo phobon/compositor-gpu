@@ -59,8 +59,7 @@ export const BoxData = d
   .$name('Box')
 
 /** Bind group 1 of the box pass: the boxes, and the gradient stops (two
- * vec4s a stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0)). The GPU
- * layout is made by hand in BoxPass to match. */
+ * vec4s a stop: sRGB straight-alpha rgba, then (pos, 0, 0, 0)). */
 export const boxLayout = tgpu
   .bindGroupLayout({
     boxes: {

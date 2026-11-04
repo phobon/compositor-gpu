@@ -1780,14 +1780,18 @@ function buildEffects(compositor: Compositor): Effects {
       if (destroyed) {
         return inertTrail(opts)
       }
-      const t = createTrail(opts, { device, wake: layerDeps.wake }, (st) => {
-        // Consumers may still bind its (zeroed) field: freed at teardown.
-        retired.push(st)
-        const i = trails.indexOf(st)
-        if (i !== -1) {
-          trails.splice(i, 1)
+      const t = createTrail(
+        opts,
+        { device, root: graph.shared.root, wake: layerDeps.wake },
+        (st) => {
+          // Consumers may still bind its (zeroed) field: freed at teardown.
+          retired.push(st)
+          const i = trails.indexOf(st)
+          if (i !== -1) {
+            trails.splice(i, 1)
+          }
         }
-      })
+      )
       trails.push(t)
       return t.handle
     },

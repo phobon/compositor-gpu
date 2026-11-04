@@ -1,4 +1,4 @@
-import tgpu from 'typegpu'
+import tgpu, { type TgpuBindGroupLayout, type TgpuRoot } from 'typegpu'
 import * as d from 'typegpu/data'
 import type { Externals } from './frame'
 import { bindingExternals } from './frame'
@@ -39,3 +39,30 @@ export function passExternals(
  * still assembled as text. */
 export const structWgsl = (...schemas: d.AnyWgslData[]): string =>
   tgpu.resolve(schemas)
+
+/** `layout`'s GPU layout, made by TypeGPU from the schema (memoized on
+ * the root, so passes sharing a layout share the GPUBindGroupLayout). */
+export const gpuLayout = (
+  root: TgpuRoot,
+  layout: TgpuBindGroupLayout
+): GPUBindGroupLayout => root.unwrap(layout)
+
+/** Bind group entries for `layout`, by binding name: each resource lands
+ * at its entry's binding number. */
+export function bindEntries<L extends TgpuBindGroupLayout>(
+  layout: L,
+  resources: { readonly [K in keyof L['entries']]: GPUBindingResource }
+): GPUBindGroupEntry[] {
+  const out: GPUBindGroupEntry[] = []
+  let binding = 0
+  for (const [key, entry] of Object.entries(layout.entries)) {
+    if (entry !== null) {
+      out.push({
+        binding,
+        resource: resources[key as keyof L['entries']]
+      })
+    }
+    binding++
+  }
+  return out
+}

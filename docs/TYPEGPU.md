@@ -48,9 +48,7 @@ before it, and no change in GPU time a frame or pipeline compile time.
    `doc_to_clip`, `to_clip` in `gpu/frame.ts`. `FRAME_WGSL` is resolved
    from them (passes still prepend it), and `FRAME_BYTES`, `CLIP_FLOATS`
    and the renderer's Frame packing (`FRAME_AT`) come from the schemas.
-   The GPU-side `GPUBindGroupLayout` is still made by hand in `Renderer`
-   to match `frameLayout` (the GpuContext's root isn't typed as a
-   `TgpuRoot` yet).
+   (Its GPU layout came from the schema in step 6.)
 2. **Passes resolve their own shaders** (done, 2026-11-03): the record
    passes (through `PassPipelines`, which takes the pass's `externals`),
    cutouts, paths, the fallback-glyph atlas, the copy/clear passes, the
@@ -100,5 +98,14 @@ before it, and no change in GPU time a frame or pipeline compile time.
    number are parameters (`sdfWgsl`, `trailWgsl`, `texturesWgsl`) are
    still text; so are the fx templates themselves, which hold the
    author's WGSL.
-6. **Bind group layouts and the root**: type `GpuContext.root` as
-   `TgpuRoot` and make the GPU layouts with `root.unwrap(layout)`.
+6. **Bind group layouts and the root** (done, 2026-11-04):
+   `GpuContext.root` and `Shared.root` are the `TgpuRoot`, and every pass
+   with a schema layout (Frame, boxes, cutouts, images, Slug, the glyph
+   atlas, paths, the trail's step) gets its `GPUBindGroupLayout` from it
+   (`gpuLayout(root, layout)`, memoized on the root) and fills its bind
+   groups by binding name (`bindEntries(layout, { boxes: ..., stops:
+   ... })`), so no binding number is written by hand there. Bind groups
+   stay `device.createBindGroup` (no TypeGPU wrapper objects on the
+   per-frame path). Layouts without a schema (the fx stages' groups,
+   whose bindings depend on the effect's options, the composite,
+   backdrop, blend, blur and mip passes) are still made by hand.

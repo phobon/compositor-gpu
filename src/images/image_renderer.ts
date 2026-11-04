@@ -1,6 +1,7 @@
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
+import { bindEntries, gpuLayout } from '../gpu/schema'
 import { StorageArray } from '../gpu/storage'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
@@ -13,7 +14,12 @@ import {
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './image_atlas'
-import { FLOATS_PER_IMAGE, IMAGE_EXTERNALS, IMG_AT } from './image_data'
+import {
+  FLOATS_PER_IMAGE,
+  IMAGE_EXTERNALS,
+  IMG_AT,
+  imageLayout
+} from './image_data'
 import { ImageFades } from './image_fade'
 import { to8Bit } from './png_depth'
 import {
@@ -320,17 +326,7 @@ export class ImagePass implements RenderPass {
     this.atlas = new ImageAtlas(shared.device)
     this.mips = new MipGenerator(shared.device)
     const { device } = shared
-    this.group1Layout = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
-      ]
-    })
+    this.group1Layout = gpuLayout(shared.root, imageLayout)
     this.sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
@@ -825,16 +821,13 @@ export class ImagePass implements RenderPass {
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,
-          entries: [
-            {
-              binding: 0,
-              resource: { buffer: this.instances.buffer as GPUBuffer }
-            },
+          entries: bindEntries(imageLayout, {
+            imgs: { buffer: this.instances.buffer as GPUBuffer },
             // Reached only when `cached` was resolved above (spot is null
             // here, and the combined null case already `continue`d).
-            { binding: 1, resource: (cached as Cached).view },
-            { binding: 2, resource: this.sampler }
-          ]
+            tex: (cached as Cached).view,
+            samp: this.sampler
+          })
         })
       )
     }
@@ -885,14 +878,11 @@ export class ImagePass implements RenderPass {
     }
     this.atlasBindGroup = this.shared.device.createBindGroup({
       layout: this.group1Layout,
-      entries: [
-        {
-          binding: 0,
-          resource: { buffer: this.instances.buffer as GPUBuffer }
-        },
-        { binding: 1, resource: this.atlas.view as GPUTextureView },
-        { binding: 2, resource: this.sampler }
-      ]
+      entries: bindEntries(imageLayout, {
+        imgs: { buffer: this.instances.buffer as GPUBuffer },
+        tex: this.atlas.view as GPUTextureView,
+        samp: this.sampler
+      })
     })
     this.atlasBindGroupGen = this.atlas.generation
     this.atlasBindGroupBuffer = this.instances.buffer

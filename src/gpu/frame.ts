@@ -1,4 +1,4 @@
-import tgpu from 'typegpu'
+import tgpu, { type TgpuRoot } from 'typegpu'
 import * as d from 'typegpu/data'
 import type { Scene } from '../scene/scene'
 import type { Layer } from '../types'
@@ -36,8 +36,8 @@ export const FrameClipData = d
   })
   .$name('FrameClip')
 
-/** Bind group 0, shared by every pass (the GPU layout is made by hand in
- * Renderer to match). */
+/** Bind group 0, shared by every pass (`Shared.frameLayout` is its GPU
+ * layout). */
 export const frameLayout = tgpu
   .bindGroupLayout({
     frame: { uniform: FrameData, visibility: ['vertex', 'fragment'] },
@@ -239,6 +239,8 @@ export interface RenderPass {
 /** Resources every pass shares: the device, target format, and frame uniforms. */
 export interface Shared {
   device: GPUDevice
+  /** TypeGPU's root (GPU bind group layouts from their schemas). */
+  root: TgpuRoot
   format: GPUTextureFormat
   frameLayout: GPUBindGroupLayout
   frameBindGroup: GPUBindGroup

@@ -33,8 +33,7 @@ export const BandData = d.struct({ bounds: d.vec4f }).$name('Band')
 /** A quadratic: p = x0, y0, x1, y1; c = cx, cy, _, _. */
 export const CurveData = d.struct({ p: d.vec4f, c: d.vec4f }).$name('Curve')
 
-/** Bind group 1 of the Slug pass (the GPU layout is made by hand in
- * GlyphTable to match). */
+/** Bind group 1 of the Slug pass. */
 export const slugLayout = tgpu
   .bindGroupLayout({
     glyphs: {

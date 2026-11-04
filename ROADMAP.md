@@ -916,7 +916,7 @@ Params model, element-keyed Targets, a runtime pointer uniform):
       <html> read everything; an unused custom property and
       `overflow: hidden` read nothing; one used through an alias reads
       its users
-- [ ] TypeGPU for every shader (2026-11-03). The ~100 WGSL sources are
+- [x] TypeGPU for every shader (2026-11-03, done 2026-11-04). The ~100 WGSL sources are
       template strings (`/* wgsl */`) assembled by interpolation
       (`${FRAME_WGSL}`, a material's `${wrap}`, preset fragments pasted
       into pass templates). So each storage or uniform struct is kept in
@@ -953,6 +953,8 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [x] fx: every uniform (Effect, Pointer, LayerFx, MaterialFx, FxSdf,
         trail, FxPrev, FxImage) and the Params block as schemas;
         stages and Layers through `resolveShader`
+  - [x] GPU bind group layouts from the schema layouts on the TypeGPU
+        root (`gpuLayout`, `bindEntries`)
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

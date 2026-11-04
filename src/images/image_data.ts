@@ -33,8 +33,7 @@ export const ImgData = d
   })
   .$name('Img')
 
-/** Bind group 1 of the image pass (the GPU layout is made by hand in
- * ImagePass to match). */
+/** Bind group 1 of the image pass. */
 export const imageLayout = tgpu
   .bindGroupLayout({
     imgs: {

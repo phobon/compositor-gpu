@@ -1,9 +1,10 @@
-import tgpu from 'typegpu'
+import tgpu, { type TgpuRoot } from 'typegpu'
 import { log } from '../util/log'
 
 export interface GpuContext {
-  // TypeGPU root — the entry point for typed buffers/bind groups as we grow.
-  root: { destroy(): void }
+  /** TypeGPU's root: makes the GPU bind group layouts from their schemas
+   * (gpu/schema.ts gpuLayout). */
+  root: TgpuRoot
   device: GPUDevice
   canvas: HTMLCanvasElement
   context: GPUCanvasContext
@@ -29,17 +30,14 @@ export async function initGpu(
     log.warn('WebGPU not available; passthrough')
     return null
   }
-  let root: { destroy(): void; device: GPUDevice } | null = null
+  let root: TgpuRoot | null = null
   try {
     // TypeGPU owns adapter+device negotiation and hands us a typed root.
     // timestamp-query (when the adapter has it) lets the profiler time
     // render passes (gpu/timer.ts); unused, it costs nothing.
-    root = (await tgpu.init({
+    root = await tgpu.init({
       device: { optionalFeatures: ['timestamp-query'] }
-    })) as unknown as {
-      destroy(): void
-      device: GPUDevice
-    }
+    })
     const device = root.device
     device.addEventListener('uncapturederror', (e) => {
       log.error('GPU:', (e as GPUUncapturedErrorEvent).error.message)

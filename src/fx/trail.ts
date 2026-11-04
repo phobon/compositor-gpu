@@ -1,7 +1,13 @@
-import tgpu from 'typegpu'
+import tgpu, { type TgpuRoot } from 'typegpu'
 import * as d from 'typegpu/data'
 import { resolveShader } from '../gpu/frame'
-import { floatOffsets, passExternals, structWgsl } from '../gpu/schema'
+import {
+  bindEntries,
+  floatOffsets,
+  gpuLayout,
+  passExternals,
+  structWgsl
+} from '../gpu/schema'
 import type { FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { Lifecycle } from './lifecycle'
@@ -54,8 +60,12 @@ const StepData = d
 
 const stepLayout = tgpu
   .bindGroupLayout({
-    field: { storage: d.arrayOf(d.vec4f), access: 'mutable' },
-    st: { uniform: StepData }
+    field: {
+      storage: d.arrayOf(d.vec4f),
+      access: 'mutable',
+      visibility: ['compute']
+    },
+    st: { uniform: StepData, visibility: ['compute'] }
   })
   .$idx(0)
 
@@ -270,6 +280,7 @@ function applyOptions(block: ParamBlock<TrailSchema>, o: TrailOptions): void {
 
 export interface TrailDeps {
   device: GPUDevice
+  root: TgpuRoot
   /** The frame loop: request a frame. */
   wake(): void
 }
@@ -305,21 +316,7 @@ export function createTrail(
 
   const module = device.createShaderModule({ label, code: STEP_WGSL })
   reportShaderErrors(module, label)
-  const layout = device.createBindGroupLayout({
-    label,
-    entries: [
-      {
-        binding: 0,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' }
-      },
-      {
-        binding: 1,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'uniform' }
-      }
-    ]
-  })
+  const layout = gpuLayout(deps.root, stepLayout)
   const pipeline = device.createComputePipeline({
     label,
     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -442,10 +439,10 @@ export function createTrail(
     group ??= device.createBindGroup({
       label,
       layout,
-      entries: [
-        { binding: 0, resource: { buffer: field } },
-        { binding: 1, resource: { buffer: stepBuf } }
-      ]
+      entries: bindEntries(stepLayout, {
+        field: { buffer: field },
+        st: { buffer: stepBuf }
+      })
     })
     const enc = device.createCommandEncoder({ label })
     const cp = enc.beginComputePass({ label })

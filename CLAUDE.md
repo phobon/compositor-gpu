@@ -585,7 +585,9 @@ Conventions each pass must follow:
 
 - **Bind group 0 is the shared `Frame` uniform**, set once by `Renderer`; the
   pass owns **bind group 1**. Any new pipeline layout is
-  `[shared.frameLayout, ownLayout]`.
+  `[shared.frameLayout, ownLayout]`; make `ownLayout` from a
+  `tgpu.bindGroupLayout` with `gpuLayout(shared.root, layout)` and its bind
+  groups with `bindEntries(layout, {...})` (`gpu/schema.ts`).
 - Pass the shader source through `resolveShader(wgsl, externals)`
   (`gpu/frame.ts`): it declares the Frame items the source names (`frame`,
   `frame_clips`, `to_clip`, `doc_to_clip`, `frame_clip_cov`) and the

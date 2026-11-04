@@ -1,6 +1,7 @@
 import { fetchManifest } from '../../assets/manifest'
 import type { Shared } from '../../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../../gpu/material'
+import { bindEntries, gpuLayout } from '../../gpu/schema'
 import { quadVerts, SkeletonTwin } from '../../gpu/skeleton'
 import { StorageArray } from '../../gpu/storage'
 import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
@@ -12,12 +13,14 @@ import { describeFace, resolveFontBytes } from '../font_source'
 import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
 import {
   ATLAS_QUAD_FLOATS,
+  atlasLayout as atlasBindings,
   CURVE_AT,
   CURVE_FLOATS,
   GLYPH_AT,
   GLYPH_FLOATS,
   QUAD_AT,
-  SLUG_EXTERNALS
+  SLUG_EXTERNALS,
+  slugLayout
 } from '../glyph_data'
 import type { TextBackend } from '../text_rasterizer'
 import { type BakedFace, decodeBakedFont } from './baked'
@@ -385,13 +388,7 @@ export class SlugText implements TextBackend {
 
   constructor(private readonly shared: Shared) {
     const { device, format, frameLayout } = shared
-    this.layout = device.createBindGroupLayout({
-      entries: [0, 1, 2].map((binding) => ({
-        binding,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-        buffer: { type: 'read-only-storage' as const }
-      }))
-    })
+    this.layout = gpuLayout(shared.root, slugLayout)
     this.pipelines = new PassPipelines(shared, {
       kind: 'glyph',
       label: 'slug',
@@ -402,17 +399,7 @@ export class SlugText implements TextBackend {
     this.glyphs = new StorageArray(device, GLYPH_FLOATS, 256)
     this.quads = new StorageArray(device, ATLAS_QUAD_FLOATS, 256)
 
-    this.atlasLayout = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
-      ]
-    })
+    this.atlasLayout = gpuLayout(shared.root, atlasBindings)
     this.atlasSampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
@@ -964,11 +951,11 @@ export class SlugText implements TextBackend {
     }
     this.bindGroup = this.shared.device.createBindGroup({
       layout: this.layout,
-      entries: [
-        { binding: 0, resource: { buffer: this.glyphs.buffer } },
-        { binding: 1, resource: { buffer: this.bandBuf } },
-        { binding: 2, resource: { buffer: this.curveBuf } }
-      ]
+      entries: bindEntries(slugLayout, {
+        glyphs: { buffer: this.glyphs.buffer },
+        bands: { buffer: this.bandBuf },
+        curves: { buffer: this.curveBuf }
+      })
     })
   }
 
@@ -983,11 +970,11 @@ export class SlugText implements TextBackend {
     }
     this.atlasBindGroup = this.shared.device.createBindGroup({
       layout: this.atlasLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.quads.buffer } },
-        { binding: 1, resource: view },
-        { binding: 2, resource: this.atlasSampler }
-      ]
+      entries: bindEntries(atlasBindings, {
+        quads: { buffer: this.quads.buffer },
+        tex: view,
+        samp: this.atlasSampler
+      })
     })
     this.atlasGen = this.atlas.generation
   }

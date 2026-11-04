@@ -1,9 +1,10 @@
 import { shadowPad } from '../dom/styles'
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
+import { bindEntries, gpuLayout } from '../gpu/schema'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
-import { BOX_AT, BOX_EXTERNALS, FLOATS_PER_BOX } from './box_data'
+import { BOX_AT, BOX_EXTERNALS, boxLayout, FLOATS_PER_BOX } from './box_data'
 
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 
@@ -674,20 +675,7 @@ export class BoxPass implements RenderPass {
 
   constructor(private readonly shared: Shared) {
     const { device } = shared
-    this.group1Layout = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        }
-      ]
-    })
+    this.group1Layout = gpuLayout(shared.root, boxLayout)
     this.pipelines = new PassPipelines(shared, {
       kind: 'box',
       label: 'box',
@@ -714,10 +702,10 @@ export class BoxPass implements RenderPass {
     if (grewBoxes || grewStops || !this.bindGroup) {
       this.bindGroup = this.shared.device.createBindGroup({
         layout: this.group1Layout,
-        entries: [
-          { binding: 0, resource: { buffer: this.boxes.buffer as GPUBuffer } },
-          { binding: 1, resource: { buffer: this.stops.buffer as GPUBuffer } }
-        ]
+        entries: bindEntries(boxLayout, {
+          boxes: { buffer: this.boxes.buffer as GPUBuffer },
+          stops: { buffer: this.stops.buffer as GPUBuffer }
+        })
       })
     }
     const d = this.boxes.f32

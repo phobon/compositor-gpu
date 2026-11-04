@@ -14,6 +14,7 @@ import {
   CLIP_FLOATS,
   FRAME_AT,
   FRAME_BYTES,
+  frameLayout as frameSchemaLayout,
   MAX_CLIP_SHAPES,
   type RenderPass,
   type Shared
@@ -57,6 +58,7 @@ import {
 } from './layer_geometry'
 import { materialPipelinesSettled } from './material'
 import { addRows, clamp, hullRows, meet } from './rows'
+import { bindEntries, gpuLayout } from './schema'
 import { type GpuFrameTiming, GpuTimer, timed } from './timer'
 
 /** Scale steps an octave for transformed groups' textures (kept ones
@@ -346,29 +348,17 @@ export class Renderer {
       size: MAX_CLIP_SHAPES * CLIP_FLOATS * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     })
-    const frameLayout = this.device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'uniform' }
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        }
-      ]
-    })
+    const frameLayout = gpuLayout(gpu.root, frameSchemaLayout)
     const frameBindGroup = this.device.createBindGroup({
       layout: frameLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.frameBuffer } },
-        { binding: 1, resource: { buffer: this.clipBuffer } }
-      ]
+      entries: bindEntries(frameSchemaLayout, {
+        frame: { buffer: this.frameBuffer },
+        frame_clips: { buffer: this.clipBuffer }
+      })
     })
     this.shared = {
       device: this.device,
+      root: gpu.root,
       format: gpu.viewFormat,
       frameLayout,
       frameBindGroup,
