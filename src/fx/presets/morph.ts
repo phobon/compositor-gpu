@@ -1,5 +1,5 @@
 import { PATH_WGSL } from '../../paths/path_wgsl'
-import { GLYPH_FLOATS } from '../../text/glyph_data'
+import { GLYPH_AT as G, GLYPH_FLOATS } from '../../text/glyph_data'
 import type { GlyphGhost } from '../../text/slug/rasterizer'
 import type { Effects } from '../effects'
 import type { Layer } from '../layer'
@@ -94,20 +94,22 @@ fn tab(i : u32) -> vec2f {
   return vec2f(fx_data[i], fx_data[i + 1u]);
 }
 
+fn mg4(i : u32) -> vec4f {
+  return vec4f(fx_data[i], fx_data[i + 1u], fx_data[i + 2u], fx_data[i + 3u]);
+}
+
 // Glyph g of the morph's own table (copies of Slug instances; gref as
 // numbers).
 fn mg(g : u32) -> Glyph {
   let b = u32(params.gbase) + g * ${GLYPH_FLOATS}u;
   var o : Glyph;
-  o.rect = vec4f(fx_data[b], fx_data[b + 1u], fx_data[b + 2u], fx_data[b + 3u]);
-  o.offset = vec4f(fx_data[b + 4u], fx_data[b + 5u], fx_data[b + 6u],
-    fx_data[b + 7u]);
-  o.color = vec4f(fx_data[b + 8u], fx_data[b + 9u], fx_data[b + 10u],
-    fx_data[b + 11u]);
-  o.gref = vec4u(u32(fx_data[b + 12u]), u32(fx_data[b + 13u]), 0u, 0u);
-  o.xf0 = vec4f(fx_data[b + 20u], fx_data[b + 21u], fx_data[b + 22u],
-    fx_data[b + 23u]);
-  o.xf1 = vec4f(fx_data[b + 24u], fx_data[b + 25u], 0.0, 0.0);
+  o.rect = mg4(b + ${G.rect}u);
+  o.offset = mg4(b + ${G.offset}u);
+  o.color = mg4(b + ${G.color}u);
+  o.gref = vec4u(u32(fx_data[b + ${G.gref}u]), u32(fx_data[b + ${G.gref + 1}u]),
+    0u, 0u);
+  o.xf0 = mg4(b + ${G.xf0}u);
+  o.xf1 = vec4f(fx_data[b + ${G.xf1}u], fx_data[b + ${G.xf1 + 1}u], 0.0, 0.0);
   return o;
 }
 
@@ -443,9 +445,10 @@ function shiftSide(s: Side, dx: number, dy: number): Side {
   const inst = s.ghost.instances
   for (let k = 0; k < s.ghost.count; k++) {
     const b = k * GLYPH_FLOATS
-    if (inst[b + 6] !== 1) {
-      inst[b + 4] = (inst[b + 4] ?? 0) + dx
-      inst[b + 5] = (inst[b + 5] ?? 0) + dy
+    const off = b + G.offset
+    if (inst[off + 2] !== 1) {
+      inst[off] = (inst[off] ?? 0) + dx
+      inst[off + 1] = (inst[off + 1] ?? 0) + dy
     }
   }
   return {
@@ -457,15 +460,20 @@ function shiftSide(s: Side, dx: number, dy: number): Side {
 function frameOf(inst: Float32Array, k: number): Side['frames'][number] {
   const b = k * GLYPH_FLOATS
   const f = (i: number) => inst[b + i] ?? 0
-  const [rx, ry, rw, rh] = [f(0), f(1), f(2), f(3)]
-  const [a, bb, c, d] = [f(20), f(21), f(22), f(23)]
+  const [rx, ry, rw, rh] = [
+    f(G.rect),
+    f(G.rect + 1),
+    f(G.rect + 2),
+    f(G.rect + 3)
+  ]
+  const [a, bb, c, d] = [f(G.xf0), f(G.xf0 + 1), f(G.xf0 + 2), f(G.xf0 + 3)]
   // Viewport-space glyphs (offset.z 1) go to the page at the scroll now.
-  const vx = f(6) === 1 ? window.scrollX : 0
-  const vy = f(6) === 1 ? window.scrollY : 0
+  const vx = f(G.offset + 2) === 1 ? window.scrollX : 0
+  const vy = f(G.offset + 2) === 1 ? window.scrollY : 0
   return {
     o: [
-      a * rx + c * ry + f(24) + f(4) + vx,
-      bb * rx + d * ry + f(25) + f(5) + vy
+      a * rx + c * ry + f(G.xf1) + f(G.offset) + vx,
+      bb * rx + d * ry + f(G.xf1 + 1) + f(G.offset + 1) + vy
     ],
     ax: [a * rw, bb * rw],
     ay: [c * rh, d * rh]
@@ -596,8 +604,8 @@ export function morph(
           o
         )
         // gref as plain numbers (the shader reads floats).
-        d[o + 12] = u32[k * GLYPH_FLOATS + 12] ?? 0
-        d[o + 13] = u32[k * GLYPH_FLOATS + 13] ?? 0
+        d[o + G.gref] = u32[k * GLYPH_FLOATS + G.gref] ?? 0
+        d[o + G.gref + 1] = u32[k * GLYPH_FLOATS + G.gref + 1] ?? 0
       }
     }
     d.set(table, tbase)

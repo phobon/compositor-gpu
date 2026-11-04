@@ -1,41 +1,43 @@
+import * as d from 'typegpu/data'
+import { floatOffsets, structWgsl } from '../gpu/schema'
 import type { PointerClick, PointerState } from '../types'
 
 // Pointer tracking for the effects layer: raw position (viewport + page),
 // smoothed velocity, down state, an eased follower and a ring of the last
-// CLICKS clicks. Uploaded as the `Pointer` uniform (group 2, binding 2):
-//
-//   struct Pointer {           // offset
-//     pos        : vec2f,      //   0  raw, viewport CSS px
-//     page       : vec2f,      //   8  raw, page CSS px
-//     vel        : vec2f,      //  16  raw velocity, CSS px/s
-//     follow     : vec2f,      //  24  follower, viewport CSS px
-//     follow_vel : vec2f,      //  32  follower velocity, CSS px/s
-//     down       : f32,        //  40  1 while a button is down
-//     seen       : f32,        //  44  1 after the first pointer event
-//     clicks_n   : f32,        //  48  valid entries in `clicks`
-//     _pad       : f32,        //  52
-//     _pad2      : vec2f,      //  56
-//     clicks     : array<vec4f, 8>, // 64  (x, y page CSS px, t s, _), newest first
-//   };                         // 192 bytes
+// CLICKS clicks. Uploaded as the `Pointer` uniform (group 2, binding 2).
 
 export const CLICKS = 8
-export const POINTER_BYTES = 192
 
-export const POINTER_WGSL = /* wgsl */ `
-struct Pointer {
-  pos        : vec2f,
-  page       : vec2f,
-  vel        : vec2f,
-  follow     : vec2f,
-  follow_vel : vec2f,
-  down       : f32,
-  seen       : f32,
-  clicks_n   : f32,
-  _pad       : f32,
-  _pad2      : vec2f,
-  clicks     : array<vec4f, ${CLICKS}>,
-};
-`
+/** The Pointer uniform. */
+export const PointerData = d
+  .struct({
+    /** Raw, viewport CSS px. */
+    pos: d.vec2f,
+    /** Raw, page CSS px. */
+    page: d.vec2f,
+    /** Raw velocity, CSS px/s. */
+    vel: d.vec2f,
+    /** Follower, viewport CSS px. */
+    follow: d.vec2f,
+    /** Follower velocity, CSS px/s. */
+    follow_vel: d.vec2f,
+    /** 1 while a button is down. */
+    down: d.f32,
+    /** 1 after the first pointer event. */
+    seen: d.f32,
+    /** Valid entries in `clicks`. */
+    clicks_n: d.f32,
+    _pad: d.f32,
+    _pad2: d.vec2f,
+    /** (x, y page CSS px, t s, _), newest first. */
+    clicks: d.arrayOf(d.vec4f, CLICKS)
+  })
+  .$name('Pointer')
+
+export const POINTER_BYTES = d.sizeOf(PointerData)
+const AT = floatOffsets(PointerData)
+
+export const POINTER_WGSL: string = structWgsl(PointerData)
 
 /** Velocity smoothing time constant, s (about three 60 Hz frames). */
 const VEL_TAU = 0.05
@@ -185,29 +187,30 @@ export class PointerTracker {
   /** Pack `p` (the tracked state, or an override applied to it) into the
    * uniform layout above. */
   pack(p: PointerState): Float32Array {
-    const d = this.data
-    d[0] = p.x
-    d[1] = p.y
-    d[2] = p.pageX
-    d[3] = p.pageY
-    d[4] = p.vx
-    d[5] = p.vy
-    d[6] = p.follow.x
-    d[7] = p.follow.y
-    d[8] = p.follow.vx
-    d[9] = p.follow.vy
-    d[10] = p.down ? 1 : 0
-    d[11] = p.seen ? 1 : 0
-    d[12] = Math.min(p.clicks.length, CLICKS)
-    d.fill(0, 13, 16)
+    const v = this.data
+    v[AT.pos] = p.x
+    v[AT.pos + 1] = p.y
+    v[AT.page] = p.pageX
+    v[AT.page + 1] = p.pageY
+    v[AT.vel] = p.vx
+    v[AT.vel + 1] = p.vy
+    v[AT.follow] = p.follow.x
+    v[AT.follow + 1] = p.follow.y
+    v[AT.follow_vel] = p.follow.vx
+    v[AT.follow_vel + 1] = p.follow.vy
+    v[AT.down] = p.down ? 1 : 0
+    v[AT.seen] = p.seen ? 1 : 0
+    v[AT.clicks_n] = Math.min(p.clicks.length, CLICKS)
+    v.fill(0, AT._pad, AT.clicks)
     for (let i = 0; i < CLICKS; i++) {
       const c = p.clicks[i]
-      d[16 + i * 4] = c?.x ?? 0
-      d[17 + i * 4] = c?.y ?? 0
-      d[18 + i * 4] = c?.t ?? 0
-      d[19 + i * 4] = 0
+      const k = AT.clicks + i * 4
+      v[k] = c?.x ?? 0
+      v[k + 1] = c?.y ?? 0
+      v[k + 2] = c?.t ?? 0
+      v[k + 3] = 0
     }
-    return d
+    return v
   }
 }
 

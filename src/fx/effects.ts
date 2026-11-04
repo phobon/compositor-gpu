@@ -47,9 +47,11 @@ import { createReducedMotion } from './reduced_motion'
 import { type FieldSource, type Sdf, SdfField, type SdfOptions } from './sdf'
 import { MaskField } from './sdf_mask'
 import {
+  EFFECT_AT,
   EFFECT_BYTES,
   effectSource,
   type Fragment,
+  FX_IMAGE_AT,
   FX_IMAGE_BYTES,
   readsTime,
   stageSource
@@ -731,9 +733,9 @@ function buildEffects(compositor: Compositor): Effects {
         const v = r?.view ?? noImageView
         data.fill(0)
         if (r) {
-          data.set(r.uv, 0)
-          data[4] = r.width
-          data[5] = r.height
+          data.set(r.uv, FX_IMAGE_AT.uv)
+          data[FX_IMAGE_AT.size] = r.width
+          data[FX_IMAGE_AT.size + 1] = r.height
         }
         device.queue.writeBuffer(info, 0, data)
         if (!group || (r && v !== view) || (!r && view !== null)) {
@@ -864,30 +866,30 @@ function buildEffects(compositor: Compositor): Effects {
   ): void => {
     const d = effectData
     const v = frame.viewport
-    d[0] = clock.time()
-    d[1] = p.life.elapsed(clock)
-    d[2] = v.width
-    d[3] = v.height
-    d[4] = 1 / Math.max(1, v.width)
-    d[5] = 1 / Math.max(1, v.height)
-    d[6] = frame.ctx.scrollX
-    d[7] = frame.ctx.scrollY
-    d[8] = frame.dpr
-    d[9] = scale
-    d[10] = v.x
-    d[11] = v.y
-    d[12] = src.x
-    d[13] = src.y
-    d[14] = src.w
-    d[15] = src.h
-    d[16] = dst.x
-    d[17] = dst.y
-    d[18] = 1 / src.texW
-    d[19] = 1 / src.texH
-    d[20] = frame.ctx.scrollX
-    d[21] = frame.ctx.scrollY
-    d[22] = 1
-    d[23] = src.scale
+    d[EFFECT_AT.time] = clock.time()
+    d[EFFECT_AT.elapsed] = p.life.elapsed(clock)
+    d[EFFECT_AT.viewport] = v.width
+    d[EFFECT_AT.viewport + 1] = v.height
+    d[EFFECT_AT.texel] = 1 / Math.max(1, v.width)
+    d[EFFECT_AT.texel + 1] = 1 / Math.max(1, v.height)
+    d[EFFECT_AT.scroll] = frame.ctx.scrollX
+    d[EFFECT_AT.scroll + 1] = frame.ctx.scrollY
+    d[EFFECT_AT.dpr] = frame.dpr
+    d[EFFECT_AT.scale] = scale
+    d[EFFECT_AT.origin] = v.x
+    d[EFFECT_AT.origin + 1] = v.y
+    d[EFFECT_AT.src_origin] = src.x
+    d[EFFECT_AT.src_origin + 1] = src.y
+    d[EFFECT_AT.src_size] = src.w
+    d[EFFECT_AT.src_size + 1] = src.h
+    d[EFFECT_AT.dst_origin] = dst.x
+    d[EFFECT_AT.dst_origin + 1] = dst.y
+    d[EFFECT_AT.src_texel] = 1 / src.texW
+    d[EFFECT_AT.src_texel + 1] = 1 / src.texH
+    d[EFFECT_AT.page_scroll] = frame.ctx.scrollX
+    d[EFFECT_AT.page_scroll + 1] = frame.ctx.scrollY
+    d[EFFECT_AT.alpha] = 1
+    d[EFFECT_AT.src_scale] = src.scale
     device.queue.writeBuffer(stage.effect, 0, d)
   }
 
@@ -1328,30 +1330,30 @@ function buildEffects(compositor: Compositor): Effects {
       bh = r.height * s
     }
     const d = effectData
-    d[0] = clock.time()
-    d[1] = p.life.elapsed(clock)
-    d[2] = bw
-    d[3] = bh
-    d[4] = 1 / Math.max(1, bw)
-    d[5] = 1 / Math.max(1, bh)
-    d[6] = docX
-    d[7] = docY
-    d[8] = s
-    d[9] = scale
-    d[10] = bx
-    d[11] = by
-    d[12] = src.x
-    d[13] = src.y
-    d[14] = src.w
-    d[15] = src.h
-    d[16] = dst.x
-    d[17] = dst.y
-    d[18] = 1 / src.texW
-    d[19] = 1 / src.texH
-    d[20] = f.ctx.scrollX
-    d[21] = f.ctx.scrollY
-    d[22] = alpha
-    d[23] = src.scale
+    d[EFFECT_AT.time] = clock.time()
+    d[EFFECT_AT.elapsed] = p.life.elapsed(clock)
+    d[EFFECT_AT.viewport] = bw
+    d[EFFECT_AT.viewport + 1] = bh
+    d[EFFECT_AT.texel] = 1 / Math.max(1, bw)
+    d[EFFECT_AT.texel + 1] = 1 / Math.max(1, bh)
+    d[EFFECT_AT.scroll] = docX
+    d[EFFECT_AT.scroll + 1] = docY
+    d[EFFECT_AT.dpr] = s
+    d[EFFECT_AT.scale] = scale
+    d[EFFECT_AT.origin] = bx
+    d[EFFECT_AT.origin + 1] = by
+    d[EFFECT_AT.src_origin] = src.x
+    d[EFFECT_AT.src_origin + 1] = src.y
+    d[EFFECT_AT.src_size] = src.w
+    d[EFFECT_AT.src_size + 1] = src.h
+    d[EFFECT_AT.dst_origin] = dst.x
+    d[EFFECT_AT.dst_origin + 1] = dst.y
+    d[EFFECT_AT.src_texel] = 1 / src.texW
+    d[EFFECT_AT.src_texel + 1] = 1 / src.texH
+    d[EFFECT_AT.page_scroll] = f.ctx.scrollX
+    d[EFFECT_AT.page_scroll + 1] = f.ctx.scrollY
+    d[EFFECT_AT.alpha] = alpha
+    d[EFFECT_AT.src_scale] = src.scale
     device.queue.writeBuffer(stage.effect, 0, d)
   }
   /** A region pass's stage i reads the group texture (i = 0) or the

@@ -1,4 +1,6 @@
+import * as d from 'typegpu/data'
 import type { RegionFrame, RegionHandler, RenderGraph } from '../gpu/graph'
+import { floatOffsets, structWgsl } from '../gpu/schema'
 import { reportShaderErrors } from '../util/log'
 
 // Distance fields (M5e; docs/EFFECTS.md, Distance fields): a signed
@@ -44,17 +46,26 @@ export interface Sdf {
   destroy(): void
 }
 
-/** Bytes in the FxSdf uniform: rect (page CSS px), info. */
-export const FX_SDF_BYTES = 32
+/** A field's uniform (`fx_sdf_info`). */
+export const FxSdfData = d
+  .struct({
+    /** Runtime: the field's box, page CSS px (x, y, w, h). */
+    rect: d.vec4f,
+    /** Runtime: ready, spread (CSS px), texel scale (0: 1), _. */
+    info: d.vec4f
+  })
+  .$name('FxSdf')
+
+/** Bytes in the FxSdf uniform. */
+export const FX_SDF_BYTES = d.sizeOf(FxSdfData)
+/** Float offset of each FxSdf field. */
+export const FX_SDF_AT = floatOffsets(FxSdfData)
 
 /** WGSL declaring the field at (group, binding .. binding + 2) and
  * `sdf(p)` / `sdf_ready()`. */
 export function sdfWgsl(group: number, binding: number): string {
   return /* wgsl */ `
-struct FxSdf {
-  rect : vec4f,   // runtime: the field's box, page CSS px (x, y, w, h)
-  info : vec4f,   // runtime: ready, spread (CSS px), texel scale (0: 1), _
-};
+${structWgsl(FxSdfData)}
 @group(${group}) @binding(${binding}) var fx_sdf : texture_2d<f32>;
 @group(${group}) @binding(${binding + 1}) var fx_sdf_smp : sampler;
 @group(${group}) @binding(${binding + 2}) var<uniform> fx_sdf_info : FxSdf;
@@ -328,7 +339,7 @@ export class SdfField implements FieldSource {
       },
       primitive: { topology: 'triangle-list' }
     })
-    this.infoData[5] = spread
+    this.infoData[FX_SDF_AT.info + 1] = spread
     device.queue.writeBuffer(this.info, 0, this.infoData)
     this.handler = {
       pad: () => this.spread,
@@ -498,9 +509,9 @@ export class SdfField implements FieldSource {
     this.rect[1] = f.parentY + f.y / f.scale
     this.rect[2] = (w * k) / f.scale
     this.rect[3] = (h * k) / f.scale
-    this.infoData.set(this.rect, 0)
-    this.infoData[4] = 1
-    this.infoData[5] = this.spread
+    this.infoData.set(this.rect, FX_SDF_AT.rect)
+    this.infoData[FX_SDF_AT.info] = 1
+    this.infoData[FX_SDF_AT.info + 1] = this.spread
     this.d.device.queue.writeBuffer(this.info, 0, this.infoData)
     this.ready = true
     this.builds++

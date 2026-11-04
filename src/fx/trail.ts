@@ -1,3 +1,7 @@
+import tgpu from 'typegpu'
+import * as d from 'typegpu/data'
+import { resolveShader } from '../gpu/frame'
+import { floatOffsets, passExternals, structWgsl } from '../gpu/schema'
 import type { FrameContext, PointerState } from '../types'
 import { reportShaderErrors } from '../util/log'
 import { Lifecycle } from './lifecycle'
@@ -15,10 +19,51 @@ import {
 // with trail_at(p) and friends (TRAIL_WGSL). Contract: src/fx/README.md
 // "Trails".
 
+/** The field's size, for consumers (`fx_trail_info`). */
+const TrailInfoData = d
+  .struct({
+    /** Cells. */
+    grid: d.vec2f,
+    /** CSS px per cell. */
+    cell: d.f32,
+    _pad: d.f32
+  })
+  .$name('FxTrailInfo')
+
+/** One step of the field (STEP_WGSL's `st`). */
+const StepData = d
+  .struct({
+    /** Cells. */
+    grid: d.vec2f,
+    /** CSS px per cell. */
+    cell: d.f32,
+    /** Fraction kept this frame. */
+    keep: d.f32,
+    /** Stroke start, viewport CSS px. */
+    a: d.vec2f,
+    /** Stroke end. */
+    b: d.vec2f,
+    /** Unit direction (zero when still). */
+    dir: d.vec2f,
+    /** Brush radius, CSS px. */
+    radius: d.f32,
+    /** Deposit at the stroke's centre line (0: fade only). */
+    amount: d.f32
+  })
+  .$name('Step')
+
+const stepLayout = tgpu
+  .bindGroupLayout({
+    field: { storage: d.arrayOf(d.vec4f), access: 'mutable' },
+    st: { uniform: StepData }
+  })
+  .$idx(0)
+
 /** Bytes in the FxTrailInfo uniform consumers bind. */
-export const TRAIL_INFO_BYTES = 16
-/** Bytes in the step uniform (STEP_WGSL). */
-const STEP_BYTES = 48
+export const TRAIL_INFO_BYTES = d.sizeOf(TrailInfoData)
+const INFO_AT = floatOffsets(TrailInfoData)
+const STEP_BYTES = d.sizeOf(StepData)
+const STEP_AT = floatOffsets(StepData)
 /** Below this the field counts as empty: no dispatch, cleared once. */
 const EPS = 1e-3
 
@@ -119,11 +164,7 @@ export function trailState(t: Trail | undefined): TrailState | null {
  */
 export function trailWgsl(group: number, binding: number): string {
   return /* wgsl */ `
-struct FxTrailInfo {
-  grid : vec2f,  // cells
-  cell : f32,    // CSS px per cell
-  _pad : f32,
-};
+${structWgsl(TrailInfoData)}
 @group(${group}) @binding(${binding}) var<storage, read> fx_trail : array<vec4f>;
 @group(${group}) @binding(${binding + 1}) var<uniform> fx_trail_info : FxTrailInfo;
 
@@ -158,20 +199,8 @@ fn trail_snap(p : vec2f) -> vec2f {
 `
 }
 
-const STEP_WGSL = /* wgsl */ `
-struct Step {
-  grid   : vec2f,  // cells
-  cell   : f32,    // CSS px per cell
-  keep   : f32,    // fraction kept this frame
-  a      : vec2f,  // stroke start, viewport CSS px
-  b      : vec2f,  // stroke end
-  dir    : vec2f,  // unit direction (zero when still)
-  radius : f32,    // brush radius, CSS px
-  amount : f32,    // deposit at the stroke's centre line (0: fade only)
-};
-@group(0) @binding(0) var<storage, read_write> field : array<vec4f>;
-@group(0) @binding(1) var<uniform> st : Step;
-
+const STEP_WGSL: string = resolveShader(
+  /* wgsl */ `
 @compute @workgroup_size(8, 8)
 fn fx_trail_cs(@builtin(global_invocation_id) id : vec3u) {
   let g = vec2u(st.grid);
@@ -191,7 +220,9 @@ fn fx_trail_cs(@builtin(global_invocation_id) id : vec3u) {
   }
   field[i] = v;
 }
-`
+`,
+  passExternals(stepLayout, { Step: StepData })
+)
 
 /** A Trail with no GPU side (inert runtime). */
 export function inertTrail(o: TrailOptions = {}): Trail {
@@ -332,10 +363,10 @@ export function createTrail(
   }[] = []
 
   const writeInfo = (): void => {
-    infoData[0] = life.destroyed ? 0 : cols
-    infoData[1] = life.destroyed ? 0 : rows
-    infoData[2] = cell
-    infoData[3] = 0
+    infoData[INFO_AT.grid] = life.destroyed ? 0 : cols
+    infoData[INFO_AT.grid + 1] = life.destroyed ? 0 : rows
+    infoData[INFO_AT.cell] = cell
+    infoData[INFO_AT._pad] = 0
     device.queue.writeBuffer(info, 0, infoData)
   }
   writeInfo()
@@ -395,18 +426,18 @@ export function createTrail(
     const dx = b[0] - a[0]
     const dy = b[1] - a[1]
     const len = Math.hypot(dx, dy)
-    step[0] = cols
-    step[1] = rows
-    step[2] = cell
-    step[3] = keep
-    step[4] = a[0]
-    step[5] = a[1]
-    step[6] = b[0]
-    step[7] = b[1]
-    step[8] = len > 1e-3 ? dx / len : 0
-    step[9] = len > 1e-3 ? dy / len : 0
-    step[10] = Math.max(1, p.radius)
-    step[11] = amount
+    step[STEP_AT.grid] = cols
+    step[STEP_AT.grid + 1] = rows
+    step[STEP_AT.cell] = cell
+    step[STEP_AT.keep] = keep
+    step[STEP_AT.a] = a[0]
+    step[STEP_AT.a + 1] = a[1]
+    step[STEP_AT.b] = b[0]
+    step[STEP_AT.b + 1] = b[1]
+    step[STEP_AT.dir] = len > 1e-3 ? dx / len : 0
+    step[STEP_AT.dir + 1] = len > 1e-3 ? dy / len : 0
+    step[STEP_AT.radius] = Math.max(1, p.radius)
+    step[STEP_AT.amount] = amount
     device.queue.writeBuffer(stepBuf, 0, step)
     group ??= device.createBindGroup({
       label,

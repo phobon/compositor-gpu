@@ -1,7 +1,7 @@
 import { fetchManifest } from '../assets/manifest'
 import { type BakedMaskHeader, parseBakedMask } from '../assets/mask_file'
 import { log } from '../util/log'
-import { type FieldSource, FX_SDF_BYTES } from './sdf'
+import { type FieldSource, FX_SDF_AT, FX_SDF_BYTES } from './sdf'
 
 // A baked distance-field mask placed over an element (M5f;
 // `fx.sdf(el, { mask })`): the field an svg's shape had offline
@@ -140,14 +140,14 @@ export class MaskField implements FieldSource {
     const y = r.top + window.scrollY + t
     const [bx, by, bw, bh] = h.box
     const d = this.infoData
-    d[0] = x + p.tx + bx * p.sx
-    d[1] = y + p.ty + by * p.sy
-    d[2] = bw * p.sx
-    d[3] = bh * p.sy
-    d[4] = 1
-    d[5] = h.spread * p.k
-    d[6] = p.k
-    this.spread = d[5]
+    d[FX_SDF_AT.rect] = x + p.tx + bx * p.sx
+    d[FX_SDF_AT.rect + 1] = y + p.ty + by * p.sy
+    d[FX_SDF_AT.rect + 2] = bw * p.sx
+    d[FX_SDF_AT.rect + 3] = bh * p.sy
+    d[FX_SDF_AT.info] = 1
+    d[FX_SDF_AT.info + 1] = h.spread * p.k
+    d[FX_SDF_AT.info + 2] = p.k
+    this.spread = d[FX_SDF_AT.info + 1] ?? 0
     const key = d.join()
     if (key !== this.last) {
       this.last = key

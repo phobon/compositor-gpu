@@ -950,6 +950,9 @@ Params model, element-keyed Targets, a runtime pointer uniform):
   - [x] Text, images, paths and cutouts: their instance structs and
         bind group 1 as schemas and layouts, packing through named
         offsets (gpu/schema.ts helpers)
+  - [x] fx: every uniform (Effect, Pointer, LayerFx, MaterialFx, FxSdf,
+        trail, FxPrev, FxImage) and the Params block as schemas;
+        stages and Layers through `resolveShader`
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

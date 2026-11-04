@@ -86,8 +86,19 @@ before it, and no change in GPU time a frame or pipeline compile time.
    morph preset takes `GLYPH_FLOATS` from them but still reads glyph
    fields by literal offset in its WGSL (step 5). Slug's `Band` is one
    vec4 and is still packed by component.
-5. **The fx passes and presets**, whose fragments already accept
-   `tgpu.fn` (`src/fx/gpu.ts` externals): their templates and
-   per-effect param blocks.
+5. **The fx passes and presets** (done, 2026-11-04). Every fx uniform
+   is a schema: `Effect`, `FxPrev`, `FxImage` (`fx/shader.ts`),
+   `Pointer`, `LayerFx`, `MaterialFx`, `FxSdf`, and the trail's
+   `FxTrailInfo` and `Step`. Their WGSL structs come from them
+   (`structWgsl`), their `*_BYTES` from `d.sizeOf`, and the packing writes
+   named offsets. A param block's `struct Params` is a `d.struct` built
+   from the schema, so its layout (offsets, size) is TypeGPU's rather
+   than a hand alignment table. Pass stages and Layers resolve their
+   modules with `resolveShader` (only the Frame items they name), the
+   trail's compute shader its own layout as externals, and the morph
+   preset reads glyphs through `GLYPH_AT`. Bindings whose group and
+   number are parameters (`sdfWgsl`, `trailWgsl`, `texturesWgsl`) are
+   still text; so are the fx templates themselves, which hold the
+   author's WGSL.
 6. **Bind group layouts and the root**: type `GpuContext.root` as
    `TgpuRoot` and make the GPU layouts with `root.unwrap(layout)`.

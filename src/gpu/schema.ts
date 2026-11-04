@@ -1,3 +1,4 @@
+import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import type { Externals } from './frame'
 import { bindingExternals } from './frame'
@@ -33,3 +34,8 @@ export function passExternals(
     Object.getOwnPropertyDescriptors(bindingExternals(layout))
   )
 }
+
+/** WGSL declaring `schemas` (structs, in dependency order), for modules
+ * still assembled as text. */
+export const structWgsl = (...schemas: d.AnyWgslData[]): string =>
+  tgpu.resolve(schemas)

@@ -15,7 +15,7 @@ test('scalars and vectors pack at their WGSL offsets', () => {
   )
   assert.equal(b.byteSize, 32)
   assert.deepEqual(Array.from(b.pack()), [1, 0, 0, 0, 2, 3, 4, 5])
-  assert.match(b.wgsl, /v : vec4f/)
+  assert.match(b.wgsl, /v\s*:\s*vec4f/)
 })
 
 test('a vec4 array declares array<vec4f, n> and packs flat', () => {
@@ -29,7 +29,7 @@ test('a vec4 array declares array<vec4f, n> and packs flat', () => {
       writes++
     }
   )
-  assert.match(b.wgsl, /rows : array<vec4f, 3>/)
+  assert.match(b.wgsl, /rows\s*:\s*array<vec4f, 3>/)
   // f32 at 0, the array aligned to 16 bytes: 4 + 3 × 16 bytes = 64.
   assert.equal(b.byteSize, 64)
   const v = b.values as unknown as { rows: number[] }

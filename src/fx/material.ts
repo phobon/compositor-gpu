@@ -1,3 +1,4 @@
+import * as d from 'typegpu/data'
 import type { MaterialEntry, MaterialReach, RenderGraph } from '../gpu/graph'
 import type { MaterialKind } from '../gpu/material'
 import type { FrameContext } from '../types'
@@ -26,6 +27,7 @@ import { type Trail, trailState, trailWgsl } from './trail'
 /** First group-2 binding of a material's textures (after trail's). */
 const TEX_BASE = 5
 
+import { floatOffsets, structWgsl } from '../gpu/schema'
 import { guarded } from '../util/log'
 
 // Materials: re-shade a Target's mirrored records with author hooks
@@ -34,18 +36,29 @@ import { guarded } from '../util/log'
 // clipping, blending and paint order stay theirs. Contract:
 // src/fx/README.md.
 
-/** Bytes in the MaterialFx uniform (see UNIFORMS_WGSL). */
-export const MATERIAL_FX_BYTES = 32
+/** A Material's uniform (`fx`, group 2 binding 0). */
+export const MaterialFxData = d
+  .struct({
+    /** Page clock, s. */
+    time: d.f32,
+    /** s since this material was last enabled. */
+    elapsed: d.f32,
+    dpr: d.f32,
+    /** Glyphs mat_index numbers (glyph materials). */
+    glyphs: d.f32,
+    /** The real document scroll, CSS px. */
+    scroll: d.vec2f,
+    /** Visible viewport, CSS px. */
+    viewport: d.vec2f
+  })
+  .$name('MaterialFx')
+
+/** Bytes in the MaterialFx uniform. */
+export const MATERIAL_FX_BYTES = d.sizeOf(MaterialFxData)
+const AT = floatOffsets(MaterialFxData)
 
 const UNIFORMS_WGSL = /* wgsl */ `
-struct MaterialFx {
-  time     : f32,    // page clock, s
-  elapsed  : f32,    // s since this material was last enabled
-  dpr      : f32,
-  glyphs   : f32,    // glyphs mat_index numbers (glyph materials)
-  scroll   : vec2f,  // the real document scroll, CSS px
-  viewport : vec2f,  // visible viewport, CSS px
-};
+${structWgsl(MaterialFxData)}
 @group(2) @binding(0) var<uniform> fx : MaterialFx;
 @group(2) @binding(1) var<uniform> params : Params;
 @group(2) @binding(2) var<uniform> pointer : Pointer;
@@ -452,17 +465,17 @@ export function createMaterial<S extends ParamSchema>(
         device.queue.writeBuffer(paramsBuf, 0, block.pack())
       }
       const f = fxData
-      f[0] = time
-      f[1] = life.elapsed(deps.clock)
-      f[2] = graph.shared.dpr
-      f[3] = entry.glyphs ?? 0
-      f[4] = ctx.scrollX
-      f[5] = ctx.scrollY
-      f[6] = ctx.width
-      f[7] = ctx.height
+      f[AT.time] = time
+      f[AT.elapsed] = life.elapsed(deps.clock)
+      f[AT.dpr] = graph.shared.dpr
+      f[AT.glyphs] = entry.glyphs ?? 0
+      f[AT.scroll] = ctx.scrollX
+      f[AT.scroll + 1] = ctx.scrollY
+      f[AT.viewport] = ctx.width
+      f[AT.viewport + 1] = ctx.height
       // dpr, glyph count, scroll and viewport (time is covered by
       // `continuous`).
-      for (let i = 2; i < 8; i++) {
+      for (let i = AT.dpr; i < MATERIAL_FX_BYTES / 4; i++) {
         if (f[i] !== lastFx[i]) {
           changed = true
           lastFx[i] = f[i] ?? 0

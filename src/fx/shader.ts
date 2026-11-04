@@ -1,5 +1,7 @@
 import tgpu from 'typegpu'
-import { FRAME_WGSL } from '../gpu/frame'
+import * as d from 'typegpu/data'
+import { resolveShader } from '../gpu/frame'
+import { floatOffsets, structWgsl } from '../gpu/schema'
 import { log } from '../util/log'
 import { POINTER_WGSL } from './pointer'
 import { sdfWgsl } from './sdf'
@@ -11,29 +13,49 @@ import { trailWgsl } from './trail'
 // Frame/Effect/Params/Pointer declarations, the bindings and the entry
 // points. The contract is documented in src/fx/README.md.
 
-/** Bytes in the Effect uniform (see EFFECT_WGSL). */
-export const EFFECT_BYTES = 96
+/** The per-stage uniform (`fx`, group 2 binding 0). "runtime" fields
+ * are set by the runtime for its own helpers. */
+export const EffectData = d
+  .struct({
+    /** Page clock, s. */
+    time: d.f32,
+    /** s since this effect was last enabled. */
+    elapsed: d.f32,
+    /** Visible viewport, device px. */
+    viewport: d.vec2f,
+    /** One device px in uv (1 / viewport). */
+    texel: d.vec2f,
+    /** The viewport's document-space origin, CSS px. */
+    scroll: d.vec2f,
+    dpr: d.f32,
+    /** Runtime: device px per output texel (1 unless the stage is
+     * downsampled; 0 is read as 1). */
+    scale: d.f32,
+    /** Runtime: viewport top-left in canvas device px. */
+    origin: d.vec2f,
+    /** Runtime: src texel (0,0) in canvas device px. */
+    src_origin: d.vec2f,
+    /** Runtime: src's valid region, src texels. */
+    src_size: d.vec2f,
+    /** Runtime: target texel (0,0) in canvas device px. */
+    dst_origin: d.vec2f,
+    /** Runtime: 1 / src texture size. */
+    src_texel: d.vec2f,
+    /** Runtime: the real document scroll, CSS px. */
+    page_scroll: d.vec2f,
+    /** Runtime: region group opacity (1 fullscreen). */
+    alpha: d.f32,
+    /** Runtime: device px per source texel (as scale). */
+    src_scale: d.f32
+  })
+  .$name('Effect')
 
-export const EFFECT_WGSL = /* wgsl */ `
-struct Effect {
-  time       : f32,    // page clock, s
-  elapsed    : f32,    // s since this effect was last enabled
-  viewport   : vec2f,  // visible viewport, device px
-  texel      : vec2f,  // one device px in uv (1 / viewport)
-  scroll     : vec2f,  // the viewport's document-space origin, CSS px
-  dpr        : f32,
-  scale      : f32,    // runtime: device px per output texel (1 unless the
-                       // stage is downsampled; 0 is read as 1)
-  origin     : vec2f,  // runtime: viewport top-left in canvas device px
-  src_origin : vec2f,  // runtime: src texel (0,0) in canvas device px
-  src_size   : vec2f,  // runtime: src's valid region, src texels
-  dst_origin : vec2f,  // runtime: target texel (0,0) in canvas device px
-  src_texel  : vec2f,  // runtime: 1 / src texture size
-  page_scroll : vec2f, // runtime: the real document scroll, CSS px
-  alpha      : f32,    // runtime: region group opacity (1 fullscreen)
-  src_scale  : f32,    // runtime: device px per source texel (as scale)
-};
-`
+/** Bytes in the Effect uniform. */
+export const EFFECT_BYTES = d.sizeOf(EffectData)
+/** Float offset of each Effect field. */
+export const EFFECT_AT = floatOffsets(EffectData)
+
+export const EFFECT_WGSL: string = structWgsl(EffectData)
 
 const BINDINGS_WGSL = /* wgsl */ `
 @group(1) @binding(0) var fx_src : texture_2d<f32>;
@@ -103,15 +125,23 @@ fn fx_call(uv : vec2f) -> vec4f {
 }
 `
 
+/** A transition's uniform (`fx_prev_info`, group 3 binding 2). */
+export const FxPrevData = d
+  .struct({
+    /** Runtime: snapshot size, device px. */
+    size: d.vec2f,
+    /** Runtime: 1 while waiting for the incoming page. */
+    hold: d.f32,
+    /** Runtime: 1 when the transition's layer drew this frame. */
+    overlay: d.f32
+  })
+  .$name('FxPrev')
+
 // A transition (fx.transition): the held snapshot of the outgoing page
 // (bind group 3), and the hold that shows only it until the incoming
 // page's mirror is complete.
 const PREV_WGSL = /* wgsl */ `
-struct FxPrev {
-  size : vec2f,   // runtime: snapshot size, device px
-  hold : f32,     // runtime: 1 while waiting for the incoming page
-  overlay : f32,  // runtime: 1 when the transition's layer drew this frame
-};
+${structWgsl(FxPrevData)}
 @group(3) @binding(0) var fx_prev : texture_2d<f32>;
 @group(3) @binding(1) var fx_prev_smp : sampler;
 @group(3) @binding(2) var<uniform> fx_prev_info : FxPrev;
@@ -143,15 +173,24 @@ fn fx_call(uv : vec2f) -> vec4f {
 `
 
 /** Bytes in the FxPrev uniform. */
-export const FX_PREV_BYTES = 16
+export const FX_PREV_BYTES = d.sizeOf(FxPrevData)
+/** Float offset of each FxPrev field. */
+export const FX_PREV_AT = floatOffsets(FxPrevData)
+
+/** A pass's image uniform (`fx_image_info`, group 3 binding 2). */
+export const FxImageData = d
+  .struct({
+    /** Runtime: the image's texels in fx_image. */
+    uv: d.vec4f,
+    /** Texel size (0 until decoded). */
+    size: d.vec2f,
+    _pad: d.vec2f
+  })
+  .$name('FxImage')
 
 // With `image`: the target's pixels (bind group 3).
 const IMAGE_WGSL = /* wgsl */ `
-struct FxImage {
-  uv   : vec4f,   // runtime: the image's texels in fx_image
-  size : vec2f,   // texel size (0 until decoded)
-  _pad : vec2f,
-};
+${structWgsl(FxImageData)}
 @group(3) @binding(0) var fx_image : texture_2d<f32>;
 @group(3) @binding(1) var fx_image_smp : sampler;
 @group(3) @binding(2) var<uniform> fx_image_info : FxImage;
@@ -173,7 +212,9 @@ fn image_size() -> vec2f {
 `
 
 /** Bytes in the FxImage uniform. */
-export const FX_IMAGE_BYTES = 32
+export const FX_IMAGE_BYTES = d.sizeOf(FxImageData)
+/** Float offset of each FxImage field. */
+export const FX_IMAGE_AT = floatOffsets(FxImageData)
 
 // With `trail`: the field (group 2, bindings 3 and 4) and trail(uv).
 const TRAIL_WGSL = /* wgsl */ `
@@ -254,7 +295,8 @@ export function effectSource(fragment: Fragment, name: string): string | null {
   }
 }
 
-/** The complete module source for one stage. */
+/** The complete module source for one stage, with the Frame items it
+ * names (resolveShader). */
 export function stageSource(
   effect: string | null,
   paramsWgsl: string,
@@ -265,20 +307,21 @@ export function stageSource(
   /** texturesWgsl(...) for the stage's textures (group 2). */
   textures = ''
 ): string {
-  return [
-    FRAME_WGSL,
-    EFFECT_WGSL,
-    paramsWgsl,
-    POINTER_WGSL,
-    BINDINGS_WGSL,
-    textures,
-    image ? IMAGE_WGSL : '',
-    sdf ? sdfWgsl(3, 0) : '',
-    trail ? TRAIL_WGSL : '',
-    effect ?? PASSTHROUGH,
-    prev ? PREV_WGSL : CALL_WGSL,
-    ENTRY_WGSL
-  ].join('\n')
+  return resolveShader(
+    [
+      EFFECT_WGSL,
+      paramsWgsl,
+      POINTER_WGSL,
+      BINDINGS_WGSL,
+      textures,
+      image ? IMAGE_WGSL : '',
+      sdf ? sdfWgsl(3, 0) : '',
+      trail ? TRAIL_WGSL : '',
+      effect ?? PASSTHROUGH,
+      prev ? PREV_WGSL : CALL_WGSL,
+      ENTRY_WGSL
+    ].join('\n')
+  )
 }
 
 /** True when WGSL hook code reads the clock (`fx.time` / `fx.elapsed`):

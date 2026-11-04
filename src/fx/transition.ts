@@ -5,7 +5,7 @@ import { reportShaderErrors } from '../util/log'
 import type { Pass, PassOptions } from './effects'
 import type { Layer } from './layer'
 import type { ParamSchema } from './params'
-import { FX_PREV_BYTES } from './shader'
+import { FX_PREV_AT, FX_PREV_BYTES } from './shader'
 
 // Transitions between two DOM states (fx.transition). capture() holds a
 // copy of the visible viewport of the scene the post chain gets on the
@@ -215,11 +215,11 @@ export class Snapshot {
       }
     }
     const t = this.texture
-    this.data[0] = t?.width ?? v.width
-    this.data[1] = t?.height ?? v.height
-    this.data[2] = this.hold ? 1 : 0
+    this.data[FX_PREV_AT.size] = t?.width ?? v.width
+    this.data[FX_PREV_AT.size + 1] = t?.height ?? v.height
+    this.data[FX_PREV_AT.hold] = this.hold ? 1 : 0
     this.overlayDrawn = this.hold ? false : this.drawOverlay(frame)
-    this.data[3] = this.overlayDrawn ? 1 : 0
+    this.data[FX_PREV_AT.overlay] = this.overlayDrawn ? 1 : 0
     this.d.device.queue.writeBuffer(this.info, 0, this.data)
   }
 

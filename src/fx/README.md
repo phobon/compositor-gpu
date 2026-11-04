@@ -120,7 +120,8 @@ element, times the element's own opacity. Same fragment signature:
 
 ### What the runtime puts in scope
 
-The module is `FRAME_WGSL` + the declarations below + the Params struct +
+The module is the Frame items it names (resolved by TypeGPU, as every
+pass's are) + the declarations below + the Params struct +
 your code + the entry points (`fx_vs`, `fx_fs`; avoid those names and the
 `fx_` prefix).
 

@@ -1,6 +1,9 @@
+import * as d from 'typegpu/data'
+import { floatOffsets, structWgsl } from '../gpu/schema'
+
 // Params: a schema → a Proxy of plain numbers / float arrays, the WGSL
-// `struct Params` it implies, and a Float32Array packed in that struct's
-// uniform layout. See src/fx/README.md.
+// `struct Params` it implies (a TypeGPU d.struct), and a Float32Array
+// packed in that struct's uniform layout. See src/fx/README.md.
 
 export type ParamType = 'f32' | 'vec2' | 'vec3' | 'vec4' | 'color'
 
@@ -43,12 +46,12 @@ interface Field {
   count: number
 }
 
-const WGSL_TYPE: Record<ParamType, string> = {
-  f32: 'f32',
-  vec2: 'vec2f',
-  vec3: 'vec3f',
-  vec4: 'vec4f',
-  color: 'vec4f'
+const SCHEMA: Record<ParamType, d.AnyWgslData> = {
+  f32: d.f32,
+  vec2: d.vec2f,
+  vec3: d.vec3f,
+  vec4: d.vec4f,
+  color: d.vec4f
 }
 const COMPONENTS: Record<ParamType, number> = {
   f32: 1,
@@ -56,14 +59,6 @@ const COMPONENTS: Record<ParamType, number> = {
   vec3: 3,
   vec4: 4,
   color: 4
-}
-/** WGSL uniform alignment in bytes (vec3 aligns like vec4). */
-const ALIGN: Record<ParamType, number> = {
-  f32: 4,
-  vec2: 8,
-  vec3: 16,
-  vec4: 16,
-  color: 16
 }
 
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/
@@ -134,8 +129,7 @@ export function createParams<S extends ParamSchema>(
   schema: S,
   onWrite: () => void
 ): ParamBlock<S> {
-  const fields: Field[] = []
-  let bytes = 0
+  const props: Record<string, d.AnyWgslData> = {}
   for (const [name, def] of Object.entries(schema)) {
     if (!IDENT.test(name)) {
       throw new Error(
@@ -151,31 +145,26 @@ export function createParams<S extends ParamSchema>(
         `[compositor-gpu/fx] param '${name}': count needs type 'vec4' and a positive integer`
       )
     }
-    const align = ALIGN[def.type]
-    bytes = Math.ceil(bytes / align) * align
-    fields.push({
-      name,
-      type: def.type,
-      offset: bytes / 4,
-      n: COMPONENTS[def.type] * count,
-      count
-    })
-    bytes += COMPONENTS[def.type] * count * 4
+    props[name] = count > 1 ? d.arrayOf(d.vec4f, count) : SCHEMA[def.type]
   }
-  // A uniform struct's size rounds up to its alignment; the binding is
-  // padded to 16 so an empty schema still has a valid buffer.
-  const byteSize = Math.max(16, Math.ceil(bytes / 16) * 16)
+  if (Object.keys(props).length === 0) {
+    props._unused = d.f32
+  }
+  // The struct's layout (WGSL uniform rules) is TypeGPU's.
+  const struct = d.struct(props).$name('Params')
+  const at = floatOffsets(struct)
+  const fields: Field[] = Object.entries(schema).map(([name, def]) => ({
+    name,
+    type: def.type,
+    offset: at[name] ?? 0,
+    n: COMPONENTS[def.type] * (def.count ?? 1),
+    count: def.count ?? 1
+  }))
+  // The binding is padded to 16 so an empty schema still has a valid
+  // buffer.
+  const byteSize = Math.max(16, Math.ceil(d.sizeOf(struct) / 16) * 16)
   const data = new Float32Array(byteSize / 4)
-
-  const lines = fields.map((f) => {
-    const t = WGSL_TYPE[f.type]
-    const ty = f.count > 1 ? `array<${t}, ${f.count}>` : t
-    return `  ${f.name} : ${ty},  // offset ${f.offset * 4}`
-  })
-  if (lines.length === 0) {
-    lines.push('  _unused : f32,')
-  }
-  const wgsl = `struct Params {\n${lines.join('\n')}\n};\n`
+  const wgsl = structWgsl(struct)
 
   const block = {
     values: {} as ParamValues<S>,

@@ -1,5 +1,7 @@
-import { FRAME_WGSL } from '../gpu/frame'
+import * as d from 'typegpu/data'
+import { resolveShader } from '../gpu/frame'
 import type { LayerPlace, RenderGraph } from '../gpu/graph'
+import { floatOffsets, structWgsl } from '../gpu/schema'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -45,24 +47,43 @@ import { type Trail, type TrailState, trailState, trailWgsl } from './trail'
 // Float32Array of `count` × `stride` floats; the vertex hook places quad i
 // from it, the fragment hook shades it. Contract: src/fx/README.md.
 
-/** Bytes in the LayerFx uniform (see LAYER_WGSL). */
-export const LAYER_FX_BYTES = 80
+/** A Layer's uniform (`fx`, group 1 binding 1). */
+export const LayerFxData = d
+  .struct({
+    /** Page clock, s. */
+    time: d.f32,
+    /** s since this layer was last enabled. */
+    elapsed: d.f32,
+    dpr: d.f32,
+    /** Instances drawn. */
+    count: d.f32,
+    /** The real document scroll, CSS px. */
+    scroll: d.vec2f,
+    /** Visible viewport, CSS px. */
+    viewport: d.vec2f,
+    /** s since the previous frame (clamped to 1/15). */
+    dt: d.f32,
+    /** Simulate steps run since enabled (0 in the first). */
+    steps: d.f32,
+    /** Runtime: the image's texels in fx_image. */
+    image_uv: d.vec4f,
+    /** The image's texel size (0 when not ready). */
+    image_size: d.vec2f,
+    /** Glyphs of the glyphs target. */
+    glyph_count: d.f32,
+    _pad: d.f32
+  })
+  .$name('LayerFx')
+
+/** Bytes in the LayerFx uniform. */
+export const LAYER_FX_BYTES = d.sizeOf(LayerFxData)
+const AT = floatOffsets(LayerFxData)
+/** The fields after the per-frame ones, written when the image or glyphs
+ * change (`side`). */
+const SIDE = AT.image_uv
 
 const LAYER_WGSL = /* wgsl */ `
-struct LayerFx {
-  time     : f32,    // page clock, s
-  elapsed  : f32,    // s since this layer was last enabled
-  dpr      : f32,
-  count    : f32,    // instances drawn
-  scroll   : vec2f,  // the real document scroll, CSS px
-  viewport : vec2f,  // visible viewport, CSS px
-  dt       : f32,    // s since the previous frame (clamped to 1/15)
-  steps    : f32,    // simulate steps run since enabled (0 in the first)
-  image_uv : vec4f,  // runtime: the image's texels in fx_image
-  image_size : vec2f, // the image's texel size (0 when not ready)
-  glyph_count : f32, // glyphs of the glyphs target
-  _pad     : f32,
-};
+${structWgsl(LayerFxData)}
 
 // What the vertex hook returns for one corner, interpolated for the
 // fragment hook. pos is CSS px in the layer's space; the rest is free.
@@ -439,28 +460,29 @@ function layerSource(
   texNames: readonly string[]
 ): string {
   const stride = Math.max(1, Math.floor(o.stride))
-  return [
-    FRAME_WGSL,
-    LAYER_WGSL,
-    wgslParams,
-    POINTER_WGSL,
-    `const FX_STRIDE : u32 = ${stride}u;`,
-    `const FX_SPACE : f32 = ${o.space === 'viewport' ? '1.0' : '0.0'};`,
-    BINDINGS_WGSL,
-    o.image ? IMAGE_WGSL : '',
-    o.images?.length
-      ? `const FX_IMAGES : u32 = ${o.images.length}u;\n${IMAGES_WGSL}`
-      : '',
-    o.glyphs ? GLYPHS_WGSL : '',
-    o.trail ? trailHelpers(1, 10) : '',
-    o.sdf ? sdfWgsl(1, 15) : '',
-    texturesWgsl(1, TEX_BASE, texNames),
-    HELPERS_WGSL,
-    hooks,
-    SKELETON_WGSL,
-    ENTRY_WGSL,
-    skeletonFs('layer')
-  ].join('\n')
+  return resolveShader(
+    [
+      LAYER_WGSL,
+      wgslParams,
+      POINTER_WGSL,
+      `const FX_STRIDE : u32 = ${stride}u;`,
+      `const FX_SPACE : f32 = ${o.space === 'viewport' ? '1.0' : '0.0'};`,
+      BINDINGS_WGSL,
+      o.image ? IMAGE_WGSL : '',
+      o.images?.length
+        ? `const FX_IMAGES : u32 = ${o.images.length}u;\n${IMAGES_WGSL}`
+        : '',
+      o.glyphs ? GLYPHS_WGSL : '',
+      o.trail ? trailHelpers(1, 10) : '',
+      o.sdf ? sdfWgsl(1, 15) : '',
+      texturesWgsl(1, TEX_BASE, texNames),
+      HELPERS_WGSL,
+      hooks,
+      SKELETON_WGSL,
+      ENTRY_WGSL,
+      skeletonFs('layer')
+    ].join('\n')
+  )
 }
 
 function simulateSource(
@@ -859,9 +881,9 @@ export function createLayer<S extends ParamSchema>(
       const r = graph.imageOf(imageEl)
       const view = r?.view ?? res.image.view
       if (r) {
-        side.set(r.uv, 0)
-        side[4] = r.width
-        side[5] = r.height
+        side.set(r.uv, AT.image_uv - SIDE)
+        side[AT.image_size - SIDE] = r.width
+        side[AT.image_size + 1 - SIDE] = r.height
       }
       entries.push(
         { binding: 4, resource: view },
@@ -873,7 +895,7 @@ export function createLayer<S extends ParamSchema>(
       const table = graph.glyphTable()
       const node = graph.nodeOf(glyphEl)
       const idx = glyphIndex.fill(table, node ? targetRuns(node) : [])
-      side[6] = idx.count
+      side[AT.glyph_count - SIDE] = idx.count
       const g = table ?? res.glyphs
       entries.push(
         { binding: 6, resource: { buffer: g.glyphs } },
@@ -920,7 +942,7 @@ export function createLayer<S extends ParamSchema>(
       key.push(tex.version())
     }
     if (imageEl || glyphEl) {
-      device.queue.writeBuffer(fxBuf, 48, side)
+      device.queue.writeBuffer(fxBuf, SIDE * 4, side)
     }
     if (
       !bindGroup ||
@@ -932,7 +954,7 @@ export function createLayer<S extends ParamSchema>(
     }
     return bindGroup
   }
-  const side = new Float32Array(8)
+  const side = new Float32Array(LAYER_FX_BYTES / 4 - SIDE)
   const glyphIndex = new GlyphIndex(device, label)
   const fxData = new Float32Array(LAYER_FX_BYTES / 4)
 
@@ -1057,19 +1079,19 @@ export function createLayer<S extends ParamSchema>(
         device.queue.writeBuffer(paramsBuf, 0, block.pack())
       }
       const f = fxData
-      f[0] = time
-      f[1] = life.elapsed(deps.clock)
-      f[2] = graph.shared.dpr
-      f[3] = drawn
-      f[4] = ctx.scrollX
-      f[5] = ctx.scrollY
-      f[6] = ctx.width
-      f[7] = ctx.height
+      f[AT.time] = time
+      f[AT.elapsed] = life.elapsed(deps.clock)
+      f[AT.dpr] = graph.shared.dpr
+      f[AT.count] = drawn
+      f[AT.scroll] = ctx.scrollX
+      f[AT.scroll + 1] = ctx.scrollY
+      f[AT.viewport] = ctx.width
+      f[AT.viewport + 1] = ctx.height
       const dtOverride = deps.clock.dtOverride()
-      f[8] =
+      f[AT.dt] =
         dtOverride ??
         (lastTime === null ? 0 : Math.min(Math.max(time - lastTime, 0), 1 / 15))
-      f[9] = steps
+      f[AT.steps] = steps
       lastTime = time
       device.queue.writeBuffer(fxBuf, 0, f)
       const sg = currentSimGroup()
