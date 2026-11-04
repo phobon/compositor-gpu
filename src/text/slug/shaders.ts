@@ -11,28 +11,10 @@
  * their weights so edges of every orientation anti-alias. Validated by the visual-regression harness (`npm run
  * test:visual`) plus offline WGSL validation with `naga`.
  *
- * Bind group 1:
- *   0 glyphs : per-instance {rect, offset, color, gref, clip, xf0, xf1}
- *   1 bands  : {min, max, curveStart, curveEnd}: a glyph's row bands,
- *              then its column bands (their curves x/y-swapped)
- *   2 curves : {p0.xy, p1.xy, c.xy} quadratic control points
+ * Bind group 1 is `slugLayout` (glyph_data.ts): the glyph instances, a
+ * glyph's row bands then its column bands (their curves x/y-swapped), and
+ * the quadratic curves.
  */
-
-/** The instance, band and curve structs (GlyphTable's layout). */
-export const SLUG_STRUCTS_WGSL = /* wgsl */ `
-struct Glyph {
-  rect   : vec4f,   // ink box x,y,w,h in the glyph's local line-box frame
-  offset : vec4f,   // xy displacement, space (1 = viewport), clip shape
-                    // index (frame_clip_cov; 0 none)
-  color  : vec4f,
-  gref   : vec4u,   // bandStart, bandCount, index in material target, _
-  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
-  xf1    : vec4f,   // tx, ty (doc space), _, _
-};
-struct Band  { bounds : vec4f, };        // yMin, yMax, curveStart, curveEnd
-struct Curve { p : vec4f, c : vec4f, };  // x0,y0,x1,y1 ; cx,cy,_,_
-`
 
 /**
  * Slug coverage: the curve maths of the fragment shader, shared with `/fx`
@@ -163,11 +145,6 @@ fn slug_coverage(em : vec2f, gref : vec4u, inv : vec2f) -> f32 {
 /** The Slug shader after its header (gpu/material.ts passShader), with
  * the material variant's fragment entry point or the default's. */
 export const slugBody = (material: boolean): string => /* wgsl */ `
-
-${SLUG_STRUCTS_WGSL}
-@group(1) @binding(0) var<storage, read> glyphs : array<Glyph>;
-@group(1) @binding(1) var<storage, read> bands  : array<Band>;
-@group(1) @binding(2) var<storage, read> curves : array<Curve>;
 
 struct VOut {
   @builtin(position) pos : vec4f,

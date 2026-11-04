@@ -1,4 +1,5 @@
 import { PATH_WGSL } from '../../paths/path_wgsl'
+import { GLYPH_FLOATS } from '../../text/glyph_data'
 import type { GlyphGhost } from '../../text/slug/rasterizer'
 import type { Effects } from '../effects'
 import type { Layer } from '../layer'
@@ -39,7 +40,6 @@ import type { Shockwave } from './shockwave'
 const M = SEGMENT_POINTS
 const HEAD = 20
 const STRIDE = HEAD + 4 * M
-const GLYPH_FLOATS = 28
 
 // Instance kinds.
 const SEGMENT = 0

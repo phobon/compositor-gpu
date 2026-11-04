@@ -14,7 +14,11 @@ without changing what any shader computes.
 - **Data schemas are the one definition** of a buffer layout: `d.struct`
   for the WGSL struct, `d.sizeOf` for the buffer size, and
   `d.memoryLayoutOf(schema, (s) => s.field).offset` for the offsets the JS
-  packing writes (`FRAME_AT` in `gpu/frame.ts`).
+  packing writes (`FRAME_AT` in `gpu/frame.ts`). `gpu/schema.ts` wraps
+  these as `floatsOf(schema)` (the stride) and `floatOffsets(schema)`
+  (each field's float offset), and `passExternals(layout, items)` builds
+  a pass's externals: its structs and functions plus its layout's
+  bindings.
 - **Bindings come from a `tgpu.bindGroupLayout`** with a fixed `$idx`.
   A function that reads one names it as `L.$.entry` in its body and
   `.$uses({ L })`; resolution declares the binding (`@group(i)
@@ -68,7 +72,20 @@ before it, and no change in GPU time a frame or pipeline compile time.
    dash helpers stay text in the box shader: nothing else uses them, so
    they can become `tgpu.fn`s now that the pass resolves its own
    shader.
-4. **Text, images, paths** the same way.
+4. **Text, images, paths** (done, 2026-11-04), and cutouts, the same
+   way: `ImgData`/`imageLayout` (`images/image_data.ts`), `GlyphData`,
+   `BandData`, `CurveData`/`slugLayout` and `QuadData`/`atlasLayout`
+   (`text/glyph_data.ts`), `PathData`, `StrokeEdgeData`/`pathLayout`
+   (`paths/path_layout.ts`), `CutData`/`cutLayout` (`boxes/box_data.ts`).
+   Each shader's structs and bind group 1 come from them (layouts with
+   textures and samplers included), and the packing writes named
+   offsets (`IMG_AT`, `GLYPH_AT`, `QUAD_AT`, `CURVE_AT`, or a `put(field,
+   ...)` over `PATH_AT`/`CUT_AT`). The resolved shaders match the
+   strings they replace item for item. `SLUG_STRUCTS_WGSL`, for fx
+   Layers that draw mirrored glyphs, is resolved from the schemas; the
+   morph preset takes `GLYPH_FLOATS` from them but still reads glyph
+   fields by literal offset in its WGSL (step 5). Slug's `Band` is one
+   vec4 and is still packed by component.
 5. **The fx passes and presets**, whose fragments already accept
    `tgpu.fn` (`src/fx/gpu.ts` externals): their templates and
    per-effect param blocks.

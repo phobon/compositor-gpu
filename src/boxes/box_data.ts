@@ -1,6 +1,7 @@
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
-import { bindingExternals, type Externals } from '../gpu/frame'
+import type { Externals } from '../gpu/frame'
+import { floatOffsets, floatsOf, passExternals } from '../gpu/schema'
 import { edgeCov, sdBox } from '../gpu/sdf'
 
 // The box pass's instance layout (docs/TYPEGPU.md): one definition for
@@ -77,21 +78,55 @@ export const boxLayout = tgpu
 
 /** What the box shader names beyond the Frame items (resolveShader):
  * the Box struct, its bindings and the shared SDF helpers. */
-export const BOX_EXTERNALS: Externals = Object.defineProperties(
-  { Box: BoxData, sd_box: sdBox, edge_cov: edgeCov },
-  Object.getOwnPropertyDescriptors(bindingExternals(boxLayout))
-)
+export const BOX_EXTERNALS: Externals = passExternals(boxLayout, {
+  Box: BoxData,
+  sd_box: sdBox,
+  edge_cov: edgeCov
+})
 
 /** Floats a box takes in the instance buffer. */
-export const FLOATS_PER_BOX = d.sizeOf(BoxData) / 4
-
-type BoxField = keyof (typeof BoxData)['propTypes']
+export const FLOATS_PER_BOX = floatsOf(BoxData)
 
 /** Float offset of each Box field within a box. */
-export const BOX_AT = Object.fromEntries(
-  Object.keys(BoxData.propTypes).map((k) => [
-    k,
-    d.memoryLayoutOf(BoxData, (b) => (b as Record<string, unknown>)[k]).offset /
-      4
-  ])
-) as Record<BoxField, number>
+export const BOX_AT = floatOffsets(BoxData)
+
+/** One cutout (erases the mirror under it; cutout_pass.ts). */
+export const CutData = d
+  .struct({
+    /** a, b, c, d: linear part of local -> doc. */
+    xf0: d.vec4f,
+    /** tx, ty (record space), w, h (local size, CSS px). */
+    xf1: d.vec4f,
+    /** tl, tr, br, bl. */
+    radius: d.vec4f,
+    /** minX, minY, maxX, maxY (the record's space). */
+    clip: d.vec4f,
+    /** Space, clip shape index (frame_clip_cov), 0, 0. */
+    params: d.vec4f,
+    /** Vertical radii (= radius: circular). */
+    ry: d.vec4f
+  })
+  .$name('Cut')
+
+/** Bind group 1 of the cutout pass. */
+export const cutLayout = tgpu
+  .bindGroupLayout({
+    cuts: {
+      storage: d.arrayOf(CutData),
+      access: 'readonly',
+      visibility: ['vertex', 'fragment']
+    }
+  })
+  .$idx(1)
+
+/** What the cutout shader names beyond the Frame items. */
+export const CUT_EXTERNALS: Externals = passExternals(cutLayout, {
+  Cut: CutData,
+  sd_box: sdBox,
+  edge_cov: edgeCov
+})
+
+/** Floats per cutout. */
+export const FLOATS_PER_CUT = floatsOf(CutData)
+/** Float offset of each Cut field within a cutout. */
+export const CUT_AT = floatOffsets(CutData)

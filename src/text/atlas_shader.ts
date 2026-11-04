@@ -1,9 +1,6 @@
 import { resolveShader } from '../gpu/frame'
 import { SKELETON_WGSL, skeletonFs } from '../gpu/skeleton'
-
-/** Floats per atlas quad: rect(4) + uv(4) + color(4) + params(4) + clip(4)
- * + xf0(4) + xf1(4). */
-export const ATLAS_QUAD_FLOATS = 28
+import { ATLAS_EXTERNALS } from './glyph_data'
 
 /**
  * Textured quads for fallback glyphs sampled from the Canvas 2D glyph atlas
@@ -11,28 +8,12 @@ export const ATLAS_QUAD_FLOATS = 28
  * white coverage tinted by `color`; colour glyphs keep their own RGB and only
  * take `color.a` (glyph alpha × run opacity).
  *
- * Bind group 1:
- *   0 quads   : per-instance Quad, aligned with scene glyph order
- *   1 tex     : atlas texture (rgba8unorm, premultiplied)
- *   2 samp    : linear / clamp
+ * Bind group 1 is `atlasLayout` (glyph_data.ts).
  */
-export const ATLAS_WGSL: string = resolveShader(/* wgsl */ `
+export const ATLAS_WGSL: string = resolveShader(
+  /* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('fallback')}
-
-struct Quad {
-  rect   : vec4f,   // x,y,w,h in the glyph's local line-box frame
-  uv     : vec4f,   // u0,v0,u1,v1
-  color  : vec4f,   // sRGB straight alpha; a = glyph alpha * run opacity
-  params : vec4f,   // tint (1 = mono coverage), space (1 = viewport),
-                    // clip shape index (frame_clip_cov; 0 none), _
-  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
-  xf1    : vec4f,   // tx, ty (doc space, offset applied), _, _
-};
-@group(1) @binding(0) var<storage, read> quads : array<Quad>;
-@group(1) @binding(1) var tex  : texture_2d<f32>;
-@group(1) @binding(2) var samp : sampler;
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -74,4 +55,6 @@ fn fs(in : VOut) -> @location(0) vec4f {
   }
   return vec4f(t.rgb * q.color.a * k, a);   // colour: already premultiplied
 }
-`)
+`,
+  ATLAS_EXTERNALS
+)

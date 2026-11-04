@@ -1,9 +1,9 @@
 import { shadowPad } from '../dom/styles'
-import { BOX_AT, BOX_EXTERNALS, FLOATS_PER_BOX } from './box_data'
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
+import { BOX_AT, BOX_EXTERNALS, FLOATS_PER_BOX } from './box_data'
 
 const FLOATS_PER_STOP = 8 // [r,g,b,a] + [pos,0,0,0]
 

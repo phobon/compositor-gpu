@@ -1,4 +1,4 @@
-import { resolveShader, type RenderPass, type Shared } from '../gpu/frame'
+import { type RenderPass, resolveShader, type Shared } from '../gpu/frame'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -9,6 +9,12 @@ import { StorageArray } from '../gpu/storage'
 import type { PathRecord } from '../scene/records'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
+import {
+  FLOATS_PER_PATH,
+  FLOATS_PER_STROKE_EDGE,
+  PATH_AT,
+  PATH_EXTERNALS
+} from './path_layout'
 import { PATH_WGSL } from './path_wgsl'
 
 // The path pass (M5b): shapes of inline svgs drawn as vectors
@@ -28,39 +34,11 @@ export const BRUTE_EDGES = 256
 const EDGES_PER_BAND = 24
 const MAX_BANDS = 128
 
-const FLOATS_PER_PATH = 44 // 11 * vec4f
-const FLOATS_PER_STROKE_EDGE = 8
-
-const SHADER: string = resolveShader(/* wgsl */ `
+const SHADER: string = resolveShader(
+  /* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('path')}
 ${PATH_WGSL}
-
-struct Path {
-  xf0    : vec4f,   // a, b, c, d: linear part of path space -> record space
-  xf1    : vec4f,   // tx, ty, space (1 viewport), clip shape index
-  box    : vec4f,   // quad bounds, path space: x0, y0, x1, y1
-  fill   : vec4f,   // straight RGBA, a 0 = none
-  stroke : vec4f,   // straight RGBA, a 0 = none
-  style  : vec4f,   // half stroke width, miter limit, cap, join
-  fills  : vec4f,   // first fill edge, fill edges, first stroke edge, stroke edges
-  bands  : vec4f,   // first band, bands (0: none), first band y, bands per unit y
-  clip   : vec4f,   // minX, minY, maxX, maxY (record space)
-  flags  : vec4f,   // even-odd, 0, 0, 0
-  _pad   : vec4f,
-};
-struct StrokeEdge {
-  ab : vec4f,       // a, b
-  pf : vec4f,       // previous point, flags (1 join at a, 2 cap at a, 4 cap at b), 0
-};
-@group(1) @binding(0) var<storage, read> paths : array<Path>;
-@group(1) @binding(1) var<storage, read> fill_edges : array<vec4f>;
-@group(1) @binding(2) var<storage, read> stroke_edges : array<StrokeEdge>;
-// Per band: first fill index, fill indices, first stroke index, stroke
-// indices (into band_idx).
-@group(1) @binding(3) var<storage, read> bands : array<vec4f>;
-// Edge numbers relative to the record's first fill / stroke edge.
-@group(1) @binding(4) var<storage, read> band_idx : array<u32>;
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -161,7 +139,9 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let k = frame_clip_cov(in.docp, r.xf1.w);
   return vec4f(rgb, a) * k;
 }
-`)
+`,
+  PATH_EXTERNALS
+)
 
 /**
  * Draws PathRecords: fills by winding, strokes by distance, one quad per
@@ -242,6 +222,20 @@ export class PathPass implements RenderPass {
     const fe = this.fillEdges.f32
     const se = this.strokeEdges.f32
     const pd = this.paths.f32
+    const put = (
+      o: number,
+      f: keyof typeof PATH_AT,
+      x: number,
+      y: number,
+      z: number,
+      w: number
+    ): void => {
+      const at = o + PATH_AT[f]
+      pd[at] = x
+      pd[at + 1] = y
+      pd[at + 2] = z
+      pd[at + 3] = w
+    }
     const bandRows: number[] = []
     const idx: number[] = []
     const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
@@ -299,53 +293,33 @@ export class PathPass implements RenderPass {
       const o = i * FLOATS_PER_PATH
       const xf = r.xform
       const cl = r.clip
-      const rows = [
-        xf[0],
-        xf[1],
-        xf[2],
-        xf[3],
+      put(o, 'xf0', xf[0], xf[1], xf[2], xf[3])
+      put(
+        o,
+        'xf1',
         xf[4],
         xf[5],
         r.space === 'viewport' ? 1 : 0,
-        scene.clipIndex(r.clip),
-        x0,
-        y0,
-        x1,
-        y1,
-        r.fill?.r ?? 0,
-        r.fill?.g ?? 0,
-        r.fill?.b ?? 0,
-        r.fill?.a ?? 0,
-        r.stroke?.r ?? 0,
-        r.stroke?.g ?? 0,
-        r.stroke?.b ?? 0,
-        r.stroke?.a ?? 0,
-        h,
-        r.miterLimit,
-        r.cap,
-        r.join,
-        f0,
-        nf,
-        s0,
-        ns,
-        bandFirst,
-        bandCount,
-        y0,
-        bandScale,
+        scene.clipIndex(r.clip)
+      )
+      put(o, 'box', x0, y0, x1, y1)
+      const fl = r.fill
+      put(o, 'fill', fl?.r ?? 0, fl?.g ?? 0, fl?.b ?? 0, fl?.a ?? 0)
+      const st = r.stroke
+      put(o, 'stroke', st?.r ?? 0, st?.g ?? 0, st?.b ?? 0, st?.a ?? 0)
+      put(o, 'style', h, r.miterLimit, r.cap, r.join)
+      put(o, 'fills', f0, nf, s0, ns)
+      put(o, 'bands', bandFirst, bandCount, y0, bandScale)
+      put(
+        o,
+        'clip',
         cl ? cl.x : -1e9,
         cl ? cl.y : -1e9,
         cl ? cl.x + cl.width : 1e9,
-        cl ? cl.y + cl.height : 1e9,
-        r.evenOdd ? 1 : 0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ]
-      pd.set(rows, o)
+        cl ? cl.y + cl.height : 1e9
+      )
+      put(o, 'flags', r.evenOdd ? 1 : 0, 0, 0, 0)
+      put(o, '_pad', 0, 0, 0, 0)
     }
     grew = this.bands.ensure(Math.max(bandRows.length / 4, 1)) || grew
     grew = this.bandIdx.ensure(Math.max(idx.length, 1)) || grew

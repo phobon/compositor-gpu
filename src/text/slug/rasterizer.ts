@@ -7,9 +7,18 @@ import type { Glyph, GlyphRun, RGBA, TextShadow } from '../../scene/records'
 import type { Scene } from '../../scene/scene'
 import type { FontDescriptor } from '../../types'
 import { log, reportShaderErrors } from '../../util/log'
-import { ATLAS_QUAD_FLOATS, ATLAS_WGSL } from '../atlas_shader'
+import { ATLAS_WGSL } from '../atlas_shader'
 import { describeFace, resolveFontBytes } from '../font_source'
 import { ATLAS_PAD, type AtlasEntry, GlyphAtlas } from '../glyp'
+import {
+  ATLAS_QUAD_FLOATS,
+  CURVE_AT,
+  CURVE_FLOATS,
+  GLYPH_AT,
+  GLYPH_FLOATS,
+  QUAD_AT,
+  SLUG_EXTERNALS
+} from '../glyph_data'
 import type { TextBackend } from '../text_rasterizer'
 import { type BakedFace, decodeBakedFont } from './baked'
 import {
@@ -23,10 +32,6 @@ import {
   type Quad
 } from './font'
 import { slugBody } from './shaders'
-
-// rect(4)+offset(4)+color(4)+gref(4)+clip(4)+xf0(4)+xf1(4). gref is u32,
-// written through the shared u32 view of the same buffer.
-export const GLYPH_FLOATS = 28
 
 /** The Slug instance and outline buffers, for drawing mirrored glyphs
  * elsewhere (`/fx` Layers). Instance layout: the `Glyph` struct in
@@ -67,7 +72,6 @@ const OBLIQUE = Math.tan((14 * Math.PI) / 180)
 const BAND_COUNT = 16 // bands per direction — must match font.ts
 /** Row bands then column bands per resident glyph. */
 const BANDS_PER_SLOT = 2 * BAND_COUNT
-const CURVE_FLOATS = 8 // vec4 p + vec4 c
 
 // Resident-glyph cache geometry. Each glyph occupies one fixed-size slot: 16
 // row + 16 column bands and up to MAX_CURVES banded curves (both directions,
@@ -392,7 +396,8 @@ export class SlugText implements TextBackend {
       kind: 'glyph',
       label: 'slug',
       layout: this.layout,
-      body: slugBody
+      body: slugBody,
+      externals: SLUG_EXTERNALS
     })
     this.glyphs = new StorageArray(device, GLYPH_FLOATS, 256)
     this.quads = new StorageArray(device, ATLAS_QUAD_FLOATS, 256)
@@ -855,14 +860,14 @@ export class SlugText implements TextBackend {
       if (!q) {
         continue
       }
-      c[o] = q.x0
-      c[o + 1] = q.y0
-      c[o + 2] = q.x1
-      c[o + 3] = q.y1
-      c[o + 4] = q.cx
-      c[o + 5] = q.cy
-      c[o + 6] = 0
-      c[o + 7] = 0
+      c[o + CURVE_AT.p] = q.x0
+      c[o + CURVE_AT.p + 1] = q.y0
+      c[o + CURVE_AT.p + 2] = q.x1
+      c[o + CURVE_AT.p + 3] = q.y1
+      c[o + CURVE_AT.c] = q.cx
+      c[o + CURVE_AT.c + 1] = q.cy
+      c[o + CURVE_AT.c + 2] = 0
+      c[o + CURVE_AT.c + 3] = 0
     }
     if (gb.curves.length > 0) {
       this.shared.device.queue.writeBuffer(
@@ -910,8 +915,8 @@ export class SlugText implements TextBackend {
       for (let i = 0; i < run.glyphs.length; i++, k++) {
         const base = (first + i) * GLYPH_FLOATS
         instances.set(f.subarray(base, base + GLYPH_FLOATS), k * GLYPH_FLOATS)
-        const bands = u[base + 13] ?? 0
-        const slot = Math.floor((u[base + 12] ?? 0) / BANDS_PER_SLOT)
+        const bands = u[base + GLYPH_AT.gref + 1] ?? 0
+        const slot = Math.floor((u[base + GLYPH_AT.gref] ?? 0) / BANDS_PER_SLOT)
         if (bands > 0 && slot < SLOT_COUNT) {
           this.slotPins[slot] = (this.slotPins[slot] ?? 0) + 1
           slots.push(slot)
@@ -1267,44 +1272,44 @@ export class SlugText implements TextBackend {
         }
         const bbox = slot >= 0 ? this.slotBBox[slot] : undefined
         if (bbox) {
-          f[base + 0] = bbox.x1 * F
-          f[base + 1] = baseline - bbox.y2 * F
-          f[base + 2] = (bbox.x2 - bbox.x1) * F
-          f[base + 3] = (bbox.y2 - bbox.y1) * F
+          f[base + GLYPH_AT.rect] = bbox.x1 * F
+          f[base + GLYPH_AT.rect + 1] = baseline - bbox.y2 * F
+          f[base + GLYPH_AT.rect + 2] = (bbox.x2 - bbox.x1) * F
+          f[base + GLYPH_AT.rect + 3] = (bbox.y2 - bbox.y1) * F
         } else {
-          f[base + 0] = 0
-          f[base + 1] = 0
-          f[base + 2] = w
-          f[base + 3] = g.local.h
+          f[base + GLYPH_AT.rect] = 0
+          f[base + GLYPH_AT.rect + 1] = 0
+          f[base + GLYPH_AT.rect + 2] = w
+          f[base + GLYPH_AT.rect + 3] = g.local.h
         }
-        f[base + 4] = g.offset.x
-        f[base + 5] = g.offset.y
-        f[base + 6] = this.space
-        f[base + 7] = this.clipShape
-        f[base + 8] = g.color.r
-        f[base + 9] = g.color.g
-        f[base + 10] = g.color.b
-        f[base + 11] = g.color.a * alpha
-        u[base + 12] = slot >= 0 ? slot * BANDS_PER_SLOT : 0
-        u[base + 13] = slot >= 0 ? BAND_COUNT : 0
+        f[base + GLYPH_AT.offset] = g.offset.x
+        f[base + GLYPH_AT.offset + 1] = g.offset.y
+        f[base + GLYPH_AT.offset + 2] = this.space
+        f[base + GLYPH_AT.offset + 3] = this.clipShape
+        f[base + GLYPH_AT.color] = g.color.r
+        f[base + GLYPH_AT.color + 1] = g.color.g
+        f[base + GLYPH_AT.color + 2] = g.color.b
+        f[base + GLYPH_AT.color + 3] = g.color.a * alpha
+        u[base + GLYPH_AT.gref] = slot >= 0 ? slot * BANDS_PER_SLOT : 0
+        u[base + GLYPH_AT.gref + 1] = slot >= 0 ? BAND_COUNT : 0
         // The glyph's index in its material's target (mat_index).
-        u[base + 14] = (run.glyphBase ?? 0) + j
-        u[base + 15] = 0
-        f[base + 16] = clip[0]
-        f[base + 17] = clip[1]
-        f[base + 18] = clip[2]
-        f[base + 19] = clip[3]
+        u[base + GLYPH_AT.gref + 2] = (run.glyphBase ?? 0) + j
+        u[base + GLYPH_AT.gref + 3] = 0
+        f[base + GLYPH_AT.clip] = clip[0]
+        f[base + GLYPH_AT.clip + 1] = clip[1]
+        f[base + GLYPH_AT.clip + 2] = clip[2]
+        f[base + GLYPH_AT.clip + 3] = clip[3]
         // xform · shear, the shear [1, 0, -k, 1] taken about local y =
         // baseline: x' = x + k (baseline - y).
         const kb = oblique * baseline
-        f[base + 20] = xf[0]
-        f[base + 21] = xf[1]
-        f[base + 22] = xf[2] - oblique * xf[0]
-        f[base + 23] = xf[3] - oblique * xf[1]
-        f[base + 24] = xf[4] + xf[0] * kb
-        f[base + 25] = xf[5] + xf[1] * kb
-        f[base + 26] = 0
-        f[base + 27] = 0
+        f[base + GLYPH_AT.xf0] = xf[0]
+        f[base + GLYPH_AT.xf0 + 1] = xf[1]
+        f[base + GLYPH_AT.xf0 + 2] = xf[2] - oblique * xf[0]
+        f[base + GLYPH_AT.xf0 + 3] = xf[3] - oblique * xf[1]
+        f[base + GLYPH_AT.xf1] = xf[4] + xf[0] * kb
+        f[base + GLYPH_AT.xf1 + 1] = xf[5] + xf[1] * kb
+        f[base + GLYPH_AT.xf1 + 2] = 0
+        f[base + GLYPH_AT.xf1 + 3] = 0
         if (slot >= 0) {
           this.slugLive++
         }
@@ -1329,12 +1334,13 @@ export class SlugText implements TextBackend {
           const sb = si * GLYPH_FLOATS
           q.fill(0, si * ATLAS_QUAD_FLOATS, (si + 1) * ATLAS_QUAD_FLOATS)
           u.copyWithin(sb, base, base + GLYPH_FLOATS)
-          f[sb + 0] = (f[base + 0] ?? 0) + sh.ox + oblique * sh.oy
-          f[sb + 1] = (f[base + 1] ?? 0) + sh.oy
-          f[sb + 8] = sh.color.r
-          f[sb + 9] = sh.color.g
-          f[sb + 10] = sh.color.b
-          f[sb + 11] = sh.color.a * alpha
+          f[sb + GLYPH_AT.rect] =
+            (f[base + GLYPH_AT.rect] ?? 0) + sh.ox + oblique * sh.oy
+          f[sb + GLYPH_AT.rect + 1] = (f[base + GLYPH_AT.rect + 1] ?? 0) + sh.oy
+          f[sb + GLYPH_AT.color] = sh.color.r
+          f[sb + GLYPH_AT.color + 1] = sh.color.g
+          f[sb + GLYPH_AT.color + 2] = sh.color.b
+          f[sb + GLYPH_AT.color + 3] = sh.color.a * alpha
         }
         continue
       }
@@ -1424,34 +1430,34 @@ export class SlugText implements TextBackend {
       penX = Math.round(tx * dpr) / dpr - tx
     }
     const clip = this.clip
-    q[qb + 0] = penX + dx - e.leftPx / dpr - pad
-    q[qb + 1] = baseline + dy - e.cellAscPx / dpr - pad
-    q[qb + 2] = e.w / dpr
-    q[qb + 3] = e.h / dpr
-    q[qb + 4] = e.u0
-    q[qb + 5] = e.v0
-    q[qb + 6] = e.u1
-    q[qb + 7] = e.v1
-    q[qb + 8] = color.r
-    q[qb + 9] = color.g
-    q[qb + 10] = color.b
-    q[qb + 11] = color.a * alpha
-    q[qb + 12] = colour ? 0 : 1
-    q[qb + 13] = this.space
-    q[qb + 14] = this.clipShape
-    q[qb + 15] = 0
-    q[qb + 16] = clip[0] ?? -1e9
-    q[qb + 17] = clip[1] ?? -1e9
-    q[qb + 18] = clip[2] ?? 1e9
-    q[qb + 19] = clip[3] ?? 1e9
-    q[qb + 20] = xf[0]
-    q[qb + 21] = xf[1]
-    q[qb + 22] = xf[2]
-    q[qb + 23] = xf[3]
-    q[qb + 24] = tx + g.offset.x
-    q[qb + 25] = ty + g.offset.y
-    q[qb + 26] = 0
-    q[qb + 27] = 0
+    q[qb + QUAD_AT.rect] = penX + dx - e.leftPx / dpr - pad
+    q[qb + QUAD_AT.rect + 1] = baseline + dy - e.cellAscPx / dpr - pad
+    q[qb + QUAD_AT.rect + 2] = e.w / dpr
+    q[qb + QUAD_AT.rect + 3] = e.h / dpr
+    q[qb + QUAD_AT.uv] = e.u0
+    q[qb + QUAD_AT.uv + 1] = e.v0
+    q[qb + QUAD_AT.uv + 2] = e.u1
+    q[qb + QUAD_AT.uv + 3] = e.v1
+    q[qb + QUAD_AT.color] = color.r
+    q[qb + QUAD_AT.color + 1] = color.g
+    q[qb + QUAD_AT.color + 2] = color.b
+    q[qb + QUAD_AT.color + 3] = color.a * alpha
+    q[qb + QUAD_AT.params] = colour ? 0 : 1
+    q[qb + QUAD_AT.params + 1] = this.space
+    q[qb + QUAD_AT.params + 2] = this.clipShape
+    q[qb + QUAD_AT.params + 3] = 0
+    q[qb + QUAD_AT.clip] = clip[0] ?? -1e9
+    q[qb + QUAD_AT.clip + 1] = clip[1] ?? -1e9
+    q[qb + QUAD_AT.clip + 2] = clip[2] ?? 1e9
+    q[qb + QUAD_AT.clip + 3] = clip[3] ?? 1e9
+    q[qb + QUAD_AT.xf0] = xf[0]
+    q[qb + QUAD_AT.xf0 + 1] = xf[1]
+    q[qb + QUAD_AT.xf0 + 2] = xf[2]
+    q[qb + QUAD_AT.xf0 + 3] = xf[3]
+    q[qb + QUAD_AT.xf1] = tx + g.offset.x
+    q[qb + QUAD_AT.xf1 + 1] = ty + g.offset.y
+    q[qb + QUAD_AT.xf1 + 2] = 0
+    q[qb + QUAD_AT.xf1 + 3] = 0
     this.atlasLive++
   }
 

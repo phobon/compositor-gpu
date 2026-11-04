@@ -551,7 +551,10 @@ the box, image and cutout shaders use `sd_box` (`gpu/sdf.ts`), which is
 `sd_round_box` exactly when circular. The box instance layout is
 `BoxData` (`boxes/box_data.ts`): the shader's `Box` struct is resolved
 from it and the packing writes `BOX_AT[field]`, so a new field goes
-there, not into the shader text. Shadows are elliptical too
+there, not into the shader text. The other passes' instance layouts are
+the same (`images/image_data.ts`, `text/glyph_data.ts`,
+`paths/path_layout.ts`, `CutData` in `boxes/box_data.ts`; helpers in
+`gpu/schema.ts`). Shadows are elliptical too
 (`shadow_x`/`shadow_cov`; inset shadows' inner vertical radii ride in
 `gt`), and reduce to the circular expressions when `radiusY` equals
 `radius`. **Clip shapes:** a clip rect (`Rect`) can carry `shape`

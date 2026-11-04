@@ -1,7 +1,6 @@
 import type { RenderPass, Shared } from '../gpu/frame'
 import { type MaterialBinding, PassPipelines } from '../gpu/material'
 import { MipGenerator, mipLevelCountFor } from '../gpu/mips'
-import { sdBox } from '../gpu/sdf'
 import { StorageArray } from '../gpu/storage'
 import { copyExternalImage } from '../gpu/upload'
 import type { ImageRecord } from '../scene/records'
@@ -14,6 +13,7 @@ import {
   ImageAtlas,
   MAX_ENTRY_SIZE
 } from './image_atlas'
+import { FLOATS_PER_IMAGE, IMAGE_EXTERNALS, IMG_AT } from './image_data'
 import { ImageFades } from './image_fade'
 import { to8Bit } from './png_depth'
 import {
@@ -56,10 +56,6 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi)
 }
 
-// rect(4) + uv(4) + params(4) + clip(4) + radius(4) + tile(4) + xf0(4) +
-// xf1(4) + atlas(4) + ry(4)
-const FLOATS_PER_IMAGE = 40
-
 /** params.y bits 8+: the clip shape index (frame_clip_cov; 0 none). */
 const CLIP_SHIFT = 8
 /** params.y bit 0: tile (fit 'none') repeats instead of clamping. */
@@ -78,23 +74,6 @@ const FLAG_VIEWPORT = 8
 /** The image shader with material hooks `mat` (gpu/material.ts) on a
  * `subdiv` × `subdiv` quad; the default variant has identity hooks. */
 const shader = (wrap: string): string => /* wgsl */ `
-
-// Local space: the record's untransformed box, origin at its top-left.
-struct Img {
-  rect   : vec4f,   // x,y,w,h local space (quad rect)
-  uv     : vec4f,   // u0,v0,u1,v1 — used unless FLAG_UV_FROM_TILE is set
-  params : vec4f,   // opacity, flags, atlas half-texel inset u/v
-  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  radius : vec4f,   // tl, tr, br, bl (px) — clips against the local box
-  tile   : vec4f,   // originX, originY, w, h (local space) — fit 'none' only
-  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
-  xf1    : vec4f,   // tx, ty (doc space), local box w, h
-  atlas  : vec4f,   // u0,v0,u1,v1 of the entry in atlas uv space (FLAG_ATLAS)
-  ry     : vec4f,   // vertical radii (= radius: circular)
-};
-@group(1) @binding(0) var<storage, read> imgs : array<Img>;
-@group(1) @binding(1) var tex  : texture_2d<f32>;
-@group(1) @binding(2) var samp : sampler;
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -364,7 +343,7 @@ export class ImagePass implements RenderPass {
       label: 'image',
       layout: this.group1Layout,
       body: (material) => shader(material ? MATERIAL_FS : DEFAULT_FS),
-      externals: { sd_box: sdBox }
+      externals: IMAGE_EXTERNALS
     })
     this.instances = new StorageArray(device, FLOATS_PER_IMAGE, 16)
   }
@@ -783,66 +762,66 @@ export class ImagePass implements RenderPass {
       this.regions.set(rec, (spot ?? cached) as AtlasRect | Cached)
       const dst = snapRecord(rec, this.shared.dpr > 0 ? this.shared.dpr : 1)
       const f = fit(dst, fitW ?? nw, fitH ?? nh)
-      d[o + 0] = f.rect.x
-      d[o + 1] = f.rect.y
-      d[o + 2] = f.rect.w
-      d[o + 3] = f.rect.h
-      d[o + 4] = f.uv.u0
-      d[o + 5] = f.uv.v0
-      d[o + 6] = f.uv.u1
-      d[o + 7] = f.uv.v1
-      d[o + 8] = rec.opacity * this.fades.alpha(fadeKey, now)
+      d[o + IMG_AT.rect] = f.rect.x
+      d[o + IMG_AT.rect + 1] = f.rect.y
+      d[o + IMG_AT.rect + 2] = f.rect.w
+      d[o + IMG_AT.rect + 3] = f.rect.h
+      d[o + IMG_AT.uv] = f.uv.u0
+      d[o + IMG_AT.uv + 1] = f.uv.v0
+      d[o + IMG_AT.uv + 2] = f.uv.u1
+      d[o + IMG_AT.uv + 3] = f.uv.v1
+      d[o + IMG_AT.params] = rec.opacity * this.fades.alpha(fadeKey, now)
       // Flags in the low byte; the clip shape index above it.
       const vflag =
         (rec.space === 'viewport' ? FLAG_VIEWPORT : 0) |
         (scene.clipIndex(rec.clip) << CLIP_SHIFT)
       const c = rec.clip
-      d[o + 12] = c ? c.x : -1e9
-      d[o + 13] = c ? c.y : -1e9
-      d[o + 14] = c ? c.x + c.width : 1e9
-      d[o + 15] = c ? c.y + c.height : 1e9
-      d[o + 16] = rec.radius[0]
-      d[o + 17] = rec.radius[1]
-      d[o + 18] = rec.radius[2]
-      d[o + 19] = rec.radius[3]
-      d[o + 20] = f.tile.x
-      d[o + 21] = f.tile.y
-      d[o + 22] = f.tile.w
-      d[o + 23] = f.tile.h
+      d[o + IMG_AT.clip] = c ? c.x : -1e9
+      d[o + IMG_AT.clip + 1] = c ? c.y : -1e9
+      d[o + IMG_AT.clip + 2] = c ? c.x + c.width : 1e9
+      d[o + IMG_AT.clip + 3] = c ? c.y + c.height : 1e9
+      d[o + IMG_AT.radius] = rec.radius[0]
+      d[o + IMG_AT.radius + 1] = rec.radius[1]
+      d[o + IMG_AT.radius + 2] = rec.radius[2]
+      d[o + IMG_AT.radius + 3] = rec.radius[3]
+      d[o + IMG_AT.tile] = f.tile.x
+      d[o + IMG_AT.tile + 1] = f.tile.y
+      d[o + IMG_AT.tile + 2] = f.tile.w
+      d[o + IMG_AT.tile + 3] = f.tile.h
       const xf = dst.xform
-      d[o + 24] = xf[0]
-      d[o + 25] = xf[1]
-      d[o + 26] = xf[2]
-      d[o + 27] = xf[3]
-      d[o + 28] = xf[4]
-      d[o + 29] = xf[5]
-      d[o + 30] = dst.local.w
-      d[o + 31] = dst.local.h
+      d[o + IMG_AT.xf0] = xf[0]
+      d[o + IMG_AT.xf0 + 1] = xf[1]
+      d[o + IMG_AT.xf0 + 2] = xf[2]
+      d[o + IMG_AT.xf0 + 3] = xf[3]
+      d[o + IMG_AT.xf1] = xf[4]
+      d[o + IMG_AT.xf1 + 1] = xf[5]
+      d[o + IMG_AT.xf1 + 2] = dst.local.w
+      d[o + IMG_AT.xf1 + 3] = dst.local.h
       const ry = rec.radiusY ?? rec.radius
-      d[o + 36] = ry[0]
-      d[o + 37] = ry[1]
-      d[o + 38] = ry[2]
-      d[o + 39] = ry[3]
+      d[o + IMG_AT.ry] = ry[0]
+      d[o + IMG_AT.ry + 1] = ry[1]
+      d[o + IMG_AT.ry + 2] = ry[2]
+      d[o + IMG_AT.ry + 3] = ry[3]
 
       if (spot) {
         const s = this.atlas.size
-        d[o + 9] = f.flags | FLAG_ATLAS | vflag
-        d[o + 10] = 0.5 / spot.w
-        d[o + 11] = 0.5 / spot.h
-        d[o + 32] = spot.x / s
-        d[o + 33] = spot.y / s
-        d[o + 34] = (spot.x + spot.w) / s
-        d[o + 35] = (spot.y + spot.h) / s
+        d[o + IMG_AT.params + 1] = f.flags | FLAG_ATLAS | vflag
+        d[o + IMG_AT.params + 2] = 0.5 / spot.w
+        d[o + IMG_AT.params + 3] = 0.5 / spot.h
+        d[o + IMG_AT.atlas] = spot.x / s
+        d[o + IMG_AT.atlas + 1] = spot.y / s
+        d[o + IMG_AT.atlas + 2] = (spot.x + spot.w) / s
+        d[o + IMG_AT.atlas + 3] = (spot.y + spot.h) / s
         this.draws.push('atlas')
         continue
       }
-      d[o + 9] = f.flags | vflag
-      d[o + 10] = 0
-      d[o + 11] = 0
-      d[o + 32] = 0
-      d[o + 33] = 0
-      d[o + 34] = 0
-      d[o + 35] = 0
+      d[o + IMG_AT.params + 1] = f.flags | vflag
+      d[o + IMG_AT.params + 2] = 0
+      d[o + IMG_AT.params + 3] = 0
+      d[o + IMG_AT.atlas] = 0
+      d[o + IMG_AT.atlas + 1] = 0
+      d[o + IMG_AT.atlas + 2] = 0
+      d[o + IMG_AT.atlas + 3] = 0
       this.draws.push(
         this.shared.device.createBindGroup({
           layout: this.group1Layout,

@@ -947,6 +947,9 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         struct and bindings resolved from them, packing through
         `BOX_AT`); `sd_round_box`, `sd_box`, `edge_cov` as shared
         `tgpu.fn`s in gpu/sdf.ts instead of pasted copies
+  - [x] Text, images, paths and cutouts: their instance structs and
+        bind group 1 as schemas and layouts, packing through named
+        offsets (gpu/schema.ts helpers)
 - [ ] Framework extraction (later; not for the progressive-enhancement
       build): a free WGSL `pose(piece, t)` hook for morph pieces (M5
       Q10; assemble and scatter cover the presets); font parsing and path work in a worker; range-split baked

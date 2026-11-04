@@ -1,5 +1,4 @@
 import { type RenderPass, resolveShader, type Shared } from '../gpu/frame'
-import { edgeCov, sdBox } from '../gpu/sdf'
 import {
   quadVerts,
   SKELETON_WGSL,
@@ -9,23 +8,12 @@ import {
 import { StorageArray } from '../gpu/storage'
 import type { Scene } from '../scene/scene'
 import { reportShaderErrors } from '../util/log'
-
-const FLOATS_PER_CUT = 24 // 6 * vec4f
+import { CUT_AT, CUT_EXTERNALS, FLOATS_PER_CUT } from './box_data'
 
 const SHADER = resolveShader(
   /* wgsl */ `
 ${SKELETON_WGSL}
 ${skeletonFs('cutout')}
-
-struct Cut {
-  xf0    : vec4f,   // a, b, c, d: linear part of local -> doc
-  xf1    : vec4f,   // tx, ty (record space), w, h (local size, CSS px)
-  radius : vec4f,   // tl, tr, br, bl
-  clip   : vec4f,   // minX, minY, maxX, maxY (the record's space)
-  params : vec4f,   // space, clip shape index (frame_clip_cov), 0, 0
-  ry     : vec4f,   // vertical radii (= radius: circular)
-};
-@group(1) @binding(0) var<storage, read> cuts : array<Cut>;
 
 struct VOut {
   @builtin(position) pos : vec4f,
@@ -73,7 +61,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
     edge_cov(d, apx) * frame_clip_cov(in.docp, c.params.y));
 }
 `,
-  { sd_box: sdBox, edge_cov: edgeCov }
+  CUT_EXTERNALS
 )
 
 /**
@@ -139,6 +127,20 @@ export class CutoutPass implements RenderPass {
     const d = this.cuts.f32
     const dpr = this.shared.dpr > 0 ? this.shared.dpr : 1
     const snap = (v: number) => Math.round(v * dpr) / dpr
+    const put = (
+      o: number,
+      f: keyof typeof CUT_AT,
+      x: number,
+      y: number,
+      z: number,
+      w: number
+    ): void => {
+      const at = o + CUT_AT[f]
+      d[at] = x
+      d[at + 1] = y
+      d[at + 2] = z
+      d[at + 3] = w
+    }
     let o = 0
     for (const c of cuts) {
       const xf = c.xform
@@ -156,29 +158,30 @@ export class CutoutPass implements RenderPass {
         tx = x0
         ty = y0
       }
-      d[o++] = xf[0]
-      d[o++] = xf[1]
-      d[o++] = xf[2]
-      d[o++] = xf[3]
-      d[o++] = tx
-      d[o++] = ty
-      d[o++] = w
-      d[o++] = h
-      for (let k = 0; k < 4; k++) {
-        d[o++] = c.radius[k] ?? 0
-      }
+      put(o, 'xf0', xf[0], xf[1], xf[2], xf[3])
+      put(o, 'xf1', tx, ty, w, h)
+      const r = c.radius
+      put(o, 'radius', r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0)
       const cl = c.clip
-      d[o++] = cl ? cl.x : -1e9
-      d[o++] = cl ? cl.y : -1e9
-      d[o++] = cl ? cl.x + cl.width : 1e9
-      d[o++] = cl ? cl.y + cl.height : 1e9
-      d[o++] = c.space === 'viewport' ? 1 : 0
-      d[o++] = scene.clipIndex(c.clip)
-      d[o++] = 0
-      d[o++] = 0
-      for (let k = 0; k < 4; k++) {
-        d[o++] = (c.radiusY ?? c.radius)[k] ?? 0
-      }
+      put(
+        o,
+        'clip',
+        cl ? cl.x : -1e9,
+        cl ? cl.y : -1e9,
+        cl ? cl.x + cl.width : 1e9,
+        cl ? cl.y + cl.height : 1e9
+      )
+      put(
+        o,
+        'params',
+        c.space === 'viewport' ? 1 : 0,
+        scene.clipIndex(c.clip),
+        0,
+        0
+      )
+      const ry = c.radiusY ?? c.radius
+      put(o, 'ry', ry[0] ?? 0, ry[1] ?? 0, ry[2] ?? 0, ry[3] ?? 0)
+      o += FLOATS_PER_CUT
     }
     this.cuts.write(0, this.count)
   }

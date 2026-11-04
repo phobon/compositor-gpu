@@ -7,8 +7,9 @@ import {
   skeletonFs
 } from '../gpu/skeleton'
 import type { GlyphRun } from '../scene/records'
+import { SLUG_STRUCTS_WGSL } from '../text/glyph_data'
 import type { GlyphTable } from '../text/slug/rasterizer'
-import { SLUG_COVERAGE_WGSL, SLUG_STRUCTS_WGSL } from '../text/slug/shaders'
+import { SLUG_COVERAGE_WGSL } from '../text/slug/shaders'
 import type { FrameContext } from '../types'
 import { guarded, reportShaderErrors } from '../util/log'
 import type { EffectsClock } from './clock'
