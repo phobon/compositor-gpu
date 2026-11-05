@@ -1,19 +1,45 @@
-import type { ConfigInstance, LiveConfig } from '../fx/config'
+import type {
+  ConfigInstance,
+  FxConfig,
+  LiveConfig,
+  Match,
+  ParamInput
+} from '../fx/config'
+import type { EffectDef } from '../fx/registry'
 import type { InspectedElement } from '../gpu/graph'
 import type { Compositor } from '../types'
+import { paramRow, triggerRow } from './edit_form'
+import {
+  addEffect,
+  findEffect,
+  History,
+  removeEffect,
+  setEnabled,
+  setParam,
+  setTrigger,
+  uniqueId
+} from './edit_model'
 import { h } from './model'
 import { labelOf, selectorFor, suggestName } from './pick'
 
-// The Edit tab (docs/EDITOR.md, E2): pick a composited element on the
-// page, list the page's composited elements and config effects, and show
-// what the selection is and which effects it carries. Read-only apart
-// from firing triggers; editing is E3. /fx's config module is loaded on
-// first show, so the devtools don't bundle the effects until then.
+// The Edit tab (docs/EDITOR.md, E2, E3): pick a composited element on
+// the page, list the page's composited elements and config effects, and
+// edit the selection's effects: add and remove them, their rest params,
+// enabled and triggers, through LiveConfig.update(), with undo. /fx's
+// config, registry and runtime are loaded on first show, so the devtools
+// don't bundle the effects until then.
 
-type ConfigModule = typeof import('../fx/config')
+interface Mods {
+  config: typeof import('../fx/config')
+  registry: typeof import('../fx/registry')
+  effects: typeof import('../fx/effects')
+}
+
+/** The element picked, or a page effect chosen in the list. */
+type Selection = { el: Element } | { page: string }
 
 const MEDIA = new Set(['IMG', 'SVG', 'svg', 'CANVAS', 'VIDEO', 'PICTURE'])
-/** Refresh period for the list and the selection outline, ms. */
+/** Refresh period for the list, the inspector and the outlines, ms. */
 const REFRESH_MS = 500
 
 const fmt = (v: unknown): string => {
@@ -26,6 +52,13 @@ const fmt = (v: unknown): string => {
   return String(v)
 }
 
+const toVec = (v: unknown): number[] | null =>
+  typeof v === 'number'
+    ? [v]
+    : Array.isArray(v) || ArrayBuffer.isView(v)
+      ? Array.from(v as ArrayLike<number>)
+      : null
+
 const ownText = (el: Element): boolean => {
   for (const n of el.childNodes) {
     if (n.nodeType === 3 && n.textContent?.trim()) {
@@ -35,21 +68,50 @@ const ownText = (el: Element): boolean => {
   return false
 }
 
+const countOf = (sel: string): number => {
+  try {
+    return document.querySelectorAll(sel).length
+  } catch {
+    return 0
+  }
+}
+
+const isEl = (s: Selection | null): s is { el: Element } =>
+  s !== null && 'el' in s
+
 export class EditView {
   readonly root = h('div', { class: 'edit' })
-  private readonly bar = h('div', { class: 'bar' })
   private readonly pickBtn = h('button', {
     class: 'btn',
     type: 'button',
     text: 'Pick',
     title: 'Pick an element on the page (E)'
   })
+  private readonly undoBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    text: 'Undo',
+    title: 'Undo (⌘Z)'
+  })
+  private readonly redoBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    text: 'Redo',
+    title: 'Redo (⇧⌘Z)'
+  })
+  private readonly copyBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    text: 'Copy config',
+    title: 'Copy the config as JSON'
+  })
+  private readonly livePicker = h('select', { 'aria-label': 'Config' })
   private readonly list = h('div', { class: 'layers' })
   private readonly inspector = h('div', { class: 'inspector' })
   private readonly overlay = h('div', { class: 'pick-overlay' })
   private readonly hoverBox = h('div', { class: 'outline pick' }, h('span'))
   private readonly selBox = h('div', { class: 'outline sel' }, h('span'))
-  private cfg: ConfigModule | null = null
+  private mods: Mods | null = null
   private loading: Promise<void> | null = null
   private shown = false
   private picking = false
@@ -57,10 +119,18 @@ export class EditView {
   private point: [number, number] | null = null
   /** Ancestor steps from the candidate while picking ([ and ]). */
   private depth = 0
-  private selected: Element | null = null
+  private sel: Selection | null = null
+  private liveIndex = 0
+  private readonly history = new History()
   private timer: ReturnType<typeof setInterval> | undefined
   private listKey = ''
   private inspectKey = ''
+  /** Param rows showing live values, refreshed in place. */
+  private liveRows: {
+    handle: ConfigInstance['handle']
+    key: string
+    live(v: unknown): void
+  }[] = []
 
   constructor(
     private readonly compositor: Compositor,
@@ -75,15 +145,32 @@ export class EditView {
     this.selBox.hidden = true
     layer.append(this.overlay, this.hoverBox, this.selBox)
     this.pickBtn.addEventListener('click', () => this.setPicking(!this.picking))
-    this.bar.append(
-      this.pickBtn,
-      h('span', {
-        class: 'dim',
-        text: 'E picks; while picking [ ] walk ancestors, Esc stops.'
-      })
-    )
+    this.undoBtn.addEventListener('click', () => this.undo())
+    this.redoBtn.addEventListener('click', () => this.redo())
+    this.copyBtn.addEventListener('click', () => {
+      const live = this.live()
+      if (live) {
+        this.copy(JSON.stringify(live.config, null, 2), 'the config')
+      }
+    })
+    this.livePicker.addEventListener('change', () => {
+      this.liveIndex = Number(this.livePicker.value)
+      this.refresh(true)
+    })
     this.root.append(
-      this.bar,
+      h(
+        'div',
+        { class: 'bar' },
+        this.pickBtn,
+        this.undoBtn,
+        this.redoBtn,
+        this.copyBtn,
+        this.livePicker,
+        h('span', {
+          class: 'dim',
+          text: 'E picks; while picking [ ] walk ancestors, Esc stops.'
+        })
+      ),
       h('div', { class: 'cols' }, this.list, this.inspector)
     )
     this.overlay.addEventListener('pointermove', (e) => {
@@ -94,8 +181,13 @@ export class EditView {
     this.overlay.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
+      if (!this.hovered) {
+        // A click with no move before it (a tap, a script).
+        this.point = [e.clientX, e.clientY]
+        this.updateHover()
+      }
       if (this.hovered) {
-        this.select(this.hovered)
+        this.select({ el: this.hovered })
       }
       if (!e.shiftKey) {
         this.setPicking(false)
@@ -124,8 +216,12 @@ export class EditView {
     })
     window.addEventListener('resize', this.onScroll, { passive: true })
     this.timer = setInterval(() => this.refresh(), REFRESH_MS)
-    this.loading ??= import('../fx/config').then((m) => {
-      this.cfg = m
+    this.loading ??= Promise.all([
+      import('../fx/config'),
+      import('../fx/registry'),
+      import('../fx/effects')
+    ]).then(([config, registry, effects]) => {
+      this.mods = { config, registry, effects }
     })
     void this.loading.then(() => this.refresh(true))
     this.refresh(true)
@@ -143,7 +239,7 @@ export class EditView {
     window.removeEventListener('resize', this.onScroll)
   }
 
-  /** Keys while the tab shows; true when handled. */
+  /** Keys while the tab shows (not typing); true when handled. */
   key(e: KeyboardEvent, inPanel: boolean): boolean {
     if (this.picking) {
       if (e.key === 'Escape') {
@@ -157,7 +253,20 @@ export class EditView {
       }
       return true
     }
-    if (inPanel && (e.key === 'e' || e.key === 'E')) {
+    const mod = e.metaKey || e.ctrlKey
+    if (mod && e.key.toLowerCase() === 'z') {
+      if (e.shiftKey) {
+        this.redo()
+      } else {
+        this.undo()
+      }
+      return true
+    }
+    if (mod && e.key.toLowerCase() === 'y') {
+      this.redo()
+      return true
+    }
+    if (inPanel && !mod && (e.key === 'e' || e.key === 'E')) {
       this.setPicking(true)
       return true
     }
@@ -172,7 +281,7 @@ export class EditView {
   }
 
   private readonly onScroll = (): void => {
-    this.place(this.selBox, this.selected)
+    this.place(this.selBox, isEl(this.sel) ? this.sel.el : null)
     if (this.picking) {
       this.updateHover()
     }
@@ -201,11 +310,16 @@ export class EditView {
   // What the page has.
 
   private lives(): LiveConfig[] {
-    return this.cfg?.liveConfigs() ?? []
+    return this.mods?.config.liveConfigs() ?? []
+  }
+
+  private live(): LiveConfig | null {
+    const ls = this.lives()
+    return ls[Math.min(this.liveIndex, ls.length - 1)] ?? null
   }
 
   private instances(): ConfigInstance[] {
-    return this.lives().flatMap((l) => l.instances())
+    return this.live()?.instances() ?? []
   }
 
   private inspected(): InspectedElement[] {
@@ -236,6 +350,78 @@ export class EditView {
       s.add(i.el)
     }
     return s
+  }
+
+  // Editing.
+
+  private commit(next: FxConfig, coalesce?: string): void {
+    const live = this.live()
+    if (!live) {
+      return
+    }
+    this.history.push(live.config, coalesce, performance.now())
+    live.update(next)
+    this.syncButtons()
+  }
+
+  private undo(): void {
+    const live = this.live()
+    const prev = live && this.history.undo(live.config)
+    if (live && prev) {
+      live.update(prev)
+      this.refresh(true)
+    }
+  }
+
+  private redo(): void {
+    const live = this.live()
+    const next = live && this.history.redo(live.config)
+    if (live && next) {
+      live.update(next)
+      this.refresh(true)
+    }
+  }
+
+  private syncButtons(): void {
+    const live = this.live()
+    this.undoBtn.disabled = !this.history.canUndo
+    this.redoBtn.disabled = !this.history.canRedo
+    this.copyBtn.disabled = !live
+  }
+
+  private matchFor(el: Element): Match {
+    const fx = el.getAttribute('data-fx')
+    return fx ? { fx } : { selector: selectorFor(el, countOf) }
+  }
+
+  private add(def: EffectDef, el: Element | null): void {
+    const live = this.live()
+    if (!live) {
+      return
+    }
+    const id = uniqueId(
+      live.config,
+      el ? `${suggestName(el)}-${def.id}` : def.id
+    )
+    this.commit(
+      addEffect(live.config, el ? this.matchFor(el) : null, def.id, id)
+    )
+    if (!el) {
+      this.sel = { page: id }
+    }
+    this.refresh(true)
+  }
+
+  private startConfig(): void {
+    const m = this.mods
+    if (!m) {
+      return
+    }
+    m.config.applyConfig(m.effects.createEffects(this.compositor), {
+      version: 1
+    })
+    this.liveIndex = m.config.liveConfigs().length - 1
+    this.refresh(true)
   }
 
   // Picking.
@@ -305,11 +491,11 @@ export class EditView {
     box.hidden = false
   }
 
-  // Selection.
+  // Rendering.
 
-  private select(el: Element | null): void {
-    this.selected = el
-    this.place(this.selBox, el, el ? labelOf(el) : '')
+  private select(s: Selection | null): void {
+    this.sel = s
+    this.place(this.selBox, isEl(s) ? s.el : null, isEl(s) ? labelOf(s.el) : '')
     this.refresh(true)
   }
 
@@ -317,15 +503,85 @@ export class EditView {
     if (!this.shown) {
       return
     }
-    if (this.selected && !this.selected.isConnected) {
-      this.selected = null
+    if (isEl(this.sel) && !this.sel.el.isConnected) {
+      this.sel = null
     }
-    this.place(this.selBox, this.selected)
+    this.place(this.selBox, isEl(this.sel) ? this.sel.el : null)
+    this.renderBar()
     this.renderList(force)
     this.renderInspector(force)
+    for (const r of this.liveRows) {
+      r.live(r.handle.params[r.key])
+    }
+  }
+
+  private renderBar(): void {
+    const ls = this.lives()
+    this.livePicker.hidden = ls.length < 2
+    const opts = ls.map((_, i) => `config ${i + 1}`)
+    if (this.livePicker.options.length !== opts.length) {
+      this.livePicker.replaceChildren(
+        ...opts.map((t, i) =>
+          h('option', { value: i, text: t, selected: i === this.liveIndex })
+        )
+      )
+    }
+    this.syncButtons()
+  }
+
+  private row(
+    label: string,
+    chips: string[],
+    opts: { dim?: boolean; on?: boolean; pick: () => void; el?: Element }
+  ): HTMLElement {
+    const b = h(
+      'button',
+      {
+        class: `row${opts.dim ? ' dimrow' : ''}${opts.on ? ' on' : ''}`,
+        type: 'button'
+      },
+      h('span', { class: 'rl', text: label }),
+      ...chips.map((c) => h('span', { class: 'kind', text: c }))
+    )
+    b.addEventListener('click', opts.pick)
+    const el = opts.el
+    if (el) {
+      b.addEventListener('mouseenter', () =>
+        this.place(this.hoverBox, el, labelOf(el))
+      )
+      b.addEventListener('mouseleave', () => {
+        if (!this.picking) {
+          this.hoverBox.hidden = true
+        }
+      })
+    }
+    return b
+  }
+
+  private addPicker(
+    scope: 'page' | 'element',
+    el: Element | null
+  ): HTMLElement {
+    const defs = (this.mods?.registry.listEffects() ?? []).filter((d) =>
+      d.scopes.includes(scope)
+    )
+    const pick = h(
+      'select',
+      { 'aria-label': 'Effect to add' },
+      ...defs.map((d) => h('option', { value: d.id, text: d.label }))
+    )
+    const add = h('button', { class: 'btn', type: 'button', text: 'Add' })
+    add.addEventListener('click', () => {
+      const def = defs.find((d) => d.id === pick.value)
+      if (def) {
+        this.add(def, el)
+      }
+    })
+    return h('div', { class: 'addfx' }, pick, add)
   }
 
   private renderList(force: boolean): void {
+    const live = this.live()
     const insts = this.instances()
     const page = insts.filter((i) => i.el === null)
     const rows = new Map<
@@ -348,57 +604,39 @@ export class EditView {
     const key = JSON.stringify([
       page.map((i) => [i.id, i.handle.enabled]),
       els.map((el) => [labelOf(el), rows.get(el)]),
-      this.selected ? els.indexOf(this.selected) : -2,
-      this.cfg !== null
+      isEl(this.sel) ? els.indexOf(this.sel.el) : this.sel?.page,
+      this.mods !== null,
+      live !== null
     ])
     if (!force && key === this.listKey) {
       return
     }
     this.listKey = key
-    const row = (
-      label: string,
-      chips: string[],
-      opts: { dim?: boolean; on?: boolean; el?: Element }
-    ): HTMLElement => {
-      const b = h(
-        'button',
-        {
-          class: `row${opts.dim ? ' dimrow' : ''}${opts.on ? ' on' : ''}`,
-          type: 'button'
-        },
-        h('span', { class: 'rl', text: label }),
-        ...chips.map((c) => h('span', { class: 'kind', text: c }))
-      )
-      const el = opts.el
-      if (el) {
-        b.addEventListener('click', () => {
-          this.select(el)
-          const r = el.getBoundingClientRect()
-          if (r.bottom < 0 || r.top > window.innerHeight) {
-            el.scrollIntoView({ block: 'center' })
-          }
-        })
-        b.addEventListener('mouseenter', () =>
-          this.place(this.hoverBox, el, labelOf(el))
-        )
-        b.addEventListener('mouseleave', () => {
-          if (!this.picking) {
-            this.hoverBox.hidden = true
-          }
-        })
-      }
-      return b
-    }
     const kids: HTMLElement[] = []
-    if (page.length) {
+    if (this.mods && !live) {
+      const start = h('button', {
+        class: 'btn primary',
+        type: 'button',
+        text: 'Start a config'
+      })
+      start.addEventListener('click', () => this.startConfig())
+      kids.push(
+        h('p', { class: 'dim', text: 'No applyConfig on this page.' }),
+        start
+      )
+    }
+    if (live) {
       kids.push(h('h3', { text: 'Page effects' }))
       for (const i of page) {
         kids.push(
-          row(i.id, [i.effect, i.handle.enabled ? 'on' : 'off'], {
-            dim: !i.handle.enabled
+          this.row(i.id, [i.effect, i.handle.enabled ? 'on' : 'off'], {
+            dim: !i.handle.enabled,
+            on: !isEl(this.sel) && this.sel?.page === i.id,
+            pick: () => this.select({ page: i.id })
           })
         )
       }
+      kids.push(this.addPicker('page', null))
     }
     kids.push(h('h3', { text: 'Elements' }))
     if (els.length === 0) {
@@ -413,10 +651,17 @@ export class EditView {
       const r = rows.get(el)
       if (r) {
         kids.push(
-          row(labelOf(el), [...r.fx, ...r.kinds], {
+          this.row(labelOf(el), [...r.fx, ...r.kinds], {
             dim: !r.config,
-            on: el === this.selected,
-            el
+            on: isEl(this.sel) && el === this.sel.el,
+            el,
+            pick: () => {
+              this.select({ el })
+              const b = el.getBoundingClientRect()
+              if (b.bottom < 0 || b.top > window.innerHeight) {
+                el.scrollIntoView({ block: 'center' })
+              }
+            }
           })
         )
       }
@@ -425,25 +670,30 @@ export class EditView {
   }
 
   private renderInspector(force: boolean): void {
-    const el = this.selected
-    const insts = el ? this.instances().filter((i) => i.el === el) : []
+    const sel = this.sel
+    const live = this.live()
+    const insts = this.instances().filter((i) =>
+      isEl(sel) ? i.el === sel.el : i.el === null && i.id === sel?.page
+    )
+    const el = isEl(sel) ? sel.el : null
     const info = el ? this.inspected().find((i) => i.el === el) : undefined
     const key = JSON.stringify([
-      el ? labelOf(el) : null,
+      el ? labelOf(el) : sel,
       info?.kinds,
       info?.materials,
-      insts.map((i) => [
-        i.cfg,
-        i.handle.enabled,
-        Object.values(i.handle.params).map(fmt)
-      ]),
-      this.lives().length
+      insts.map((i) => [i.cfg, i.handle.enabled]),
+      live?.version,
+      this.mods !== null
     ])
-    if (!force && key === this.inspectKey) {
+    const focused = this.inspector.contains(
+      (this.host.shadowRoot?.activeElement as Node | null) ?? null
+    )
+    if (!force && (key === this.inspectKey || focused)) {
       return
     }
     this.inspectKey = key
-    if (!el) {
+    this.liveRows = []
+    if (!sel) {
       this.inspector.replaceChildren(
         h('p', {
           class: 'empty',
@@ -452,6 +702,46 @@ export class EditView {
       )
       return
     }
+    const parts: HTMLElement[] = []
+    if (el) {
+      parts.push(...this.elementInfo(el, info))
+      parts.push(h('h3', { text: 'Config effects' }))
+      if (!this.mods) {
+        parts.push(h('p', { class: 'dim', text: 'Loading the config module…' }))
+      } else if (!live) {
+        parts.push(
+          h('p', {
+            class: 'dim',
+            text: 'No applyConfig on this page: Start a config in the list.'
+          })
+        )
+      } else if (insts.length === 0) {
+        parts.push(h('p', { class: 'dim', text: 'None on this element.' }))
+      }
+    }
+    // One card per effect id (a selector can create several instances).
+    const seen = new Set<string>()
+    for (const i of insts) {
+      if (!seen.has(i.id)) {
+        seen.add(i.id)
+        parts.push(
+          this.effectCard(i, insts.filter((x) => x.id === i.id).length)
+        )
+      }
+    }
+    if (el && live) {
+      parts.push(this.addPicker('element', el))
+    }
+    if (!el && insts.length === 0) {
+      parts.push(h('p', { class: 'dim', text: 'That effect is gone.' }))
+    }
+    this.inspector.replaceChildren(...parts)
+  }
+
+  private elementInfo(
+    el: Element,
+    info: InspectedElement | undefined
+  ): HTMLElement[] {
     const kv = (k: string, ...v: (Node | string)[]): HTMLElement =>
       h(
         'div',
@@ -465,15 +755,7 @@ export class EditView {
       : h(
           'span',
           {},
-          h('code', {
-            text: selectorFor(el, (s) => {
-              try {
-                return document.querySelectorAll(s).length
-              } catch {
-                return 0
-              }
-            })
-          }),
+          h('code', { text: selectorFor(el, countOf) }),
           ' ',
           h('span', {
             class: 'kind warn',
@@ -484,7 +766,7 @@ export class EditView {
           this.copyButton(`data-fx="${suggestName(el)}"`)
         )
     const r = el.getBoundingClientRect()
-    const parts: HTMLElement[] = [
+    const out = [
       h('h3', { text: labelOf(el, 80) }),
       kv('match', match),
       kv('size', `${Math.round(r.width)} × ${Math.round(r.height)} CSS px`),
@@ -502,74 +784,99 @@ export class EditView {
       )
     ]
     if (info?.materials.length) {
-      parts.push(kv('materials', info.materials.join(', ')))
+      out.push(kv('materials', info.materials.join(', ')))
     }
-    parts.push(h('h3', { text: 'Config effects' }))
-    if (this.lives().length === 0) {
-      parts.push(
-        h('p', {
-          class: 'dim',
-          text: this.cfg
-            ? 'No applyConfig on this page.'
-            : 'Loading the config module…'
-        })
-      )
-    } else if (insts.length === 0) {
-      parts.push(h('p', { class: 'dim', text: 'None on this element.' }))
-    }
-    for (const i of insts) {
-      parts.push(this.effectCard(i))
-    }
-    this.inspector.replaceChildren(...parts)
+    return out
   }
 
-  private effectCard(i: ConfigInstance): HTMLElement {
-    const live = this.lives().find((l) =>
-      l.instances().some((x) => x.handle === i.handle)
-    )
-    const params = h(
-      'table',
-      {},
-      h(
-        'tbody',
-        {},
-        ...Object.entries(i.handle.params).map(([k, v]) =>
-          h(
-            'tr',
-            {},
-            h('td', { class: 'dim', text: k }),
-            h('td', {
-              text: fmt(v),
-              class: i.cfg.params && k in i.cfg.params ? 'set' : ''
-            })
-          )
+  private effectCard(i: ConfigInstance, copies: number): HTMLElement {
+    const live = this.live()
+    const def = this.mods?.registry.getEffect(i.effect)
+    const cfg = live ? findEffect(live.config, i.id)?.effect : undefined
+    const now = (): FxConfig | null => this.live()?.config ?? null
+    const enabled = h('input', {
+      type: 'checkbox',
+      checked: cfg?.enabled ?? true,
+      title: 'Enabled at rest'
+    })
+    enabled.addEventListener('change', () => {
+      const c = now()
+      if (c) {
+        this.commit(setEnabled(c, i.id, enabled.checked))
+      }
+    })
+    const remove = h('button', {
+      class: 'btn',
+      type: 'button',
+      text: 'Remove'
+    })
+    remove.addEventListener('click', () => {
+      const c = now()
+      if (c) {
+        this.commit(removeEffect(c, i.id))
+        this.refresh(true)
+      }
+    })
+    const params: HTMLElement[] = []
+    for (const [key, pd] of Object.entries(def?.schema ?? {})) {
+      const value = cfg?.params?.[key]
+      const shown =
+        (value !== undefined && def
+          ? this.mods?.config.paramVec(def.schema, key, value)
+          : null) ??
+        toVec(i.handle.params[key]) ??
+        []
+      const r = paramRow(key, pd, value, shown, (v, done) => {
+        const c = now()
+        if (!c) {
+          return
+        }
+        this.commit(
+          setParam(c, i.id, key, v as ParamInput | undefined),
+          `${i.id}.${key}`
         )
+        if (done && v === undefined) {
+          this.refresh(true)
+        }
+      })
+      this.liveRows.push({ handle: i.handle, key, live: r.live })
+      params.push(r.row)
+    }
+    const triggers = (cfg?.triggers ?? []).map((t, n) =>
+      triggerRow(
+        t,
+        (next) => {
+          const c = now()
+          if (c) {
+            this.commit(setTrigger(c, i.id, n, next))
+          }
+        },
+        () => this.live()?.fire(i.id, n, { fromRest: true }),
+        () => {
+          const c = now()
+          if (c) {
+            this.commit(setTrigger(c, i.id, n, null))
+            this.refresh(true)
+          }
+        }
       )
     )
-    const triggers = (i.cfg.triggers ?? []).map((t, n) => {
-      const what = [
-        t.to === 'rest' ? 'to rest' : t.to ? `to ${JSON.stringify(t.to)}` : '',
-        t.play ? `play ${t.play}` : '',
-        t.enabled === undefined ? '' : t.enabled ? 'enable' : 'disable'
-      ]
-        .filter(Boolean)
-        .join(', ')
-      const fire = h('button', {
-        class: 'btn',
-        type: 'button',
-        text: 'Fire',
-        title: 'Run this trigger from the rest values'
-      })
-      fire.addEventListener('click', () =>
-        live?.fire(i.id, n, { fromRest: true })
-      )
-      return h(
-        'div',
-        { class: 'event' },
-        h('span', { class: 'kind', text: t.on }),
-        h('span', { class: 'ek', text: what || '—' }),
-        fire
-      )
+    const addTrigger = h('button', {
+      class: 'btn',
+      type: 'button',
+      text: 'Add trigger'
+    })
+    addTrigger.addEventListener('click', () => {
+      const c = now()
+      if (c) {
+        this.commit(
+          setTrigger(c, i.id, cfg?.triggers?.length ?? 0, {
+            on: 'pointerenter',
+            to: 'rest'
+          })
+        )
+        this.refresh(true)
+      }
     })
     return h(
       'div',
@@ -577,17 +884,31 @@ export class EditView {
       h(
         'div',
         { class: 'fhead' },
+        enabled,
         h('strong', { text: i.id }),
         h('span', { class: 'kind', text: i.effect }),
-        h('span', {
-          class: 'dim',
-          text: i.handle.enabled ? 'enabled' : 'disabled'
-        })
+        copies > 1
+          ? h('span', { class: 'dim', text: `on ${copies} elements` })
+          : null,
+        h('span', { class: 'spacer' }),
+        remove
       ),
-      params,
-      triggers.length
-        ? h('div', { class: 'events' }, ...triggers)
-        : h('p', { class: 'dim', text: 'No triggers.' })
+      def
+        ? h('div', { class: 'params' }, ...params)
+        : h('p', {
+            class: 'note',
+            text: `No registered effect '${i.effect}'.`
+          }),
+      h('div', { class: 'dim', text: 'Triggers' }),
+      ...triggers,
+      addTrigger
+    )
+  }
+
+  private copy(text: string, what: string): void {
+    void navigator.clipboard?.writeText(text).then(
+      () => this.status(`Copied ${what}.`),
+      () => this.status(`Couldn’t copy ${what}.`)
     )
   }
 
@@ -598,12 +919,7 @@ export class EditView {
       text: 'Copy data-fx',
       title: `Copy ${text} to paste into the markup`
     })
-    b.addEventListener('click', () => {
-      void navigator.clipboard?.writeText(text).then(
-        () => this.status(`Copied ${text}`),
-        () => this.status(text)
-      )
-    })
+    b.addEventListener('click', () => this.copy(text, text))
     return b
   }
 }

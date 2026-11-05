@@ -1,4 +1,4 @@
-# Edit mode (spec; E1 and E2 built)
+# Edit mode (spec; E1-E3 built)
 
 A design-tool workflow for `/fx`: pick a composited element on the page,
 attach effects to it with triggers, tune their params, and save the
@@ -246,6 +246,33 @@ Saving:
   devtools at that z-index would cover them.
 - `playground/fx.html` (not `?vr`) applies a demo config: the displace
   section's heading reveals on load, its image develops back on hover.
+
+## Deviations (E3)
+
+- Edits are pure functions over FxConfig (`devtools/edit_model.ts`:
+  addEffect, removeEffect, setParam, setEnabled, setTrigger, uniqueId)
+  applied with `live.update()`; `History` keeps whole configs (100
+  steps), and changes to one param within 1.5 s (a slider drag) are one
+  step. Undo / redo: buttons, ⌘Z / ⇧⌘Z / Ctrl+Y in the tab.
+- `update()` retunes in place when only an effect's `params` changed:
+  the rest values that changed are written, the others (a played
+  `progress`) stay, and triggers aren't rebound or `load` run again.
+- New effects get the id `<suggested name>-<effect>` (page effects:
+  the effect id), made unique; an element without `data-fx` is matched
+  by its generated selector.
+- Controls (`devtools/edit_form.ts`): f32 slider and number (range from
+  the schema, else from the default), vector fields, colour picker with
+  alpha (saved as `#rrggbb[aa]`), a reset per set param, the live
+  value beside it. Triggers: event, action (to / rest / play / none),
+  `to` as JSON, enabled, ease (named curves or spring), duration or
+  settle and bounce, delay, target (a bare name is a data-fx name),
+  once. `threshold` and custom bezier values are kept but not editable.
+- The inspector isn't rebuilt while focus is inside it, so a drag or a
+  typed value isn't interrupted; live values update in place.
+- With no config on the page, Start a config applies an empty one to
+  `createEffects(compositor)`. Copy config puts the JSON on the
+  clipboard until E4 saves it.
+- Several configs on a page: a picker chooses which one is edited.
 
 ## Open questions
 

@@ -439,6 +439,20 @@ export function applyConfig(
     bind(inst)
   }
 
+  /** Write the rest params that changed; the others stay where they
+   * are (a played `progress` stays played). */
+  const retune = (inst: Instance): void => {
+    const { cfg, def } = inst.entry
+    const prev = inst.rest
+    inst.rest = { ...inst.base, ...vecs(def, cfg.params ?? {}, cfg.id) }
+    for (const [k, v] of Object.entries(inst.rest)) {
+      if (!same(prev[k], v)) {
+        inst.anim.stop(k)
+        write(inst, k, v)
+      }
+    }
+  }
+
   const create = (entry: Entry, el: Element | null): Instance | null => {
     let handle: EffectHandle
     try {
@@ -532,6 +546,12 @@ export function applyConfig(
       }
       let e = entries.get(id)
       const changed = !!e && !same(e.cfg, w.cfg)
+      // Only rest params changed (a slider in the editor): retune in
+      // place, without rebinding triggers or running `load` again.
+      const paramsOnly =
+        changed &&
+        !!e &&
+        same({ ...e.cfg, params: undefined }, { ...w.cfg, params: undefined })
       if (!e) {
         e = { cfg: w.cfg, def, page: w.page, insts: new Map() }
         entries.set(id, e)
@@ -548,6 +568,8 @@ export function applyConfig(
         const inst = e.insts.get(el)
         if (!inst) {
           create(e, el)
+        } else if (paramsOnly) {
+          retune(inst)
         } else if (changed) {
           configure(inst)
         }

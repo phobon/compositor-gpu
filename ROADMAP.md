@@ -208,7 +208,10 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         list, inspector with trigger firing; `test/unit/edit_pick.test.ts`.
         Tried on `fx.html` in Chrome (pick, ancestors, select, hover
         trigger, Fire).
-  - [ ] E3: effect and trigger editing through `update()`, undo
+  - [x] E3 (2026-11-05): adding and removing effects, param and
+        trigger editing through `update()` (params-only edits retune in
+        place), undo (`devtools/edit_model.ts`, `devtools/edit_form.ts`;
+        `test/unit/edit_model.test.ts`). Tried on `fx.html`.
   - [ ] E4: saving (File System Access, IndexedDB handle, autosave)
   - [ ] E5: a `/duo` reveal moved to a config file; `useFxConfig`
 - [x] `progressiveBlur` preset: Gaussian whose radius grows toward

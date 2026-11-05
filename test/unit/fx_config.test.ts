@@ -258,6 +258,31 @@ test('an equal config changes nothing; an edit resets only its effect', () => {
   live.destroy()
 })
 
+test('a params-only edit retunes without running load again', () => {
+  fresh()
+  const p = page()
+  const k = clock()
+  const cfg = (a: number): FxConfig => ({
+    version: 1,
+    page: [
+      {
+        id: 'p',
+        effect: 'probe',
+        params: { a },
+        triggers: [{ on: 'load', play: 'forward', duration: 0 }]
+      }
+    ]
+  })
+  const live = applyConfig(fx(), cfg(1), { root: p.root, clock: k.c })
+  const pr = probes[0] as Probe
+  assert.equal(pr.params.progress, 1, 'load ran')
+  pr.params.progress = 0.5
+  live.update(cfg(3))
+  assert.equal(pr.params.a, 3)
+  assert.equal(pr.params.progress, 0.5, 'untouched; load not run again')
+  assert.equal(probes.length, 1)
+})
+
 test('listeners are rebound, not stacked, across edits', () => {
   fresh()
   const p = page(new FakeEl(null, 'card'))
