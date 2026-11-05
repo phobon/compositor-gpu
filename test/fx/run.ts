@@ -89,6 +89,9 @@
 //                     both at progress 0.4
 //   fx-reveal-0       both at progress 0 (heading and image hidden)
 //   fx-reveal-then-off  on, then off: equal to the section exactly
+//   fx-config         reveal + develop from applyConfig: equal to
+//                     fx-reveal's effects built in code exactly
+//   fx-config-then-off  the config emptied: equal to the section exactly
 //   fx-p1-then-off    all five on, then off: equal to the section with
 //                     nothing enabled exactly
 //   fx-transform-off  the transform section, nothing enabled
@@ -209,6 +212,7 @@ type Effect =
   | 'shockwave'
   | 'reveal'
   | 'reveal-0'
+  | 'config'
   | 'p1'
 
 interface Result {
@@ -295,6 +299,7 @@ async function setEffect(page: Page, effect: Effect): Promise<void> {
     h.vig.enabled = e === 'vignette' || e === 'p1'
     h.lens.enabled = e === 'lens' || e === 'p1'
     h.shock.enabled = e === 'shockwave'
+    h.config(e === 'config')
     h.reveal.enabled = e === 'reveal' || e === 'reveal-0'
     h.develop.enabled = e === 'reveal' || e === 'reveal-0'
     for (const m of [h.reveal, h.develop]) {
@@ -974,6 +979,30 @@ async function main(): Promise<void> {
           status: n === 0 ? 'ok' : 'fail',
           note: `${n} px differ`
         })
+      }
+    }
+    if (want('fx-config') || want('fx-config-then-off')) {
+      // Reveal and develop from a config: equal to the same effects built
+      // in code; an emptied config: equal to the section with none.
+      const s = 'fx-config'
+      const pre = await capture('fx-displace', `${s}-pre`, 'none')
+      const ref = await capture('fx-displace', `${s}-ref`, 'reveal')
+      const got = await capture('fx-displace', s, 'config')
+      const post = await capture('fx-displace', `${s}-then-off`, 'none')
+      for (const [name, file, a, b] of [
+        [`${s} (= reveal)`, s, ref, got],
+        [`${s}-then-off (= pre)`, `${s}-then-off`, pre, post]
+      ] as const) {
+        if (a && b) {
+          const n = exactDiff(a, b)
+          const pct = diffPng(a, b, resolve(outDir, `${file}-invariant.png`))
+          results.push({
+            name,
+            regressionPct: pct,
+            status: n === 0 ? 'ok' : 'fail',
+            note: `${n} px differ`
+          })
+        }
       }
     }
     if (want('fx-p1-then-off')) {

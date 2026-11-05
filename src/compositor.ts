@@ -16,6 +16,7 @@ import { blendMaterials } from './gpu/blend'
 import { initGpu } from './gpu/device'
 import type {
   FrameHook,
+  InspectKind,
   LayerPlace,
   MaterialEntry,
   RenderGraph
@@ -796,6 +797,65 @@ export async function createCompositor(
     glyphGhost: (runs) => text?.ghost(runs) ?? null,
     get version() {
       return scene.version
+    },
+    inspect() {
+      const out = new Map<
+        Element,
+        {
+          el: Element
+          kinds: InspectKind[]
+          alpha?: number
+          materials: string[]
+          depth: number
+        }
+      >()
+      const at = (el: Element, depth: number) => {
+        let e = out.get(el)
+        if (!e) {
+          e = { el, kinds: [], materials: [], depth }
+          out.set(el, e)
+        }
+        return e
+      }
+      const add = (kinds: InspectKind[], k: InspectKind): void => {
+        if (!kinds.includes(k)) {
+          kinds.push(k)
+        }
+      }
+      for (const g of scene.groups) {
+        const el = (g.key as ElNode | undefined)?.el
+        if (!el) {
+          continue
+        }
+        const e = at(el, g.depth)
+        if (g.region !== undefined) {
+          if (renderer.regions.has(g.region)) {
+            add(e.kinds, 'region')
+          }
+          if (renderer.transforms.has(g.region)) {
+            add(e.kinds, 'transform')
+          }
+        }
+        if (g.filter) {
+          add(e.kinds, 'filter')
+        }
+        if (g.blend) {
+          add(e.kinds, 'blend')
+        }
+        if (g.alpha < 1) {
+          add(e.kinds, 'opacity')
+          e.alpha = g.alpha
+        }
+      }
+      for (const m of renderer.materials.values()) {
+        if (m.builtin || !m.target.isConnected || !m.active()) {
+          continue
+        }
+        const e = at(m.target, 0)
+        add(e.kinds, 'material')
+        e.materials.push(m.label)
+      }
+      return [...out.values()]
     }
   }
   // Extra layers: ids into renderer.extras, placed in paint order by the

@@ -35,7 +35,7 @@ fn fragment(q : Quad, i : u32) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   radius: { type: 'f32', default: 80, min: 4, max: 600 },
   width: { type: 'f32', default: 2, min: 0.5, max: 40 },
   duration: { type: 'f32', default: 0.6, min: 0.05, max: 5 },

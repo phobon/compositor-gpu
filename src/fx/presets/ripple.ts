@@ -29,7 +29,7 @@ fn fragment(m : MatIn) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   amplitude: { type: 'f32', default: 8, min: 0, max: 40 },
   wavelength: { type: 'f32', default: 24, min: 2, max: 200 },
   speed: { type: 'f32', default: 360, min: 10, max: 2000 },

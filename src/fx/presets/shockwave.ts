@@ -58,7 +58,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   /** Page (document) CSS px; play() sets it. */
   origin: { type: 'vec2', default: [0, 0] },
   /** CSS px per second. */

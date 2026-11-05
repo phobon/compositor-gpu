@@ -38,7 +38,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   radius: { type: 'f32', default: 160, min: 0, max: 2000 },
   /** Magnification at the centre: 0 none, toward 1 strong. */
   strength: { type: 'f32', default: 0.4, min: 0, max: 0.95 },

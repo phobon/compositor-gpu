@@ -50,7 +50,7 @@ fn fragment(q : Quad, i : u32) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   color: { type: 'color', default: '#ffffff' },
   /** Stroke width, CSS px (0: none). */
   width: { type: 'f32', default: 2, min: 0, max: 24 },

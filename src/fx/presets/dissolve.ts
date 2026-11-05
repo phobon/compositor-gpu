@@ -52,7 +52,7 @@ fn fragment(m : MatIn) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
   scale: { type: 'f32', default: 40, min: 2, max: 400 },
   softness: { type: 'f32', default: 0.1, min: 0, max: 0.5 },

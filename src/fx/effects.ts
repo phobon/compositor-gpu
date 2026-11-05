@@ -562,6 +562,21 @@ function buildEffects(compositor: Compositor): Effects {
   }
   const { device, format, frameLayout } = graph.shared
   const passes: PassState[] = []
+  /** Region passes' handlers. The graph takes one per element: the
+   * latest enabled pass on it (isolateRegion). */
+  const regionHandlers = new Map<PassState, RegionHandler>()
+  const isolateRegion = (el: Element): void => {
+    let h: RegionHandler | null = null
+    if (!destroyed) {
+      for (const p of passes) {
+        const ph = regionHandlers.get(p)
+        if (ph && p.region?.el === el && p.life.enabled) {
+          h = ph
+        }
+      }
+    }
+    graph.isolate(el, h)
+  }
   const layers: LayerState[] = []
   const materials: MaterialState[] = []
   const transforms: Transform[] = []
@@ -1513,10 +1528,15 @@ function buildEffects(compositor: Compositor): Effects {
         snap: (opts as { [SNAPSHOT]?: Snapshot })[SNAPSHOT] ?? null
       }
       const handler = state.region ? regionHandler(state) : null
+      if (handler) {
+        regionHandlers.set(state, handler)
+      }
+      // Another region pass on the same element takes over while this one
+      // is off or gone, and gives way while it's on and newer.
       const isolate = (): void => {
         const el = state.region?.el
         if (el && handler) {
-          graph.isolate(el, life.enabled && !destroyed ? handler : null)
+          isolateRegion(el)
         }
       }
       if (!destroyed) {
@@ -1584,6 +1604,7 @@ function buildEffects(compositor: Compositor): Effects {
           return
         }
         passes.splice(i, 1)
+        regionHandlers.delete(state)
         freePass(state)
         life.enabled = false
         isolate()
@@ -1831,6 +1852,7 @@ function buildEffects(compositor: Compositor): Effects {
         }
       }
       passes.length = 0
+      regionHandlers.clear()
       for (const l of [...layers]) {
         l.handle.destroy()
       }

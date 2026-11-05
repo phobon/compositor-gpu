@@ -26,7 +26,7 @@ fn fragment(m : MatIn) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
   wash: { type: 'f32', default: 0.6, min: 0, max: 1 },
   desaturate: { type: 'f32', default: 1, min: 0, max: 1 },

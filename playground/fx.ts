@@ -13,6 +13,7 @@ import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import * as std from 'typegpu/std'
 import {
+  applyConfig,
   blur,
   clickRipple,
   createEffects,
@@ -24,6 +25,7 @@ import {
   gpu,
   ripple as imageRipple,
   type Layer,
+  type LiveConfig,
   lens,
   type Material,
   MatIn,
@@ -651,6 +653,86 @@ async function boot(): Promise<void> {
       })
     }
   }
+  // The same reveal and develop from a config (docs/EDITOR.md): shot
+  // fx-config must equal fx-reveal exactly.
+  const sec = 'section[data-vr="fx-displace"]'
+  let live: LiveConfig | null = null
+  const setConfig = (on: boolean): void => {
+    const c = on
+      ? {
+          version: 1 as const,
+          elements: [
+            {
+              match: { selector: `${sec} h2` },
+              effects: [
+                {
+                  id: 'cfg-reveal',
+                  effect: 'reveal',
+                  params: { progress: 0.4, seed: 3 }
+                }
+              ]
+            },
+            {
+              match: { selector: `${sec} img` },
+              effects: [
+                {
+                  id: 'cfg-develop',
+                  effect: 'develop',
+                  params: { progress: 0.4 }
+                }
+              ]
+            }
+          ]
+        }
+      : { version: 1 as const }
+    if (live) {
+      live.update(c)
+    } else {
+      live = applyConfig(fx, c)
+    }
+  }
+  if (!vrMode) {
+    // A config to try the devtools' Edit tab on (docs/EDITOR.md): the
+    // displace section's heading reveals on load and its image develops
+    // back on hover.
+    applyConfig(fx, {
+      version: 1,
+      elements: [
+        {
+          match: { selector: `${sec} h2` },
+          effects: [
+            {
+              id: 'demo-reveal',
+              effect: 'reveal',
+              triggers: [{ on: 'load', play: 'forward', duration: 1.2 }]
+            }
+          ]
+        },
+        {
+          match: { selector: `${sec} img` },
+          effects: [
+            {
+              id: 'demo-develop',
+              effect: 'develop',
+              params: { progress: 1 },
+              triggers: [
+                {
+                  on: 'pointerenter',
+                  to: { progress: 0.35 },
+                  ease: { spring: { visualDuration: 0.35 } }
+                },
+                {
+                  on: 'pointerleave',
+                  to: 'rest',
+                  ease: { spring: { visualDuration: 0.5 } }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+  }
   if (!vrMode) {
     const kit = mountDials(
       [
@@ -899,6 +981,7 @@ async function boot(): Promise<void> {
     shock: shock.pass,
     reveal: rvl,
     develop: dev,
+    config: setConfig,
     sim,
     raw,
     tgbox,

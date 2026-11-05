@@ -32,7 +32,7 @@ fn fragment(m : MatIn) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
   spread: { type: 'f32', default: 2, min: 0, max: 8 },
   rise: { type: 'f32', default: 14, min: 0, max: 80 }

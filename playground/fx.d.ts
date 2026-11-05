@@ -49,6 +49,9 @@ declare global {
       reveal: Pass
       /** develop on the displace section's img (progress 0.4). */
       develop: Material
+      /** The reveal and develop above from a config (applyConfig), on or
+       * emptied. */
+      config(on: boolean): void
       /** M3b: the heading's glyphs drawn by a Layer. */
       lglyphs: Layer
       /** An image Target sampled by a Layer. */

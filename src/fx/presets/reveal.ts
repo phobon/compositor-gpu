@@ -71,7 +71,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   progress: { type: 'f32', default: 0, min: 0, max: 1 },
   blur: { type: 'f32', default: 12, min: 0, max: 48 },
   split: { type: 'f32', default: 8, min: 0, max: 40 },

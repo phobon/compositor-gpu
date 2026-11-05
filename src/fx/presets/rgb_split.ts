@@ -34,7 +34,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   amount: { type: 'f32', default: 6, min: 0, max: 60 },
   /** Radial: distance in CSS px at which the offset reaches `amount`. */
   reach: { type: 'f32', default: 600, min: 1, max: 2000 },

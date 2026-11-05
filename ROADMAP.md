@@ -195,6 +195,22 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         dev-only site helper builds DialKit panels from them.
       - Runtime: `createEffects(compositor)` is memoised per compositor
         and reference-counted; `Duo/fxRuntime.js` goes away.
+- [ ] Edit mode (planned 2026-11-05, spec `docs/EDITOR.md`): pick
+      composited elements, attach effects with triggers, tune them and
+      save a JSON config the site loads.
+  - [x] E1 (2026-11-05): effect registry (`fx/registry.ts`,
+        `fx/builtin_effects.ts`), `applyConfig` (`fx/config.ts`) and
+        trigger tweens (`fx/tween.ts`); `test/unit/fx_config.test.ts`,
+        `fx_tween.test.ts`. Shots `fx-config` / `fx-config-then-off`
+        written, not yet run (M1 Pro, `--update` first for goldens).
+  - [x] E2 (2026-11-05): `graph.inspect()`, the devtools Edit tab
+        (`devtools/edit_view.ts`, `devtools/pick.ts`): pick mode, layer
+        list, inspector with trigger firing; `test/unit/edit_pick.test.ts`.
+        Tried on `fx.html` in Chrome (pick, ancestors, select, hover
+        trigger, Fire).
+  - [ ] E3: effect and trigger editing through `update()`, undo
+  - [ ] E4: saving (File System Access, IndexedDB handle, autosave)
+  - [ ] E5: a `/duo` reveal moved to a config file; `useFxConfig`
 - [x] `progressiveBlur` preset: Gaussian whose radius grows toward
       weighted viewport (or region) edges, bands or corners; shot
       `fx-progressive`. Used by the `/duo` app sections (MDS-home

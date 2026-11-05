@@ -195,6 +195,10 @@ The CLI is tools/profile.ts (`npm run profile`), with tools/profile/
 test/unit/profile_cli.test.ts; html: the report, building
 src/devtools/viewer_entry.ts as an IIFE cached in the OS temp dir) and
 tools/inject.ts (the inject bundle, shared with test:site).
+The Edit tab (`devtools/edit_view.ts`, docs/EDITOR.md) picks composited
+elements and lists the page's config effects (`applyConfig`,
+`fx/config.ts`; effects by id from `fx/registry.ts`) and what
+`graph.inspect()` reports.
 `profile.filmstrip()` (profile/filmstrip.ts) copies the canvas in the
 frame's own task, from Profiler.push via `ProfileHost.view()`: a WebGPU
 canvas is only readable before it presents. Comparisons are
@@ -237,6 +241,9 @@ until `layer.steps` ≥ 90), `fx-mat-raw`, `fx-mat-tgpu`, `fx-tgpu-js`
 `fx-m3b` exactly), and `fx-follow`, `fx-mat-stagger` (a `mat_index`
 stagger), `fx-follow-then-off` (must equal `fx-follow` exactly),
 `fx-pass-image` (a pass with `image`, on the fx-off section),
+`fx-config` (reveal and develop from `applyConfig`: must equal the
+same effects built in code exactly) and `fx-config-then-off` (emptied:
+must equal the section exactly),
 `fx-rgbsplit`, `fx-rgbsplit-pointer`, `fx-glitch`, `fx-vignette`,
 `fx-lens` and `fx-p1-then-off` (all five on, then off: must equal the displace
 section with nothing enabled exactly), `fx-shockwave` (a ring 250 px

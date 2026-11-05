@@ -35,7 +35,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   amount: { type: 'f32', default: 24, min: 0, max: 200 },
   height: { type: 'f32', default: 14, min: 1, max: 200 },
   density: { type: 'f32', default: 0.3, min: 0, max: 1 },

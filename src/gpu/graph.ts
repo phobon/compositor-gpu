@@ -136,6 +136,27 @@ export interface LayerTransform {
   originY: number
 }
 
+/** How an element is composited: an opacity group, a CSS filter or
+ * blend group, a region pass, a layer transform, or under a material. */
+export type InspectKind =
+  | 'opacity'
+  | 'filter'
+  | 'blend'
+  | 'region'
+  | 'transform'
+  | 'material'
+
+export interface InspectedElement {
+  readonly el: Element
+  readonly kinds: readonly InspectKind[]
+  /** The group's alpha (opacity groups). */
+  readonly alpha?: number
+  /** Labels of the materials on its subtree. */
+  readonly materials: readonly string[]
+  /** Groups it is nested in (0 at the top; materials: 0). */
+  readonly depth: number
+}
+
 /** A Material registered with the graph (an `/fx` Material). */
 export interface MaterialEntry extends MaterialBinding {
   /** The element whose subtree's records it re-shades. */
@@ -242,6 +263,10 @@ export interface RenderGraph {
   glyphGhost(runs: readonly GlyphRun[]): GlyphGhost | null
   /** Bumped whenever the scene is rebuilt (records and z change). */
   readonly version: number
+  /** The elements the scene composites as more than plain records, in
+   * paint order (the editor's layer list, docs/EDITOR.md). Reads no
+   * DOM. */
+  inspect(): InspectedElement[]
 }
 
 const COPY_WGSL: string = resolveShader(/* wgsl */ `

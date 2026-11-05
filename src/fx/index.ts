@@ -5,6 +5,23 @@ import '../util/env'
 
 export type { MaterialKind } from '../gpu/material'
 export {
+  applyConfig,
+  type ConfigClock,
+  type ConfigInstance,
+  type ConfigOptions,
+  type EffectConfig,
+  type ElementConfig,
+  type FxConfig,
+  type LiveConfig,
+  liveConfigs,
+  type Match,
+  type ParamInput,
+  type ParamInputs,
+  paramVec,
+  type TriggerConfig,
+  type TriggerOn
+} from './config'
+export {
   createEffects,
   type Effects,
   type FxOverride,
@@ -163,6 +180,14 @@ export {
   type VignetteSchema,
   vignette
 } from './presets/vignette'
+export {
+  type EffectDef,
+  type EffectHandle,
+  type EffectScope,
+  getEffect,
+  listEffects,
+  registerEffect
+} from './registry'
 export type { Sdf, SdfOptions } from './sdf'
 export {
   EFFECT_BYTES,
@@ -186,3 +211,12 @@ export type {
   TransformValues
 } from './transform'
 export type { Transition, TransitionOptions } from './transition'
+export {
+  Animator,
+  DEFAULT_DURATION,
+  DEFAULT_EASE,
+  type Ease,
+  type Spring,
+  springCoefficients,
+  type Timing
+} from './tween'

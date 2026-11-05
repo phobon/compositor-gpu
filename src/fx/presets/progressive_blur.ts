@@ -47,7 +47,7 @@ fn effect(uv : vec2f, src : texture_2d<f32>, smp : sampler) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   radius: { type: 'f32', default: 16, min: 0, max: 64 },
   edges: { type: 'vec4', default: [0, 1, 1, 1] },
   width: { type: 'vec2', default: [0.25, 0.4] },

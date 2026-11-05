@@ -22,7 +22,7 @@ fn fragment(m : MatIn) -> vec4f {
 }
 `
 
-const schema = {
+export const schema = {
   radius: { type: 'f32', default: 280, min: 40, max: 800 },
   intensity: { type: 'f32', default: 0.35, min: 0, max: 1 },
   rim: { type: 'f32', default: 1.5, min: 0, max: 6 },

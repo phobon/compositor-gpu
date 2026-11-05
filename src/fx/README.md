@@ -116,7 +116,9 @@ element, times the element's own opacity. Same fragment signature:
   transformed, `opacity < 1`, ...) nothing changes; otherwise positioned
   descendants that interleaved with content outside it now paint with it.
 - Toggling `enabled` isolates or releases the element, which schedules
-  a full read. One region pass per element.
+  a full read. One region pass per element draws: with several on one
+  element, the latest created of the enabled ones (turning another off
+  or destroying it no longer releases the element from it).
 
 ### What the runtime puts in scope
 
@@ -1145,6 +1147,35 @@ layer draws nothing).
   `warp` px and split red/blue by up to `fringe` px, scaled by
   4 × progress × (1 − progress), so progress 0 and 1 are exactly the
   outgoing and incoming pages.
+
+## Config
+
+Effects declared in JSON (spec and format: `docs/EDITOR.md`), the
+format the devtools editor will save:
+
+```ts
+import { applyConfig, createEffects } from 'compositor-gpu/fx'
+import config from './fx.config.json'
+
+const live = applyConfig(fx, config)  // { root?: ParentNode }
+live.update(next)        // diff by id; an equal config does nothing
+live.fire('hero-light', 'pointerenter')
+live.get('hero-light')   // handles: params, enabled, destroy()
+live.resolve()           // match elements mounted since
+live.destroy()
+```
+
+Effects come from the registry: `listEffects()`, `getEffect(id)`,
+`registerEffect({ id, label, scopes, schema, impulse?, create(fx, el)
+})` for a site's own. Element effects are created on every element
+`{ "fx": "name" }` (`data-fx`) or `{ "selector": ... }` matches. Triggers
+(`load`, `enter`, `exit`, `pointerenter`, `pointerleave`, `pointerdown`,
+`pointerup`, `click`) tween params to `to` (or `"rest"`), switch
+`enabled`, or `play` `progress`, with `duration` / `delay` / `ease` (a
+cubic-bezier or `{ "spring": { "visualDuration", "bounce" } }`); a
+trigger mid-tween starts from the current values, springs keep their
+velocity (`fx/tween.ts`, `Animator`). Under reduced motion tweens land
+at once. Code can still drive a config effect through `live.get(id)`.
 
 ## Testing hook
 
