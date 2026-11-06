@@ -28,6 +28,7 @@
 // `?tracks=1` the DevTools tracks.
 
 import { dialsShown, setDialsShown } from '../dials'
+import { icon } from '../editor/icons'
 import type { Editor } from '../editor/index'
 import { SKELETON_COLORS } from '../gpu/skeleton'
 import { estimateRefresh, missed } from '../profile/profiler'
@@ -280,13 +281,16 @@ export function mountDevtools(
     text: 'Edit page',
     title: 'Edit the page’s effects on the page (Alt+E)'
   })
-  const closeBtn = h('button', {
-    class: 'btn',
-    type: 'button',
-    text: '✕',
-    title: 'Close (Esc)',
-    'aria-label': 'Close'
-  })
+  const closeBtn = h(
+    'button',
+    {
+      class: 'btn ghost icon',
+      type: 'button',
+      title: 'Close (Esc)',
+      'aria-label': 'Close'
+    },
+    icon('x')
+  )
   const fileInput = h('input', {
     type: 'file',
     accept: '.cgprof,.json,application/json,application/gzip',

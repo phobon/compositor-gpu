@@ -206,7 +206,9 @@ Preview to use the page, outlines, the popover inspector, the ⌘K
 palette), session.ts (config, undo, saving, `graph.inspect()`),
 cards.ts (effect cards), form.ts (controls), edits.ts / file.ts /
 pick.ts (pure, unit-tested), store.ts (File System Access, IndexedDB,
-drafts).
+drafts). The tools share one look: `src/util/ui_css.ts` (`UI_TOKENS`,
+`UI_BASE`), used by the editor, devtools and viewer CSS; DialKit takes
+it through `applyDialsTheme()`.
 `profile.filmstrip()` (profile/filmstrip.ts) copies the canvas in the
 frame's own task, from Profiler.push via `ProfileHost.view()`: a WebGPU
 canvas is only readable before it presents. Comparisons are

@@ -377,6 +377,18 @@ devtools tab. On-canvas first; clicks select by default; it opens with
   a label | control form; the toolbar has a Select / Preview segmented
   control; the palette groups its results with keyboard hints. Line
   icons in `editor/icons.ts`.
+- The same look covers every tool (2026-11-06): `src/util/ui_css.ts`
+  holds the tokens (`UI_TOKENS`) and the shared buttons, fields,
+  sliders, switches and kbd (`UI_BASE`), used by the editor, the
+  devtools and the recording viewer. The devtools' bar has segmented
+  tabs and filled buttons; tables, number cards, hitch factors,
+  settings rows and element chips follow the editor's surfaces and
+  type. The timeline, live view and HUD canvases keep their data colours
+  and take the new neutrals and the accent for marks; the HUD gets the
+  same radius and ring. DialKit panels get the look through its custom
+  properties (`applyDialsTheme()` in `compositor-gpu/dials`, applied to
+  its own panels; the playground calls it for its DialKit root), and the
+  dials default to the dark theme.
 
 ## Open questions
 

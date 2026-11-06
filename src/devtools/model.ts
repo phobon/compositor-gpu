@@ -22,17 +22,17 @@ export const COLORS = {
   hooks: '#a78bfa',
   upload: '#38bdf8',
   encode: '#34d399',
-  other: '#9ca3af',
-  gpu: '#e5e7eb',
+  other: '#8b8b94',
+  gpu: '#ededef',
   late: '#ef4444',
   ok: 'rgba(255,255,255,0.18)',
   skipped: 'rgba(255,255,255,0.07)',
   script: '#f472b6',
   layout: '#c084fc',
   loaf: 'rgba(244,114,182,0.22)',
-  unattributed: '#6b7280',
-  compositor: '#9ca3af',
-  mark: '#38bdf8'
+  unattributed: '#6b6b74',
+  compositor: '#8b8b94',
+  mark: '#8b7cf6'
 } as const
 
 export const FACTOR_COLORS: Record<string, string> = {

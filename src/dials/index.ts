@@ -58,7 +58,7 @@ export interface DialsConfig {
   param?: string
   /** Default 'top-right'. */
   position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'
-  /** Default 'system'. */
+  /** Default 'dark' (the tools' look; util/ui_css.ts). */
   theme?: 'light' | 'dark' | 'system'
   /** Default 'inline'. */
   mode?: 'inline' | 'popover'
@@ -85,7 +85,7 @@ interface Panel {
 const config: Required<DialsConfig> = {
   param: 'dials',
   position: 'top-right',
-  theme: 'system',
+  theme: 'dark',
   mode: 'inline'
 }
 const panels = new Map<string, Panel>()
@@ -269,7 +269,61 @@ function apply(p: Panel, values: Values): void {
   }
 }
 
+// DialKit's dark theme retuned to the tools' shared look (util/ui_css.ts):
+// its custom properties only, so DialKit's own layout stays.
+const THEME = `
+  --dial-glass-bg: rgb(17 17 19 / 0.97);
+  --dial-dropdown-bg: #1c1c1f;
+  --dial-surface: rgb(255 255 255 / 0.06);
+  --dial-surface-hover: rgb(255 255 255 / 0.1);
+  --dial-surface-active: rgb(255 255 255 / 0.12);
+  --dial-surface-subtle: rgb(255 255 255 / 0.04);
+  --dial-text-root: #ededef;
+  --dial-text-section: #c9c9cf;
+  --dial-text-label: #8b8b94;
+  --dial-text-focus: #ffffff;
+  --dial-text-primary: #ededef;
+  --dial-text-secondary: #8b8b94;
+  --dial-text-tertiary: rgb(139 139 148 / 0.7);
+  --dial-border: rgb(255 255 255 / 0.08);
+  --dial-border-hover: rgb(255 255 255 / 0.14);
+  --dial-focus-ring: rgb(139 124 246 / 0.55);
+  --dial-radius: 8px;
+  --dial-row-height: 32px;
+  --dial-row-gap: 4px;
+  --dial-shadow: 0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 6px rgb(0 0 0 / 0.25),
+    0 12px 32px rgb(0 0 0 / 0.35);
+  --dial-shadow-collapsed: 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 4px 16px rgb(0 0 0 / 0.25);
+  --dial-shadow-dropdown: 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 8px 24px rgb(0 0 0 / 0.4);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Inter',
+    'Segoe UI', system-ui, sans-serif;
+`
+
+/** Retune DialKit's dark theme to the tools' look (once per page; light
+ * roots, and system ones in a light scheme, keep DialKit's). The panels
+ * built here get it; call it for DialKit roots made elsewhere. */
+export function applyDialsTheme(): void {
+  if (typeof document === 'undefined') {
+    return
+  }
+  if (document.getElementById('compositor-gpu-dials')) {
+    return
+  }
+  const style = document.createElement('style')
+  style.id = 'compositor-gpu-dials'
+  style.textContent = `
+.dialkit-root:not([data-theme="light"]):not([data-theme="system"]) {${THEME}}
+@media (prefers-color-scheme: dark) {
+  .dialkit-root[data-theme="system"] {${THEME}}
+}
+`
+  document.head.append(style)
+}
+
 function mountRoot(dk: DialKit): { destroy(): void } {
+  applyDialsTheme()
   if (config.mode === 'popover') {
     const r = dk.createDialRoot({
       position: config.position,

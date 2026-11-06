@@ -35,14 +35,17 @@ export interface ViewerOptions {
 }
 
 const VIEWER_CSS = `
-.root { position: relative; min-height: 100vh; background: #111114; }
-header { padding: 14px 16px 6px; border-bottom: 1px solid var(--line); }
-header h1 { font-size: 15px; margin: 0 0 4px; }
-.env { color: var(--dim); font-size: 11px; display: flex; gap: 14px; flex-wrap: wrap; }
-.verdict.ok { color: #34d399; } .verdict.fail { color: var(--bad); }
-.budget td.fail { color: var(--bad); }
-.vbody { padding: 8px 16px 24px; }
-pre { white-space: pre-wrap; color: var(--dim); font-size: 11px; }
+.root { position: relative; min-height: 100vh; background: #111113; }
+header { padding: 20px 20px 8px; box-shadow: 0 1px 0 var(--ring-1); }
+header h1 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.env { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 12px;
+  color: var(--muted-fg); font-size: 11px; }
+.verdict { font-weight: 600; }
+.verdict.ok { color: var(--ok); } .verdict.fail { color: var(--danger); }
+.budget td.fail { color: var(--danger); }
+.vbody { padding: 12px 20px 32px; }
+.root > .bar, .vbody > .bar { padding-left: 20px; padding-right: 20px; }
+pre { white-space: pre-wrap; color: var(--muted-fg); font: 11px var(--mono); }
 `
 
 /** Show `r` in `parent` (in a shadow root, as the devtools). */

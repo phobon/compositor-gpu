@@ -191,13 +191,13 @@ export class Timeline {
     g.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace'
     g.textBaseline = 'middle'
     // Lane labels.
-    g.fillStyle = '#9ca3af'
+    g.fillStyle = '#8b8b94'
     for (const l of LANES) {
       const [y, h] = this.laneY(l.key)
       g.fillText(l.label, 6, y + h / 2)
       g.fillStyle = 'rgba(255,255,255,0.03)'
       g.fillRect(LABEL_W, y, this.width - LABEL_W, h)
-      g.fillStyle = '#9ca3af'
+      g.fillStyle = '#8b8b94'
     }
     const m = this.model
     this.hits = []
@@ -219,9 +219,9 @@ export class Timeline {
     if (s) {
       const b = this.x(m.at(this.selected))
       const a = this.x(m.at(this.selected) - s.dt)
-      g.fillStyle = 'rgba(56,189,248,0.12)'
+      g.fillStyle = 'rgba(139,124,246,0.14)'
       g.fillRect(a, AXIS_H, Math.max(2, b - a), TIMELINE_H - AXIS_H)
-      g.strokeStyle = '#38bdf8'
+      g.strokeStyle = '#8b7cf6'
       g.lineWidth = 1
       g.strokeRect(
         a + 0.5,
@@ -239,7 +239,7 @@ export class Timeline {
     const [y, h] = this.laneY('film')
     const film = m.report.filmstrip ?? []
     if (film.length === 0) {
-      g.fillStyle = '#6b7280'
+      g.fillStyle = '#6b6b74'
       g.fillText(
         'no pictures (Settings: filmstrip)',
         Math.max(LABEL_W, this.x(m.start)) + 6,
@@ -285,7 +285,7 @@ export class Timeline {
     const target = span / Math.max(1, (this.width - LABEL_W) / 90)
     const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
     const step = steps.find((s) => s >= target) ?? 10000
-    g.fillStyle = '#6b7280'
+    g.fillStyle = '#6b6b74'
     g.strokeStyle = 'rgba(255,255,255,0.06)'
     g.lineWidth = 1
     for (let t = Math.ceil(this.t0 / step) * step; t <= this.t1; t += step) {
@@ -408,7 +408,7 @@ export class Timeline {
         g.globalAlpha = 1
         const top = [...gpu.spans].sort((p, q) => q.ms - p.ms).slice(0, 3)
         if (x1 - x0 > 40 && top[0]) {
-          g.fillStyle = '#111114'
+          g.fillStyle = '#111113'
           g.fillText(top[0].label, x0 + 3, gy + gh / 2, x1 - x0 - 6)
         }
         this.hits.push({
@@ -449,7 +449,7 @@ export class Timeline {
         g.fillStyle = mine ? COLORS.compositor : COLORS.script
         g.fillRect(a, y + 4, Math.max(1, b - a), h - 8)
         if (b - a > 50) {
-          g.fillStyle = '#111114'
+          g.fillStyle = '#111113'
           g.fillText(s.name, a + 3, y + h / 2, b - a - 6)
         }
         this.hits.push({

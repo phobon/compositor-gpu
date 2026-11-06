@@ -35,13 +35,13 @@ const COLORS = {
   hooks: '#a78bfa',
   upload: '#38bdf8',
   encode: '#34d399',
-  other: '#9ca3af',
+  other: '#8b8b94',
   gpu: '#ffffff',
   late: 'rgba(239, 68, 68, 0.55)',
   dt: 'rgba(255, 255, 255, 0.08)'
 } as const
 const TEXT = '#e5e7eb'
-const DIM = '#9ca3af'
+const DIM = '#8b8b94'
 const BETTER = '#34d399'
 const WORSE = '#f87171'
 
@@ -163,7 +163,9 @@ export class Hud {
       height: `${H}px`,
       zIndex: '2147483647',
       pointerEvents: 'none',
-      borderRadius: '6px'
+      borderRadius: '12px',
+      boxShadow:
+        '0 0 0 1px rgb(255 255 255 / 0.08), 0 12px 32px rgb(0 0 0 / 0.35)'
     } satisfies Partial<CSSStyleDeclaration>)
     document.documentElement.appendChild(c)
     this.canvas = c
@@ -210,7 +212,7 @@ export class Hud {
     const base = H - 6
     const y = (ms: number): number => base + Math.min(ms, refresh * 2) * scale
     g.clearRect(0, 0, W, H)
-    g.fillStyle = 'rgba(17, 17, 20, 0.82)'
+    g.fillStyle = 'rgba(17, 17, 19, 0.92)'
     g.fillRect(0, 0, W, H)
 
     const n = Math.floor((W - 8) / COL)

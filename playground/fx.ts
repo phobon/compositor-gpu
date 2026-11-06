@@ -12,6 +12,7 @@ import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import * as std from 'typegpu/std'
 import { mountDebugPanel } from '@/debug'
+import { applyDialsTheme } from '@/dials'
 import { mountEditor } from '@/editor'
 import {
   applyConfig,
@@ -120,6 +121,7 @@ function mountDials(
     config[d.name] = folder
   }
   Object.assign(config, extra)
+  applyDialsTheme()
   createDialRoot({ position: 'top-right', theme: 'dark' })
   const kit = createDialKit('Effects', config, { onAction })
   kit.subscribe((values) => {
