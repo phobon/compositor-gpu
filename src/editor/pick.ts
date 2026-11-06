@@ -1,4 +1,4 @@
-// Edit tab helpers (docs/EDITOR.md, E2) that need no live DOM: a short
+// Editor helpers (docs/EDITOR.md, E2) that need no live DOM: a short
 // selector matching one element, a name to suggest for `data-fx`, and a
 // label for lists and outlines.
 

@@ -1,4 +1,4 @@
-// Config files for the Edit tab (src/devtools/edit_file.ts): parsing,
+// Config files for the Edit tab (src/editor/file.ts): parsing,
 // writing and diffs.
 // Run: npm run test:unit
 import assert from 'node:assert/strict'
@@ -8,7 +8,7 @@ import {
   diffConfigs,
   parseConfig,
   serialize
-} from '../../src/devtools/edit_file'
+} from '../../src/editor/file'
 import type { FxConfig } from '../../src/fx/config'
 
 const cfg: FxConfig = {

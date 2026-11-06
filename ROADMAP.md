@@ -204,24 +204,32 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         `fx_tween.test.ts`. Shots `fx-config` / `fx-config-then-off`
         written, not yet run (M1 Pro, `--update` first for goldens).
   - [x] E2 (2026-11-05): `graph.inspect()`, the devtools Edit tab
-        (`devtools/edit_view.ts`, `devtools/pick.ts`): pick mode, layer
+        (since replaced by `compositor-gpu/editor`): pick mode, layer
         list, inspector with trigger firing; `test/unit/edit_pick.test.ts`.
         Tried on `fx.html` in Chrome (pick, ancestors, select, hover
         trigger, Fire).
   - [x] E3 (2026-11-05): adding and removing effects, param and
         trigger editing through `update()` (params-only edits retune in
-        place), undo (`devtools/edit_model.ts`, `devtools/edit_form.ts`;
+        place), undo (now `editor/edits.ts`, `editor/form.ts`;
         `test/unit/edit_model.test.ts`). Tried on `fx.html`.
-  - [x] E4 (2026-11-05): saving (`devtools/edit_store.ts`: File System
+  - [x] E4 (2026-11-05): saving (now `editor/store.ts`: File System
         Access, IndexedDB handle, autosave, localStorage draft,
-        download / upload fallback; `devtools/edit_file.ts`, unit-tested);
+        download / upload fallback; `editor/file.ts`, unit-tested);
         `playground/fx.config.json` with an HMR accept. Pickers not
         tried in an automated run.
   - [ ] E5 (prepared 2026-11-05): `useFxConfig`, trigger `rootMargin`
-        and `past`; in MDS-home the AppleFeature reveal moved to
-        `Duo/fx.config.json` (uncommitted there too). Needs this repo
+        and `past`, effect `media`; in MDS-home (`feature/duo_updates`)
+        the AppleFeature reveal moved to `Duo/fx.config.json`
+        (uncommitted there too). Needs this repo
         committed and MDS-home's submodule bumped before /duo builds;
         then check the reveal against useReveal's at dpr 2.
+  - [ ] E6 (2026-11-06): the editor as its own on-page experience,
+        `compositor-gpu/editor` (`src/editor/`): select by default
+        (Space / Preview to use the page), popover inspector by the
+        selection, ⌘K palette, effect markers; opens with `?edit`, Alt+E
+        or the devtools' Edit page button (the Edit tab is gone);
+        provider `editor` prop. Tried on `fx.html` (Chromium,
+        SwiftShader): select, popover, palette, Space preview.
 - [x] `progressiveBlur` preset: Gaussian whose radius grows toward
       weighted viewport (or region) edges, bands or corners; shot
       `fx-progressive`. Used by the `/duo` app sections (MDS-home

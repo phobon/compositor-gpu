@@ -12,6 +12,7 @@ import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import * as std from 'typegpu/std'
 import { mountDebugPanel } from '@/debug'
+import { mountEditor } from '@/editor'
 import {
   applyConfig,
   blur,
@@ -148,6 +149,9 @@ async function boot(): Promise<void> {
   })
   if (!vrMode && !navigator.webdriver) {
     mountDebugPanel(compositor)
+    // The on-page editor: ?edit opens it, Alt+E (or the devtools' Edit
+    // page button) toggles it.
+    mountEditor(compositor)
   }
   const fx = createEffects(compositor)
   const b = blur(fx, { enabled: false, radius: 10 })

@@ -195,10 +195,18 @@ The CLI is tools/profile.ts (`npm run profile`), with tools/profile/
 test/unit/profile_cli.test.ts; html: the report, building
 src/devtools/viewer_entry.ts as an IIFE cached in the OS temp dir) and
 tools/inject.ts (the inject bundle, shared with test:site).
-The Edit tab (`devtools/edit_view.ts`, docs/EDITOR.md) picks composited
-elements and lists the page's config effects (`applyConfig`,
-`fx/config.ts`; effects by id from `fx/registry.ts`) and what
-`graph.inspect()` reports.
+The devtools' Edit page button (or Alt+E) loads the on-page editor.
+
+**Editor** (`compositor-gpu/editor`, `src/editor/`, docs/EDITOR.md):
+edits the page's config effects (`applyConfig`, `fx/config.ts`; effects
+by id from `fx/registry.ts`) on the page. `mountEditor(compositor)`
+(memoised; opens with `?edit` or Alt+E; the provider's `editor` prop):
+index.ts (the UI: toolbar, select-by-default overlay with Space or
+Preview to use the page, outlines, the popover inspector, the ⌘K
+palette), session.ts (config, undo, saving, `graph.inspect()`),
+cards.ts (effect cards), form.ts (controls), edits.ts / file.ts /
+pick.ts (pure, unit-tested), store.ts (File System Access, IndexedDB,
+drafts).
 `profile.filmstrip()` (profile/filmstrip.ts) copies the canvas in the
 frame's own task, from Profiler.push via `ProfileHost.view()`: a WebGPU
 canvas is only readable before it presents. Comparisons are

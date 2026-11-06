@@ -16,6 +16,7 @@ import {
   History,
   removeEffect,
   setEnabled,
+  setMedia,
   setParam,
   setTrigger,
   uniqueId
@@ -1093,6 +1094,19 @@ export class EditView {
         this.commit(setEnabled(c, i.id, enabled.checked))
       }
     })
+    const media = h('input', {
+      type: 'text',
+      class: 'media',
+      placeholder: 'media query (any)',
+      value: cfg?.media ?? '',
+      title: 'Only while this media query matches'
+    })
+    media.addEventListener('change', () => {
+      const c = now()
+      if (c) {
+        this.commit(setMedia(c, i.id, media.value))
+      }
+    })
     const remove = h('button', {
       class: 'btn',
       type: 'button',
@@ -1179,6 +1193,7 @@ export class EditView {
           ? h('span', { class: 'dim', text: `on ${copies} elements` })
           : null,
         h('span', { class: 'spacer' }),
+        media,
         remove
       ),
       def

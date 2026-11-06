@@ -1,4 +1,4 @@
-# Edit mode (spec; E1-E5 built)
+# Edit mode (spec; E1-E6 built)
 
 A design-tool workflow for `/fx`: pick a composited element on the page,
 attach effects to it with triggers, tune their params, and save the
@@ -15,8 +15,9 @@ with Ben 2026-11-05:
   (no GSAP/Motion needed for config-driven effects). This narrows the M4
   rule (timing comes from the page's library) to code-driven effects;
   code can still drive any param of a config effect.
-- The editor is an `Edit` tab in `compositor-gpu/devtools`, so it works
-  on any page that mounts devtools, `/duo` included.
+- The editor was first an `Edit` tab in `compositor-gpu/devtools`; since
+  E6 it is its own entry, `compositor-gpu/editor`, on the page itself
+  (Deviations (E6)).
 
 Three parts, built in this order: the effect registry, the config runtime
 (both in `/fx`, shipped to production), and the editor (devtools only).
@@ -227,7 +228,7 @@ Saving:
   material labels, `depth`) from the current scene's groups and the
   registered materials. Cutouts and plain records aren't listed.
 - The devtools find configs through `liveConfigs()` (`fx/config.ts`);
-  a LiveConfig also has `instances()` and `version`. The Edit tab loads
+  a LiveConfig also has `instances()` and `version`. The editor loads
   `fx/config` by dynamic import on first show, so the devtools bundle
   doesn't carry the effects until then.
 - Outlines use `getBoundingClientRect`, like the devtools' other
@@ -307,23 +308,75 @@ Saving:
   `resolve()` after every render of its component, and returns the
   LiveConfig. `resolve()` bumps `version` only when it created or
   dropped something, and config warnings are printed once per page.
+- `media` on an effect (useReveal's `media`): while the query doesn't
+  match none is created, and one is destroyed when it stops matching
+  (a `change` listener re-resolves). The editor has a field for it;
+  an effect whose query doesn't match has no instance, so it isn't
+  listed until it does.
 - Two trigger fields to express `useReveal`'s ScrollTrigger reveal:
   `rootMargin` on enter/exit (`'0px 0px -20% 0px'` is `'top 80%'`), and
   `past` on enter: an element already in view or scrolled above the
   line when observing starts lands at the trigger's end without
   animating (`'land'`, the default) or plays (`'play'`).
-- MDS-home: the AppleFeature screenshot's reveal moved from
+- MDS-home (`feature/duo_updates`): the AppleFeature screenshot's
+  reveal moved from
   `useReveal(shotRef, DUO_REVEAL)` to `src/components/Duo/fx.config.json`
   (`applefeature-reveal`, a `motion` with `from.*` and a `play forward`
-  enter trigger, 0.7 s, `[0.22, 1, 0.36, 1]`), matched by
+  enter trigger, 0.7 s, `[0.22, 1, 0.36, 1]`, media
+  `(min-width: 768px)` as DUO_REVEAL), matched by
   `data-fx="duo-applefeature-shot"`, applied by `DuoFx` (useFxConfig)
-  inside the provider; `?devtools` mounts the devtools.
+  inside the provider; the branch's `?devtools` mounts the devtools.
 - Differences from useReveal: the motion's rest is progress 0, so a
   shot below the line is hidden from apply rather than from the first
   ScrollTrigger refresh, and one already past it is shown on the first
   IntersectionObserver callback (a frame later); under reduced motion
   the shot appears at once when it enters instead of never being
-  hidden; there are no dials (the Edit tab tunes it).
+  hidden; there are no dials (the editor tunes it).
+
+## Deviations (E6): the on-page editor
+
+Decided with Ben 2026-11-06: editing is its own experience, not a
+devtools tab. On-canvas first; clicks select by default; it opens with
+`?edit`, Alt+E or the devtools' Edit page button.
+
+- `compositor-gpu/editor` (`src/editor/`): `mountEditor(compositor,
+  { open?, shortcut? })`, one per compositor; `open` defaults to
+  whether the URL has `?edit` (not `?edit=0`); Alt+E toggles. The
+  React provider's `editor` prop mounts it; the devtools load it on
+  their Edit page button or Alt+E. The devtools' Edit tab is removed.
+- Select mode (the default): an overlay over the page takes the
+  pointer; hover outlines the candidate (`[` / `]` or Alt+wheel walk
+  ancestors), a click selects. Hold Space, or switch the toolbar to
+  Preview, to use the page (hover and click triggers fire for real).
+- Elements with config effects carry a dashed outline while editing.
+- The selection gets a popover inspector beside it (right, else left,
+  else at the viewport's right edge; kept within the viewport):
+  composited-as chips, the match (and Copy data-fx), the effect cards
+  (collapsible; enabled, media, remove, params, triggers as one-line
+  summaries with ▶ that open to their fields), + Effect.
+- A page effect is selected from the palette; its popover sits under
+  the toolbar.
+- ⌘K palette: page effects, composited elements and elements with
+  effects (outlined as you move through them), "Page effect: …" to add
+  one, and Save, Save as…, Open…, Undo, Redo, the mode, Close.
+- Toolbar (top centre): Select / Preview, ⌘K, the file chip (click to
+  save, or to allow writing again), Save, Undo, Redo, a menu (Open…,
+  Save as…, Autosave, Copy config), close. Banners (a draft, a file
+  that differs) under it; messages as a toast at the bottom.
+- Code: `index.ts` (UI), `session.ts` (`EditSession`: config, undo,
+  saving, inspection, no UI), `cards.ts`, `form.ts`, and the pure
+  `edits.ts`, `file.ts`, `pick.ts` (moved from `src/devtools/`, still
+  under `test/unit/edit_*.test.ts`), `store.ts`. `h()` moved to
+  `src/util/h.ts` (the devtools re-export it).
+- Look (2026-11-06): neutral dark surfaces with one accent (violet,
+  also the outlines), 28 px controls on a 4 px grid, 6 / 8 / 12 px radii,
+  depth from layered shadows and a 1 px ring. Params are label | control
+  rows (slider with a filled track and a number field, X/Y/Z/W fields,
+  swatch, hex and alpha); effects are collapsible sections with a switch
+  and a remove icon; triggers a list of one-line summaries that open to
+  a label | control form; the toolbar has a Select / Preview segmented
+  control; the palette groups its results with keyboard hints. Line
+  icons in `editor/icons.ts`.
 
 ## Open questions
 
@@ -333,9 +386,8 @@ Saving:
 - Per-breakpoint params (`@media` keys on `params`)?
 - Should a selected element without `data-fx` get one written into
   the source by a dev-server endpoint, rather than copied by hand?
-- A `media` condition per effect (useReveal's `media`, DuoBento's
-  `SHOWN`), so bento reveals with targets, stagger and blur can move too.
-- Staggered triggers over the elements a selector matches.
+- Staggered triggers over the elements a selector matches, and a blur
+  tied to a motion's progress, so the bento reveals can move too.
 - Scroll-scrubbed triggers (`progress` bound to scroll through an
   element) — the GSAP recipe covers it today; a `scroll` trigger would
   make it editable.

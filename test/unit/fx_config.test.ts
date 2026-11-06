@@ -568,3 +568,53 @@ test('enter: past the line at load lands, below it plays on entry', () => {
     g.IntersectionObserver = prev
   }
 })
+
+test('media: created while the query matches, dropped when it stops', () => {
+  fresh()
+  const g = globalThis as { matchMedia?: unknown }
+  const prev = g.matchMedia
+  const mql = {
+    matches: false,
+    fns: new Set<() => void>(),
+    addEventListener(_: string, f: () => void) {
+      this.fns.add(f)
+    },
+    removeEventListener(_: string, f: () => void) {
+      this.fns.delete(f)
+    }
+  }
+  g.matchMedia = () => mql
+  const flip = (on: boolean) => {
+    mql.matches = on
+    for (const f of mql.fns) {
+      f()
+    }
+  }
+  try {
+    const p = page(new FakeEl('a'))
+    const live = applyConfig(
+      fx(),
+      {
+        version: 1,
+        elements: [
+          {
+            match: { fx: 'a' },
+            effects: [{ id: 'm', effect: 'probe', media: '(min-width: 768px)' }]
+          }
+        ]
+      },
+      { root: p.root, clock: clock().c }
+    )
+    assert.equal(live.get('m').length, 0)
+    flip(true)
+    assert.equal(live.get('m').length, 1)
+    const first = probes[0] as Probe
+    flip(false)
+    assert.equal(live.get('m').length, 0)
+    assert.ok(first.destroyed)
+    live.destroy()
+    assert.equal(mql.fns.size, 0)
+  } finally {
+    g.matchMedia = prev
+  }
+})

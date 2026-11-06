@@ -63,6 +63,10 @@ export interface EffectConfig {
   params?: ParamInputs
   /** Default true. */
   enabled?: boolean
+  /** A media query the effect also needs ('(min-width: 768px)'): while
+   * it doesn't match, none is created, and one is destroyed when it
+   * stops matching. */
+  media?: string
   triggers?: readonly TriggerConfig[]
 }
 
@@ -90,7 +94,7 @@ export interface ConfigOptions {
   clock?: ConfigClock
 }
 
-/** One created effect (devtools' Edit tab lists them). */
+/** One created effect (the editor lists them). */
 export interface ConfigInstance {
   readonly id: string
   readonly effect: string
@@ -235,6 +239,22 @@ export function applyConfig(
   let raf = 0
   let destroyed = false
   let version = 0
+
+  // Media queries named by effects, each re-resolving on a change.
+  const queries = new Map<string, MediaQueryList>()
+  const onMedia = (): void => update(current, true)
+  const matches = (q: string | undefined): boolean => {
+    if (!q || typeof matchMedia === 'undefined') {
+      return true
+    }
+    let mql = queries.get(q)
+    if (!mql) {
+      mql = matchMedia(q)
+      mql.addEventListener('change', onMedia)
+      queries.set(q, mql)
+    }
+    return mql.matches
+  }
 
   const match = (m: Match): Element[] => {
     const sel = 'fx' in m ? `[data-fx="${cssEscape(m.fx)}"]` : m.selector
@@ -553,12 +573,12 @@ export function applyConfig(
       wanted.set(cfg.id, { cfg, page, els })
     }
     for (const cfg of next.page ?? []) {
-      want(cfg, true, [null])
+      want(cfg, true, matches(cfg.media) ? [null] : [])
     }
     for (const ec of next.elements ?? []) {
       const els = match(ec.match)
       for (const cfg of ec.effects) {
-        want(cfg, false, els)
+        want(cfg, false, matches(cfg.media) ? els : [])
       }
     }
     for (const [id, e] of entries) {
@@ -674,6 +694,10 @@ export function applyConfig(
       }
       destroyed = true
       lives.delete(live)
+      for (const mql of queries.values()) {
+        mql.removeEventListener('change', onMedia)
+      }
+      queries.clear()
       if (raf) {
         clock.cancel(raf)
         raf = 0

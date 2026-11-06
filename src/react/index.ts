@@ -16,6 +16,7 @@ import {
   useState
 } from 'react'
 import type { Devtools, DevtoolsOptions } from '../devtools/index'
+import type { Editor, EditorOptions } from '../editor/index'
 import type * as FxLib from '../fx/index'
 import type { Effects, Trail, TrailOptions } from '../fx/index'
 import type { ParamSchema, ParamValues } from '../fx/params'
@@ -58,6 +59,10 @@ export interface CompositorProviderProps {
   /** Mount `compositor-gpu/devtools` (loaded only then): true, or its
    * options. Read when the compositor is created. */
   devtools?: boolean | DevtoolsOptions
+  /** Mount `compositor-gpu/editor` (loaded only then): true, or its
+   * options. It opens with `?edit` in the URL or Alt+E. Read when the
+   * compositor is created. */
+  editor?: boolean | EditorOptions
   /** Expose the compositor on `window[global]` for the console. Default
    * '__gpu'; false for none. */
   global?: string | false
@@ -101,6 +106,7 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
     let fx: Effects | null = null
     let trail: Trail | null = null
     let tools: Devtools | null = null
+    let editor: Editor | null = null
     let off = (): void => {}
 
     Promise.all([import('../index'), import('../fx/index')])
@@ -138,6 +144,18 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
               console.warn('[compositor-gpu] devtools:', err)
             })
         }
+        if (p.editor) {
+          const opts = p.editor === true ? {} : p.editor
+          import('../editor/index')
+            .then((m) => {
+              if (!cancelled) {
+                editor = m.mountEditor(c, opts)
+              }
+            })
+            .catch((err: unknown) => {
+              console.warn('[compositor-gpu] editor:', err)
+            })
+        }
         if (global) {
           win[global] = c
         }
@@ -158,6 +176,7 @@ export function CompositorProvider(props: CompositorProviderProps): ReactNode {
       cancelled = true
       off()
       tools?.destroy()
+      editor?.destroy()
       trail?.destroy()
       fx?.release()
       compositor?.destroy()
@@ -329,7 +348,7 @@ export interface FxConfigOptions {
  * Effects from a config (`lib.applyConfig`, docs/EDITOR.md) for as long
  * as the component is mounted. A new `config` object goes to
  * `live.update()`, which does nothing when it equals what runs, so a
- * hot-reloaded JSON import (the devtools' Edit tab saving it) applies
+ * hot-reloaded JSON import (the editor saving it) applies
  * without a remount. Elements are matched again after each render of
  * the caller (content mounted since). Runs with reduced motion too
  * (its tweens land at once). Returns the LiveConfig, or null before the

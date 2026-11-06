@@ -1,4 +1,4 @@
-// Edit tab helpers (src/devtools/pick.ts): selectors that match one
+// Edit tab helpers (src/editor/pick.ts): selectors that match one
 // element, data-fx name suggestions, labels.
 // Run: npm run test:unit
 import assert from 'node:assert/strict'
@@ -8,7 +8,7 @@ import {
   type PickNode,
   selectorFor,
   suggestName
-} from '../../src/devtools/pick'
+} from '../../src/editor/pick'
 
 class N implements PickNode {
   parentElement: N | null = null

@@ -8,10 +8,11 @@
 //   Elements  cost by element, effect, GPU pass and what kept the loop
 //             running
 //   Compare   the open recording against another (a baseline)
-//   Edit      pick composited elements, the page's config effects
-//             (docs/EDITOR.md)
 //   Settings  the flight recorder, Chrome DevTools tracks, the frame HUD,
 //             dials, skeleton, scene reuse, where the panel docks
+//
+// Edit page (or Alt+E) opens compositor-gpu/editor (docs/EDITOR.md) on
+// the page, loaded then.
 //
 // While mounted, the flight recorder keeps the last seconds (15 by
 // default): after a jank, Save (or Alt+Shift+S) turns them into a
@@ -27,6 +28,7 @@
 // `?tracks=1` the DevTools tracks.
 
 import { dialsShown, setDialsShown } from '../dials'
+import type { Editor } from '../editor/index'
 import { SKELETON_COLORS } from '../gpu/skeleton'
 import { estimateRefresh, missed } from '../profile/profiler'
 import {
@@ -39,7 +41,6 @@ import {
 import type { Compositor } from '../types'
 import { renderCompare } from './compare_view'
 import { CSS } from './css'
-import { EditView } from './edit_view'
 import { renderElements } from './elements_view'
 import { type FrameActions, renderFrame } from './frame_view'
 import { LiveView } from './live_view'
@@ -51,7 +52,6 @@ export type DevtoolsTab =
   | 'timeline'
   | 'elements'
   | 'compare'
-  | 'edit'
   | 'settings'
 
 export interface DevtoolsSettings {
@@ -119,7 +119,6 @@ const TABS: [DevtoolsTab, string][] = [
   ['timeline', 'Timeline'],
   ['elements', 'Elements'],
   ['compare', 'Compare'],
-  ['edit', 'Edit'],
   ['settings', 'Settings']
 ]
 
@@ -275,6 +274,12 @@ export function mountDevtools(
     text: 'Fit',
     title: 'Show the whole recording (F)'
   })
+  const editBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    text: 'Edit page',
+    title: 'Edit the page’s effects on the page (Alt+E)'
+  })
   const closeBtn = h('button', {
     class: 'btn',
     type: 'button',
@@ -297,6 +302,7 @@ export function mountDevtools(
     importBtn,
     exportBtn,
     fitBtn,
+    editBtn,
     h('span', { class: 'spacer' }),
     closeBtn,
     fileInput
@@ -311,7 +317,6 @@ export function mountDevtools(
     timeline: h('div', { class: 'view' }),
     elements: h('div', { class: 'view' }),
     compare: h('div', { class: 'view' }),
-    edit: h('div', { class: 'view' }),
     settings: h('div', { class: 'view' })
   }
   // Compare: the open recording against another one.
@@ -377,10 +382,6 @@ export function mountDevtools(
   views.elements.append(empty())
   panel.append(grip, bar, status, body)
   root.append(fab, panel, outline)
-  const editView = new EditView(compositor, root, host, (s) => {
-    status.textContent = s || hint()
-  })
-  views.edit.append(editView.root)
   shadow.append(style, root)
   document.documentElement.append(host)
 
@@ -777,11 +778,6 @@ export function mountDevtools(
     if (t === 'compare') {
       renderCompareTab()
     }
-    if (t === 'edit') {
-      editView.show()
-    } else {
-      editView.hide()
-    }
     if (t === 'live' && !loop) {
       loop = requestAnimationFrame(tick)
     }
@@ -799,12 +795,27 @@ export function mountDevtools(
     fab.hidden = false
     settings.open = false
     actions.outline(null)
-    editView.hide()
     store()
     fab.focus()
   }
   fab.addEventListener('click', () => openPanel())
   closeBtn.addEventListener('click', closePanel)
+
+  // The editor (compositor-gpu/editor), loaded on first use. Once it is
+  // mounted it handles Alt+E itself.
+  let editor: Promise<Editor> | null = null
+  let editorMounted = false
+  const openEditor = (): void => {
+    editor ??= import('../editor/index').then((m) => {
+      editorMounted = true
+      return m.mountEditor(compositor, { open: false })
+    })
+    void editor.then((ed) => {
+      closePanel()
+      ed.open()
+    })
+  }
+  editBtn.addEventListener('click', openEditor)
 
   // Resizing.
   grip.addEventListener('pointerdown', (e) => {
@@ -840,19 +851,14 @@ export function mountDevtools(
     const typing =
       t instanceof HTMLElement &&
       (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+    if (!editorMounted && !typing && matchShortcut(e, 'Alt+E')) {
+      e.preventDefault()
+      openEditor()
+      return
+    }
     if (shortcut && !typing && matchShortcut(e, shortcut)) {
       e.preventDefault()
       void save()
-      return
-    }
-    if (
-      settings.tab === 'edit' &&
-      !panel.hidden &&
-      !typing &&
-      editView.key(e, inPanel)
-    ) {
-      e.preventDefault()
-      e.stopPropagation()
       return
     }
     if (!inPanel || typing || panel.hidden) {
@@ -945,7 +951,6 @@ export function mountDevtools(
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onScroll)
       timeline.destroy()
-      editView.destroy()
       if (recording) {
         void profile.stop()
       }

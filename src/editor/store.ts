@@ -1,7 +1,7 @@
 import type { FxConfig } from '../fx/config'
-import { parseConfig, serialize } from './edit_file'
+import { parseConfig, serialize } from './file'
 
-// Where the Edit tab saves (docs/EDITOR.md, E4): a file picked with the
+// Where the editor saves (docs/EDITOR.md, E4): a file picked with the
 // File System Access API, its handle kept in IndexedDB per page path so
 // a reload needs one click to write again, and a draft in localStorage
 // until a write succeeds. Without the API (Safari, Firefox) files go

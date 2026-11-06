@@ -1,4 +1,4 @@
-// The Edit tab's config changes and undo history (src/devtools/edit_model.ts).
+// The Edit tab's config changes and undo history (src/editor/edits.ts).
 // Run: npm run test:unit
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -11,7 +11,7 @@ import {
   setParam,
   setTrigger,
   uniqueId
-} from '../../src/devtools/edit_model'
+} from '../../src/editor/edits'
 import type { FxConfig } from '../../src/fx/config'
 
 const empty: FxConfig = { version: 1 }

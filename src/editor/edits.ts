@@ -6,7 +6,7 @@ import type {
   TriggerConfig
 } from '../fx/config'
 
-// The Edit tab's changes to a config (docs/EDITOR.md, E3), as pure
+// The editor's changes to a config (docs/EDITOR.md, E3), as pure
 // functions from one FxConfig to the next, and the undo history over
 // them. Effects are addressed by id (unique in a config).
 
@@ -15,6 +15,7 @@ interface MEffect {
   effect: string
   params?: Record<string, ParamInput>
   enabled?: boolean
+  media?: string
   triggers?: TriggerConfig[]
 }
 interface MGroup {
@@ -169,6 +170,16 @@ export const setEnabled = (c: FxConfig, id: string, on: boolean): FxConfig =>
       delete e.enabled
     } else {
       e.enabled = false
+    }
+  })
+
+/** Set (or with '', unset) the media query an effect needs. */
+export const setMedia = (c: FxConfig, id: string, media: string): FxConfig =>
+  editEffect(c, id, (e) => {
+    if (media.trim()) {
+      e.media = media.trim()
+    } else {
+      delete e.media
     }
   })
 

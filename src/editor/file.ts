@@ -1,6 +1,6 @@
 import type { EffectConfig, FxConfig, Match } from '../fx/config'
 
-// The Edit tab's config files (docs/EDITOR.md, E4), without the browser:
+// The editor's config files (docs/EDITOR.md, E4), without the browser:
 // reading and writing their text, and what differs between two configs.
 
 /** The file's text: two-space JSON and a final newline. */

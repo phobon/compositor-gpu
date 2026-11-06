@@ -1177,7 +1177,7 @@ trigger mid-tween starts from the current values, springs keep their
 velocity (`fx/tween.ts`, `Animator`). Under reduced motion tweens land
 at once. Code can still drive a config effect through `live.get(id)`.
 
-The devtools' Edit tab writes the file the page imports. Let the page
+The editor (`compositor-gpu/editor`) writes the file the page imports. Let the page
 take the new file without a reload (`update()` with the config it
 already runs does nothing), or every save reloads the page:
 
