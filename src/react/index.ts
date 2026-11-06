@@ -318,3 +318,50 @@ export function useTouchTrail(
     }
   })
 }
+
+export interface FxConfigOptions {
+  /** Where matches are looked up (default document). Read when the
+   * config is applied. */
+  root?: RefObject<ParentNode | null>
+}
+
+/**
+ * Effects from a config (`lib.applyConfig`, docs/EDITOR.md) for as long
+ * as the component is mounted. A new `config` object goes to
+ * `live.update()`, which does nothing when it equals what runs, so a
+ * hot-reloaded JSON import (the devtools' Edit tab saving it) applies
+ * without a remount. Elements are matched again after each render of
+ * the caller (content mounted since). Runs with reduced motion too
+ * (its tweens land at once). Returns the LiveConfig, or null before the
+ * runtime is up.
+ */
+export function useFxConfig(
+  config: FxLib.FxConfig,
+  opts: FxConfigOptions = {}
+): FxLib.LiveConfig | null {
+  const [live, setLive] = useState<FxLib.LiveConfig | null>(null)
+  const latest = useRef(config)
+  latest.current = config
+  const root = useRef(opts.root)
+  useFxEffect(
+    ({ fx, lib }) => {
+      const l = lib.applyConfig(fx, latest.current, {
+        root: root.current?.current ?? undefined
+      })
+      setLive(l)
+      return () => {
+        l.destroy()
+        setLive(null)
+      }
+    },
+    [],
+    { reducedMotion: true }
+  )
+  useEffect(() => {
+    live?.update(config)
+  }, [live, config])
+  useEffect(() => {
+    live?.resolve()
+  })
+  return live
+}

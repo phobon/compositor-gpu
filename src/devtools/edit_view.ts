@@ -8,6 +8,7 @@ import type {
 import type { EffectDef } from '../fx/registry'
 import type { InspectedElement } from '../gpu/graph'
 import type { Compositor } from '../types'
+import { describeDiff, diffConfigs } from './edit_file'
 import { paramRow, triggerRow } from './edit_form'
 import {
   addEffect,
@@ -19,13 +20,15 @@ import {
   setTrigger,
   uniqueId
 } from './edit_model'
+import { download, FileStore, upload } from './edit_store'
 import { h } from './model'
 import { labelOf, selectorFor, suggestName } from './pick'
 
 // The Edit tab (docs/EDITOR.md, E2, E3): pick a composited element on
 // the page, list the page's composited elements and config effects, and
 // edit the selection's effects: add and remove them, their rest params,
-// enabled and triggers, through LiveConfig.update(), with undo. /fx's
+// enabled and triggers, through LiveConfig.update(), with undo; save the
+// config to a file (edit_store.ts: autosave, a draft until written). /fx's
 // config, registry and runtime are loaded on first show, so the devtools
 // don't bundle the effects until then.
 
@@ -41,6 +44,9 @@ type Selection = { el: Element } | { page: string }
 const MEDIA = new Set(['IMG', 'SVG', 'svg', 'CANVAS', 'VIDEO', 'PICTURE'])
 /** Refresh period for the list, the inspector and the outlines, ms. */
 const REFRESH_MS = 500
+/** Autosave after the last change, ms. */
+const AUTOSAVE_MS = 300
+const AUTOSAVE_KEY = 'compositor-gpu:edit-autosave'
 
 const fmt = (v: unknown): string => {
   if (typeof v === 'number') {
@@ -106,6 +112,30 @@ export class EditView {
     title: 'Copy the config as JSON'
   })
   private readonly livePicker = h('select', { 'aria-label': 'Config' })
+  private readonly fileChip = h('button', {
+    class: 'chip file',
+    type: 'button'
+  })
+  private readonly openBtn = h('button', { class: 'btn', type: 'button' })
+  private readonly saveBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    title: 'Save (⌘S)'
+  })
+  private readonly saveAsBtn = h('button', {
+    class: 'btn',
+    type: 'button',
+    text: 'Save as…'
+  })
+  private readonly autoBox = h('input', {
+    type: 'checkbox',
+    title: 'Write the file 300 ms after each change'
+  })
+  private readonly banner = h('div', { class: 'banner' })
+  private readonly store = new FileStore()
+  private dirty = false
+  private saveTimer: ReturnType<typeof setTimeout> | undefined
+  private restored: Promise<void> | null = null
   private readonly list = h('div', { class: 'layers' })
   private readonly inspector = h('div', { class: 'inspector' })
   private readonly overlay = h('div', { class: 'pick-overlay' })
@@ -157,6 +187,25 @@ export class EditView {
       this.liveIndex = Number(this.livePicker.value)
       this.refresh(true)
     })
+    this.openBtn.textContent = this.store.supported ? 'Open…' : 'Upload…'
+    this.saveBtn.textContent = this.store.supported ? 'Save' : 'Download'
+    this.saveAsBtn.hidden = !this.store.supported
+    this.autoBox.checked = this.autosave
+    this.autoBox.addEventListener('change', () => {
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, this.autoBox.checked ? '1' : '0')
+      } catch {
+        // Storage blocked: for this page only.
+      }
+      if (this.autoBox.checked && this.dirty) {
+        this.scheduleSave()
+      }
+    })
+    this.openBtn.addEventListener('click', () => void this.openFile())
+    this.saveBtn.addEventListener('click', () => void this.save())
+    this.saveAsBtn.addEventListener('click', () => void this.saveAs())
+    this.fileChip.addEventListener('click', () => void this.allow())
+    this.banner.hidden = true
     this.root.append(
       h(
         'div',
@@ -164,13 +213,25 @@ export class EditView {
         this.pickBtn,
         this.undoBtn,
         this.redoBtn,
-        this.copyBtn,
         this.livePicker,
+        h('span', { class: 'sep' }),
+        this.fileChip,
+        this.openBtn,
+        this.saveBtn,
+        this.saveAsBtn,
+        h(
+          'label',
+          { class: 'tf' },
+          this.autoBox,
+          h('span', { text: 'autosave' })
+        ),
+        this.copyBtn,
         h('span', {
           class: 'dim',
-          text: 'E picks; while picking [ ] walk ancestors, Esc stops.'
+          text: 'E picks ([ ] ancestors, Esc stops); ⌘S saves.'
         })
       ),
+      this.banner,
       h('div', { class: 'cols' }, this.list, this.inspector)
     )
     this.overlay.addEventListener('pointermove', (e) => {
@@ -223,7 +284,10 @@ export class EditView {
     ]).then(([config, registry, effects]) => {
       this.mods = { config, registry, effects }
     })
-    void this.loading.then(() => this.refresh(true))
+    void this.loading.then(() => {
+      this.refresh(true)
+      this.restored ??= this.restore()
+    })
     this.refresh(true)
   }
 
@@ -262,6 +326,10 @@ export class EditView {
       }
       return true
     }
+    if (mod && e.key.toLowerCase() === 's') {
+      void this.save()
+      return true
+    }
     if (mod && e.key.toLowerCase() === 'y') {
       this.redo()
       return true
@@ -274,6 +342,10 @@ export class EditView {
   }
 
   destroy(): void {
+    clearTimeout(this.saveTimer)
+    if (this.dirty && this.store.state === 'ready') {
+      void this.write()
+    }
     this.hide()
     this.overlay.remove()
     this.hoverBox.remove()
@@ -361,7 +433,7 @@ export class EditView {
     }
     this.history.push(live.config, coalesce, performance.now())
     live.update(next)
-    this.syncButtons()
+    this.changed()
   }
 
   private undo(): void {
@@ -369,6 +441,7 @@ export class EditView {
     const prev = live && this.history.undo(live.config)
     if (live && prev) {
       live.update(prev)
+      this.changed()
       this.refresh(true)
     }
   }
@@ -378,6 +451,7 @@ export class EditView {
     const next = live && this.history.redo(live.config)
     if (live && next) {
       live.update(next)
+      this.changed()
       this.refresh(true)
     }
   }
@@ -387,6 +461,220 @@ export class EditView {
     this.undoBtn.disabled = !this.history.canUndo
     this.redoBtn.disabled = !this.history.canRedo
     this.copyBtn.disabled = !live
+    this.saveBtn.disabled = !live
+    this.saveAsBtn.disabled = !live
+    this.openBtn.disabled = !live
+    const st = this.store.state
+    const name = this.store.name ?? ''
+    this.fileChip.textContent =
+      st === 'none'
+        ? this.dirty
+          ? 'No file · unsaved'
+          : 'No file'
+        : st === 'needs-permission'
+          ? `${name} · click to allow writing`
+          : `${name} · ${this.dirty ? 'unsaved' : 'saved'}`
+    this.fileChip.classList.toggle('dead', st === 'none')
+    this.fileChip.classList.toggle('dirty', this.dirty)
+    this.fileChip.title =
+      st === 'needs-permission'
+        ? 'The browser asks again after a reload'
+        : st === 'ready'
+          ? 'The file the edits are written to'
+          : 'Open or Save as to choose a file'
+  }
+
+  // Saving.
+
+  private get autosave(): boolean {
+    try {
+      return localStorage.getItem(AUTOSAVE_KEY) !== '0'
+    } catch {
+      return true
+    }
+  }
+
+  /** After every change: a draft, then the file (autosave). */
+  private changed(): void {
+    const live = this.live()
+    this.dirty = true
+    if (live) {
+      this.store.saveDraft(live.config)
+    }
+    if (this.autoBox.checked && this.store.state === 'ready') {
+      this.scheduleSave()
+    }
+    this.syncButtons()
+  }
+
+  private scheduleSave(): void {
+    clearTimeout(this.saveTimer)
+    this.saveTimer = setTimeout(() => void this.write(), AUTOSAVE_MS)
+  }
+
+  private async write(): Promise<boolean> {
+    const live = this.live()
+    if (!live) {
+      return false
+    }
+    const ok = await this.store.write(live.config)
+    if (ok) {
+      this.dirty = false
+    } else {
+      this.status(`Couldn’t write ${this.store.name ?? 'the file'}.`)
+    }
+    this.syncButtons()
+    return ok
+  }
+
+  private async save(): Promise<void> {
+    const live = this.live()
+    if (!live) {
+      return
+    }
+    clearTimeout(this.saveTimer)
+    if (!this.store.supported) {
+      download(live.config)
+      this.dirty = false
+      this.store.clearDraft()
+      this.syncButtons()
+      return
+    }
+    if (this.store.state === 'none') {
+      await this.saveAs()
+      return
+    }
+    if (
+      this.store.state === 'needs-permission' &&
+      !(await this.store.grant())
+    ) {
+      this.syncButtons()
+      return
+    }
+    if (await this.write()) {
+      this.status(`Saved ${this.store.name}.`)
+    }
+  }
+
+  private async saveAs(): Promise<void> {
+    const live = this.live()
+    if (live && (await this.store.saveAs(live.config))) {
+      this.dirty = false
+      this.clearBanner()
+      this.status(`Saved ${this.store.name}.`)
+    }
+    this.syncButtons()
+  }
+
+  private async openFile(): Promise<void> {
+    try {
+      const c = this.store.supported ? await this.store.open() : await upload()
+      if (c) {
+        this.offerFile(c, this.store.name ?? 'The file')
+      }
+    } catch (e) {
+      this.status(`Not a config: ${(e as Error).message}`)
+    }
+    this.syncButtons()
+  }
+
+  /** Click on the file chip: write access again after a reload. */
+  private async allow(): Promise<void> {
+    if (this.store.state !== 'needs-permission') {
+      return
+    }
+    if (await this.store.grant()) {
+      await this.compareFile()
+    }
+    this.syncButtons()
+  }
+
+  /** On first show: the remembered file, then any draft. */
+  private async restore(): Promise<void> {
+    await this.store.restore()
+    const live = this.live()
+    const d = this.store.draft()
+    if (live && d) {
+      const diff = describeDiff(diffConfigs(live.config, d.config))
+      if (diff) {
+        const at = new Date(d.at).toLocaleTimeString()
+        this.showBanner(`Unsaved edits from ${at} (${diff}).`, {
+          Restore: () => {
+            this.commit(d.config)
+            this.refresh(true)
+          },
+          Discard: () => this.store.clearDraft()
+        })
+      } else {
+        this.store.clearDraft()
+      }
+    }
+    if (this.store.state === 'ready' && !d) {
+      await this.compareFile()
+    }
+    this.syncButtons()
+  }
+
+  private async compareFile(): Promise<void> {
+    try {
+      const c = await this.store.read()
+      if (c) {
+        this.offerFile(c, this.store.name ?? 'The file')
+      }
+    } catch (e) {
+      this.status(`${this.store.name}: ${(e as Error).message}`)
+    }
+  }
+
+  /** `c` was read from a file: use it, or keep the page's (written over
+   * the file on the next save). */
+  private offerFile(c: FxConfig, name: string): void {
+    const live = this.live()
+    if (!live) {
+      return
+    }
+    const diff = describeDiff(diffConfigs(live.config, c))
+    if (!diff) {
+      this.dirty = false
+      this.clearBanner()
+      return
+    }
+    this.showBanner(`${name} differs from the page (${diff}).`, {
+      'Use the file': () => {
+        this.commit(c)
+        this.dirty = false
+        this.store.clearDraft()
+        this.syncButtons()
+        this.refresh(true)
+      },
+      'Keep the page': () => {
+        this.dirty = true
+        if (this.autoBox.checked && this.store.state === 'ready') {
+          this.scheduleSave()
+        }
+        this.syncButtons()
+      }
+    })
+  }
+
+  private showBanner(text: string, actions: Record<string, () => void>): void {
+    this.banner.replaceChildren(
+      h('span', { text }),
+      ...Object.entries(actions).map(([label, run]) => {
+        const b = h('button', { class: 'btn', type: 'button', text: label })
+        b.addEventListener('click', () => {
+          this.clearBanner()
+          run()
+        })
+        return b
+      })
+    )
+    this.banner.hidden = false
+  }
+
+  private clearBanner(): void {
+    this.banner.hidden = true
+    this.banner.replaceChildren()
   }
 
   private matchFor(el: Element): Match {

@@ -1,4 +1,4 @@
-# Edit mode (spec; E1-E3 built)
+# Edit mode (spec; E1-E5 built)
 
 A design-tool workflow for `/fx`: pick a composited element on the page,
 attach effects to it with triggers, tune their params, and save the
@@ -274,6 +274,57 @@ Saving:
   clipboard until E4 saves it.
 - Several configs on a page: a picker chooses which one is edited.
 
+## Deviations (E4)
+
+- `devtools/edit_store.ts` (`FileStore`): Open… / Save / Save as… with
+  the File System Access API; the handle is kept in IndexedDB
+  (`compositor-gpu` / `edit-handles`, keyed by page path). After a
+  reload the file chip reads "click to allow writing": one click asks
+  for write access again. Without the API: Upload… / Download.
+- Autosave (on by default, a checkbox, `compositor-gpu:edit-autosave`)
+  writes 300 ms after the last change; ⌘S saves at once. Every change
+  also writes a draft to localStorage (`compositor-gpu:edit:<path>:draft`),
+  cleared when a write succeeds. On first show a draft that differs
+  from the page is offered back (Restore / Discard).
+- Opening a file, or getting write access back, compares the file with
+  the page (`devtools/edit_file.ts`: `diffConfigs`, by effect id) and,
+  when they differ, offers Use the file (an undoable change) or Keep the
+  page (written over the file on the next save).
+- The file is two-space JSON with a final newline (`serialize`);
+  `parseConfig` checks the shape and says what's wrong.
+- The page must accept the file's HMR update (recipe in
+  `src/fx/README.md`, Config), or each save reloads it.
+  `playground/fx.html` imports `playground/fx.config.json` that way;
+  writing the file from outside updated the page without a reload.
+- Not tried: the pickers themselves (native dialogs) in an automated
+  run.
+
+## Deviations (E5)
+
+- `useFxConfig(config, { root? })` in `compositor-gpu/react`: applies
+  the config once the provider's runtime is up, passes each new config
+  object to `update()` (a hot-reloaded JSON import: no remount), calls
+  `resolve()` after every render of its component, and returns the
+  LiveConfig. `resolve()` bumps `version` only when it created or
+  dropped something, and config warnings are printed once per page.
+- Two trigger fields to express `useReveal`'s ScrollTrigger reveal:
+  `rootMargin` on enter/exit (`'0px 0px -20% 0px'` is `'top 80%'`), and
+  `past` on enter: an element already in view or scrolled above the
+  line when observing starts lands at the trigger's end without
+  animating (`'land'`, the default) or plays (`'play'`).
+- MDS-home: the AppleFeature screenshot's reveal moved from
+  `useReveal(shotRef, DUO_REVEAL)` to `src/components/Duo/fx.config.json`
+  (`applefeature-reveal`, a `motion` with `from.*` and a `play forward`
+  enter trigger, 0.7 s, `[0.22, 1, 0.36, 1]`), matched by
+  `data-fx="duo-applefeature-shot"`, applied by `DuoFx` (useFxConfig)
+  inside the provider; `?devtools` mounts the devtools.
+- Differences from useReveal: the motion's rest is progress 0, so a
+  shot below the line is hidden from apply rather than from the first
+  ScrollTrigger refresh, and one already past it is shown on the first
+  IntersectionObserver callback (a frame later); under reduced motion
+  the shot appears at once when it enters instead of never being
+  hidden; there are no dials (the Edit tab tunes it).
+
 ## Open questions
 
 - Several region passes on one element (a blur and a reveal on the
@@ -282,6 +333,9 @@ Saving:
 - Per-breakpoint params (`@media` keys on `params`)?
 - Should a selected element without `data-fx` get one written into
   the source by a dev-server endpoint, rather than copied by hand?
+- A `media` condition per effect (useReveal's `media`, DuoBento's
+  `SHOWN`), so bento reveals with targets, stagger and blur can move too.
+- Staggered triggers over the elements a selector matches.
 - Scroll-scrubbed triggers (`progress` bound to scroll through an
   element) — the GSAP recipe covers it today; a `scroll` trigger would
   make it editable.

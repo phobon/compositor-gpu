@@ -496,3 +496,75 @@ test('the presets are registered with their schemas', async () => {
     'textStagger'
   ])
 })
+
+test('enter: past the line at load lands, below it plays on entry', () => {
+  fresh()
+  type Cb = (r: Partial<IntersectionObserverEntry>[]) => void
+  const ios: { cb: Cb; opts: IntersectionObserverInit; els: Element[] }[] = []
+  const g = globalThis as { IntersectionObserver?: unknown }
+  const prev = g.IntersectionObserver
+  g.IntersectionObserver = class {
+    readonly rec: { cb: Cb; opts: IntersectionObserverInit; els: Element[] }
+    constructor(cb: Cb, opts: IntersectionObserverInit) {
+      this.rec = { cb, opts, els: [] }
+      ios.push(this.rec)
+    }
+    observe(el: Element) {
+      this.rec.els.push(el)
+    }
+    disconnect() {}
+  }
+  try {
+    const p = page(new FakeEl(null, 'card'), new FakeEl(null, 'card'))
+    const k = clock()
+    applyConfig(
+      fx(),
+      {
+        version: 1,
+        elements: [
+          {
+            match: { selector: '.card' },
+            effects: [
+              {
+                id: 'r',
+                effect: 'probe',
+                triggers: [
+                  {
+                    on: 'enter',
+                    play: 'forward',
+                    duration: 1,
+                    once: true,
+                    rootMargin: '0px 0px -20% 0px'
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      { root: p.root, clock: k.c }
+    )
+    assert.equal(ios.length, 2)
+    assert.equal(ios[0]?.opts.rootMargin, '0px 0px -20% 0px')
+    const [past, below] = [probes[0] as Probe, probes[1] as Probe]
+    const rootBounds = { bottom: 800 } as DOMRectReadOnly
+    const at = (el: Element, top: number, hit: boolean) => ({
+      target: el,
+      isIntersecting: hit,
+      rootBounds,
+      boundingClientRect: { top } as DOMRectReadOnly
+    })
+    ios[0]?.cb([at(p.els[0] as unknown as Element, -300, false)])
+    ios[1]?.cb([at(p.els[1] as unknown as Element, 1200, false)])
+    assert.equal(past.params.progress, 1, 'landed without a tween')
+    assert.equal(below.params.progress, 0)
+    ios[1]?.cb([at(p.els[1] as unknown as Element, 700, true)])
+    k.run(500)
+    const mid = below.params.progress as number
+    assert.ok(mid > 0 && mid < 1, `playing: ${mid}`)
+    k.run(2000)
+    assert.equal(below.params.progress, 1)
+  } finally {
+    g.IntersectionObserver = prev
+  }
+})

@@ -35,6 +35,14 @@ export interface TriggerConfig extends Timing {
   target?: Match
   /** enter/exit: IntersectionObserver threshold. Default 0. */
   threshold?: number
+  /** enter/exit: IntersectionObserver rootMargin; '0px 0px -20% 0px'
+   * enters when the top crosses 80% of the viewport (ScrollTrigger's
+   * 'top 80%'). */
+  rootMargin?: string
+  /** enter: an element already past the line when observing starts
+   * (in view, or scrolled above it) 'land's at the trigger's end without
+   * animating (default) or 'play's it. */
+  past?: 'land' | 'play'
   /** Fire once, then stop listening. */
   once?: boolean
   /** Params to tween to, or 'rest' (the effect's `params`). */
@@ -148,8 +156,15 @@ interface Instance {
   off: (() => void)[]
 }
 
+const warned = new Set<string>()
+
+/** Each message once per page (resolve() runs after every render in
+ * useFxConfig). */
 const warn = (msg: string): void => {
-  console.warn(`fx config: ${msg}`)
+  if (!warned.has(msg)) {
+    warned.add(msg)
+    console.warn(`fx config: ${msg}`)
+  }
 }
 
 const same = (a: unknown, b: unknown): boolean =>
@@ -320,15 +335,29 @@ export function applyConfig(
   const observe = (
     t: TriggerConfig,
     els: Element[],
-    go: (at: Element) => void
+    go: (at: Element) => void,
+    land: (at: Element) => void
   ): (() => void) | null => {
     if (typeof IntersectionObserver === 'undefined') {
       return null
     }
     const inside = new Set<Element>()
+    const seen = new Set<Element>()
     const io = new IntersectionObserver(
       (records) => {
         for (const r of records) {
+          const first = !seen.has(r.target)
+          seen.add(r.target)
+          if (first && t.on === 'enter' && (t.past ?? 'land') === 'land') {
+            const line = r.rootBounds?.bottom ?? window.innerHeight
+            if (r.isIntersecting || r.boundingClientRect.top < line) {
+              if (r.isIntersecting) {
+                inside.add(r.target)
+              }
+              land(r.target)
+              continue
+            }
+          }
           if (r.isIntersecting === inside.has(r.target)) {
             continue
           }
@@ -342,7 +371,7 @@ export function applyConfig(
           }
         }
       },
-      { threshold: t.threshold ?? 0 }
+      { threshold: t.threshold ?? 0, rootMargin: t.rootMargin }
     )
     for (const el of els) {
       io.observe(el)
@@ -363,7 +392,10 @@ export function applyConfig(
       const els = t.target ? match(t.target) : inst.el ? [inst.el] : []
       let stop: (() => void) | null = null
       let fired = false
-      const go = (at: Element | readonly [number, number] | null): void => {
+      const go = (
+        at: Element | readonly [number, number] | null,
+        as: TriggerConfig = t
+      ): void => {
         if (t.once) {
           if (fired) {
             return
@@ -378,13 +410,16 @@ export function applyConfig(
             }
           })
         }
-        run(inst, t, at)
+        run(inst, as, at)
       }
       if (t.on === 'enter' || t.on === 'exit') {
         if (els.length === 0 && !t.target && !inst.el) {
           warn(`${cfg.id}: '${t.on}' on a page effect needs a target`)
         }
-        stop = observe(t, els, go)
+        // Past the line at the start: the trigger's end state at once.
+        const land = (at: Element): void =>
+          go(at, { ...t, duration: 0, delay: 0, ease: undefined })
+        stop = observe(t, els, go, land)
       } else {
         const docEvent =
           t.on === 'click' || t.on === 'pointerdown' || t.on === 'pointerup'
@@ -496,7 +531,8 @@ export function applyConfig(
       current = next
       return
     }
-    version++
+    // A forced pass (resolve()) that finds nothing new keeps the version.
+    let touched = !force
     if (next.version !== 1) {
       warn(`unknown version ${String(next.version)}`)
     }
@@ -532,6 +568,7 @@ export function applyConfig(
           drop(inst)
         }
         entries.delete(id)
+        touched = true
       }
     }
     for (const [id, w] of wanted) {
@@ -562,18 +599,23 @@ export function applyConfig(
         if (!w.els.includes(el)) {
           drop(inst)
           e.insts.delete(el)
+          touched = true
         }
       }
       for (const el of w.els) {
         const inst = e.insts.get(el)
         if (!inst) {
           create(e, el)
+          touched = true
         } else if (paramsOnly) {
           retune(inst)
         } else if (changed) {
           configure(inst)
         }
       }
+    }
+    if (touched) {
+      version++
     }
   }
 

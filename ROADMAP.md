@@ -212,8 +212,16 @@ Params model, element-keyed Targets, a runtime pointer uniform):
         trigger editing through `update()` (params-only edits retune in
         place), undo (`devtools/edit_model.ts`, `devtools/edit_form.ts`;
         `test/unit/edit_model.test.ts`). Tried on `fx.html`.
-  - [ ] E4: saving (File System Access, IndexedDB handle, autosave)
-  - [ ] E5: a `/duo` reveal moved to a config file; `useFxConfig`
+  - [x] E4 (2026-11-05): saving (`devtools/edit_store.ts`: File System
+        Access, IndexedDB handle, autosave, localStorage draft,
+        download / upload fallback; `devtools/edit_file.ts`, unit-tested);
+        `playground/fx.config.json` with an HMR accept. Pickers not
+        tried in an automated run.
+  - [ ] E5 (prepared 2026-11-05): `useFxConfig`, trigger `rootMargin`
+        and `past`; in MDS-home the AppleFeature reveal moved to
+        `Duo/fx.config.json` (uncommitted there too). Needs this repo
+        committed and MDS-home's submodule bumped before /duo builds;
+        then check the reveal against useReveal's at dpr 2.
 - [x] `progressiveBlur` preset: Gaussian whose radius grows toward
       weighted viewport (or region) edges, bands or corners; shot
       `fx-progressive`. Used by the `/duo` app sections (MDS-home

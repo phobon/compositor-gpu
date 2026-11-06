@@ -2,7 +2,6 @@
 // typegpu reads process.env at evaluation: the shim must run first.
 import '@/util/env'
 import './nav'
-import { mountDebugPanel } from '@/debug'
 import {
   createDialKit,
   createDialRoot,
@@ -12,6 +11,7 @@ import {
 import tgpu from 'typegpu'
 import * as d from 'typegpu/data'
 import * as std from 'typegpu/std'
+import { mountDebugPanel } from '@/debug'
 import {
   applyConfig,
   blur,
@@ -21,6 +21,7 @@ import {
   develop,
   displace,
   dissolve,
+  type FxConfig,
   glitchSlices,
   gpu,
   ripple as imageRipple,
@@ -37,6 +38,7 @@ import {
   vignette
 } from '@/fx'
 import { createCompositor } from '@/index'
+import demoConfig from './fx.config.json'
 import 'dialkit/vanilla/styles.css'
 
 // Effects playground: the mirror plus `compositor-gpu/fx` with the blur
@@ -694,43 +696,14 @@ async function boot(): Promise<void> {
   if (!vrMode) {
     // A config to try the devtools' Edit tab on (docs/EDITOR.md): the
     // displace section's heading reveals on load and its image develops
-    // back on hover.
-    applyConfig(fx, {
-      version: 1,
-      elements: [
-        {
-          match: { selector: `${sec} h2` },
-          effects: [
-            {
-              id: 'demo-reveal',
-              effect: 'reveal',
-              triggers: [{ on: 'load', play: 'forward', duration: 1.2 }]
-            }
-          ]
-        },
-        {
-          match: { selector: `${sec} img` },
-          effects: [
-            {
-              id: 'demo-develop',
-              effect: 'develop',
-              params: { progress: 1 },
-              triggers: [
-                {
-                  on: 'pointerenter',
-                  to: { progress: 0.35 },
-                  ease: { spring: { visualDuration: 0.35 } }
-                },
-                {
-                  on: 'pointerleave',
-                  to: 'rest',
-                  ease: { spring: { visualDuration: 0.5 } }
-                }
-              ]
-            }
-          ]
-        }
-      ]
+    // back on hover. The Edit tab saves to fx.config.json; Vite's HMR
+    // hands the new file to update(), which does nothing when it equals
+    // what the page runs.
+    const demo = applyConfig(fx, demoConfig as FxConfig)
+    import.meta.hot?.accept('./fx.config.json', (m) => {
+      if (m) {
+        demo.update((m as unknown as { default: FxConfig }).default)
+      }
     })
   }
   if (!vrMode) {

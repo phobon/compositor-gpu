@@ -182,6 +182,13 @@ td.better { color: #34d399; } td.worse { color: var(--bad); }
 td.set { color: #c4b5fd; }
 .edit .bar select[hidden] { display: none; }
 .addfx { display: flex; gap: 4px; margin: 6px 0; }
+.edit .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.chip.file { max-width: 300px; }
+.chip.file.dirty { border-color: rgba(251,191,36,0.5); background: rgba(251,191,36,0.1); color: #fde68a; }
+.banner { display: flex; gap: 8px; align-items: center; padding: 6px 8px; margin-bottom: 8px;
+  border-radius: 6px; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.3); }
+.banner[hidden] { display: none; }
+.edit .btn[hidden] { display: none; }
 .params { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .prow { display: grid; grid-template-columns: 110px 1fr 24px 90px; gap: 6px;
   align-items: center; }

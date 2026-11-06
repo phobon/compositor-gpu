@@ -1177,6 +1177,29 @@ trigger mid-tween starts from the current values, springs keep their
 velocity (`fx/tween.ts`, `Animator`). Under reduced motion tweens land
 at once. Code can still drive a config effect through `live.get(id)`.
 
+The devtools' Edit tab writes the file the page imports. Let the page
+take the new file without a reload (`update()` with the config it
+already runs does nothing), or every save reloads the page:
+
+With React, `useFxConfig(config)` (`compositor-gpu/react`) does this:
+each new config object it renders with goes to `update()`.
+
+```ts
+// Vite
+import config from './fx.config.json'
+const live = applyConfig(fx, config as FxConfig)
+import.meta.hot?.accept('./fx.config.json', (m) => {
+  if (m) live.update(m.default)
+})
+
+// webpack (Gatsby)
+if (module.hot) {
+  module.hot.accept('./fx.config.json', () => {
+    live.update(require('./fx.config.json'))
+  })
+}
+```
+
 ## Testing hook
 
 `fx.__pending()` counts material pipelines still compiling.

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "elements": [
+    {
+      "match": { "selector": "section[data-vr=\"fx-displace\"] h2" },
+      "effects": [
+        {
+          "id": "demo-reveal",
+          "effect": "reveal",
+          "triggers": [{ "on": "load", "play": "forward", "duration": 1.2 }]
+        }
+      ]
+    },
+    {
+      "match": { "selector": "section[data-vr=\"fx-displace\"] img" },
+      "effects": [
+        {
+          "id": "demo-develop",
+          "effect": "develop",
+          "params": { "progress": 1 },
+          "triggers": [
+            {
+              "on": "pointerenter",
+              "to": { "progress": 0.35 },
+              "ease": { "spring": { "visualDuration": 0.35 } }
+            },
+            {
+              "on": "pointerleave",
+              "to": "rest",
+              "ease": { "spring": { "visualDuration": 0.5 } }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

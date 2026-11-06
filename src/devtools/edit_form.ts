@@ -344,8 +344,15 @@ export function triggerRow(
     if (once.checked) {
       out.once = true
     }
+    // Kept, not edited here.
     if (t.threshold !== undefined) {
       out.threshold = t.threshold
+    }
+    if (t.rootMargin !== undefined) {
+      out.rootMargin = t.rootMargin
+    }
+    if (t.past !== undefined) {
+      out.past = t.past
     }
     return out
   }
