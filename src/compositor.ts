@@ -304,7 +304,16 @@ export async function createCompositor(
    * playing on the canvas region, and whether one showed a new frame
    * since the last look. */
   const mediaState = (): MediaState => {
-    const m = { canvas: false, playing: false, changed: false }
+    const m: MediaState = {
+      canvas: false,
+      playing: false,
+      changed: false,
+      fresh: [],
+      rows: [],
+      key: '',
+      fixed: false
+    }
+    let n = 0
     const x0 = anchorX
     const y0 = anchorY
     const x1 = anchorX + canvasW
@@ -334,7 +343,11 @@ export async function createCompositor(
       if (videoFrames.get(src) !== key) {
         videoFrames.set(src, key)
         m.changed = true
+        m.fresh.push(src)
       }
+      m.key += `${n++}:${key};`
+      m.fixed ||= r.space === 'viewport'
+      m.rows.push([b.y - 2, b.y + b.height + 2])
       if (!src.paused && !src.ended) {
         m.playing = true
       }
@@ -494,9 +507,23 @@ export async function createCompositor(
     // video at 120 Hz otherwise redraws the page four times a frame of it,
     // and one scrolled away forever); a canvas every frame.
     const media = scene.hasDynamic ? mediaState() : NO_MEDIA
-    if (media.canvas || media.changed || imagePass?.fades.active) {
+    // A video's new frame: re-copy just its texture and redraw just its
+    // rows (renderer.media), rather than re-uploading every image and
+    // redrawing the whole band. A canvas (redrawn every frame), a fade, or
+    // a video whose texture isn't there yet (or changed size) takes the
+    // full image upload.
+    const videosOnly =
+      media.fresh.length > 0 &&
+      !media.canvas &&
+      (imagePass?.refreshDynamic(media.fresh) ?? false)
+    if (
+      media.canvas ||
+      (media.changed && !videosOnly) ||
+      imagePass?.fades.active
+    ) {
       scene.markDirty('images')
     }
+    renderer.media = { rows: media.rows, key: media.key, fixed: media.fixed }
     const onFrame = options.onFrame
     if (onFrame) {
       guarded('onFrame', () => onFrame(ctx))
@@ -1650,8 +1677,24 @@ interface MediaState {
   canvas: boolean
   playing: boolean
   changed: boolean
+  /** Videos on the canvas region that showed a new frame. */
+  fresh: HTMLVideoElement[]
+  /** Doc-y CSS px rows the videos on the canvas region paint. */
+  rows: [number, number][]
+  /** Each such video's current frame: changes when one shows a new one. */
+  key: string
+  /** One of them is in viewport space (moves against the canvas). */
+  fixed: boolean
 }
-const NO_MEDIA: MediaState = { canvas: false, playing: false, changed: false }
+const NO_MEDIA: MediaState = {
+  canvas: false,
+  playing: false,
+  changed: false,
+  fresh: [],
+  rows: [],
+  key: '',
+  fixed: false
+}
 
 /** Deferred subtrees queued in one frame at most beyond those the canvas
  * reaches (partial reads past MAX_BOUNDARIES read everything). */

@@ -43,6 +43,18 @@ export interface SnapshotInput {
   settled: number
   /** Rows a re-anchor covered are still to be drawn. */
   pendingRows: boolean
+  /** Videos on the canvas region (compositor.ts): their rows are damage
+   * when `key` changes (a new frame), like a layer transform's. */
+  media?: MediaDamage
+}
+
+export interface MediaDamage {
+  /** Doc-y CSS px rows they paint. */
+  rows: Rows
+  /** Each one's current frame. */
+  key: string
+  /** One is in viewport space: the content counts as changed. */
+  fixed: boolean
 }
 
 /** A group's effect: an active region pass takes precedence over a layer
@@ -147,6 +159,16 @@ export function snapshotEffects(
     }
   }
 
+  // Videos: a new frame is damage in the rows they paint.
+  const media = input.media
+  if (media && media.key !== '') {
+    for (const [a, b] of media.rows) {
+      rows = addRows(rows, a, b)
+    }
+    layerKey += `m:${media.key}`
+    fallback ||= media.fixed
+  }
+
   let extrasActive = false
   for (const layer of reg.extras.values()) {
     if (layer.active()) {
@@ -188,6 +210,7 @@ export function snapshotEffects(
     if (reuse !== undefined) {
       return reuse
     }
+    // The scene texture holds a video's frame too.
     reuse =
       input.pendingRows || extrasActive || regionActive || matsChanging
         ? null
@@ -203,7 +226,8 @@ export function snapshotEffects(
             dpr,
             input.settled,
             mats,
-            transformsKey
+            transformsKey,
+            media?.key ?? ''
           ].join('|')
     return reuse
   }

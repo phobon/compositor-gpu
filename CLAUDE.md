@@ -591,7 +591,13 @@ with the text: boxes at the front of `run.decorations`, re-read on
 
 Dirty tracking is per layer (`scene.markDirty('text')` etc.); a pass's
 `upload()` runs only when its layer is dirty. `onGlyph` dirties the text layer
-every frame; dynamic images dirty the image layer every frame.
+every frame; a canvas source dirties the image layer every frame. A
+`<video>` on the canvas region that shows a new frame doesn't: the
+compositor re-copies just its texture (`ImagePass.refreshDynamic`) and
+hands the renderer its rows and frame key (`renderer.media`), which the
+effect snapshot adds to the layer damage, so only those rows are redrawn
+(a new texture or size, a canvas, or an image fade still re-uploads the
+layer; a viewport-space video counts as a content change).
 
 ### RenderPass contract (`gpu/frame.ts`)
 Every layer implements `upload(scene)` / `draw(encoder, first, count,

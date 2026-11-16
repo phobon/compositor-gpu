@@ -8,7 +8,11 @@ import { BackdropPass } from './backdrop'
 import { GroupCompositor, type GroupTarget, rectQuad } from './composite'
 import { Culler, type Runs } from './cull'
 import type { GpuContext } from './device'
-import { type EffectSnapshot, snapshotEffects } from './effect_snapshot'
+import {
+  type EffectSnapshot,
+  type MediaDamage,
+  snapshotEffects
+} from './effect_snapshot'
 import { type DrawPlan, type FillInput, FillPlanner } from './fill_planner'
 import {
   CLIP_FLOATS,
@@ -214,6 +218,8 @@ export class Renderer {
   cacheReady = true
   /** Image records change without new records (image fades running). */
   imagesVolatile = false
+  /** This frame's videos (set by the compositor before render()). */
+  media: MediaDamage | null = null
   /** Glyphs move without new records (CompositorOptions.onGlyph). */
   textVolatile = false
   /** Groups drawn from a kept texture / rendered, last frame. */
@@ -565,7 +571,8 @@ export class Renderer {
       dpr,
       dirty,
       settled: materialPipelinesSettled(),
-      pendingRows: this.planner.pendingRowCount > 0
+      pendingRows: this.planner.pendingRowCount > 0,
+      media: this.media ?? undefined
     })
     this.fx = fx
     const fill: FillInput = {

@@ -596,6 +596,35 @@ export class ImagePass implements RenderPass {
     this.sweepTextures()
   }
 
+  /**
+   * Re-copy these videos' current frames into the textures the last
+   * upload made for them, leaving every other image and the instance data
+   * as they are (compositor.ts, a video's new frame). False when one has
+   * no texture yet or its size changed: the caller re-uploads the layer.
+   */
+  refreshDynamic(videos: readonly HTMLVideoElement[]): boolean {
+    for (const v of videos) {
+      const c = this.cache.get(v)
+      if (!c || c.w !== v.videoWidth || c.h !== v.videoHeight) {
+        return false
+      }
+    }
+    const now = performance.now()
+    for (const v of videos) {
+      const c = this.cache.get(v)
+      if (c) {
+        copyExternalImage(
+          this.shared.device,
+          { source: v },
+          { texture: c.texture },
+          [c.w, c.h]
+        )
+        c.used = now
+      }
+    }
+    return true
+  }
+
   /** Destroy standalone textures no upload has drawn for TEXTURE_IDLE_MS. */
   private sweepTextures(): void {
     const now = performance.now()
