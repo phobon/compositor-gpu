@@ -74,6 +74,11 @@ export interface FillInput {
   /** Viewport-y CSS px rows fixed content paints (read only when
    * needed). */
   fixed: () => RowList
+  /** Doc-y CSS px rows each backdrop-filter reads and paints (its border
+   * box grown by its blur's reach), in paint order. A backdrop blurs what
+   * the target holds under it, and the kept rows hold its own result, so
+   * a frame drawing any of these rows draws all of them (in one draw). */
+  backdrops: () => RowList
 }
 
 export type FillPlan = { kind: 'skip' } | DrawPlan
@@ -400,6 +405,32 @@ export class FillPlanner {
     return strip
   }
 
+  /** `rows` (device px) grown until every backdrop extent they touch is
+   * inside them. */
+  private withBackdrops(rows: Rows, i: FillInput): Rows {
+    const ext: [number, number][] = []
+    for (const [a, b] of i.backdrops()) {
+      const y0 = clamp(Math.floor((a - i.canvasY) * i.sy), i.devH)
+      const y1 = clamp(Math.ceil((b - i.canvasY) * i.sy), i.devH)
+      if (y1 > y0) {
+        ext.push([y0, y1])
+      }
+    }
+    let out = rows
+    for (let grew = ext.length > 0; grew; ) {
+      grew = false
+      for (const [e0, e1] of ext) {
+        const touches = out.some(([a, b]) => a < e1 && b > e0)
+        const inside = out.some(([a, b]) => a <= e0 && b >= e1)
+        if (touches && !inside) {
+          out = addRows(out, e0, e1)
+          grew = true
+        }
+      }
+    }
+    return out
+  }
+
   private draw(i: FillInput, changed: boolean): DrawPlan {
     let band = this.fillBand(i)
     let load: DrawPlan['load'] = 'clear'
@@ -461,7 +492,22 @@ export class FillPlanner {
     }
     let cull: DrawPlan['cull'] = 'canvas'
     const extra: Rect4[] = []
-    if (keep && i.skipUnchanged && band && !changed && load === 'load') {
+    const incremental =
+      keep && i.skipUnchanged && band && !changed && load === 'load'
+    if (band && !incremental && i.backdrop) {
+      // The whole band: grown to the backdrops it cuts through.
+      const [r] = this.withBackdrops([[band[1], band[1] + band[3]]], i)
+      if (r && (r[0] < band[1] || r[1] > band[1] + band[3])) {
+        band = [0, r[0], i.devW, r[1] - r[0]]
+        if (this.bandY) {
+          this.bandY = [
+            Math.min(this.bandY[0], r[0] / i.sy + i.canvasY),
+            Math.max(this.bandY[1], r[1] / i.sy + i.canvasY)
+          ]
+        }
+      }
+    }
+    if (incremental && band) {
       // Band rows drawn since the content last changed hold the same
       // pixels: draw only the rest, plus where fixed content and layer
       // damage were and are.
@@ -486,6 +532,9 @@ export class FillPlanner {
             need = addRows(need, y0, y1)
           }
         }
+      }
+      if (i.backdrop) {
+        need = this.withBackdrops(need, i)
       }
       // Rows close together are drawn as one (a draw costs vertex work
       // whatever its scissor).

@@ -139,7 +139,13 @@ of the effect registries per frame, built before the uploads) is
 conservative: dirty layers, a new scene version, batch list or settled
 material pipeline, and anything drawn differently every frame (active
 extra layers, a material reporting `changed()` or a change in the
-active set, backdrops) empty `valid`. The snapshot's `effectOf(group)`
+active set, viewport-space backdrops) empty `valid`. A document-space
+backdrop is damage instead: it blurs what the target holds under it and
+the kept rows hold its own result, so the planner grows any rows it
+draws to the whole extent of every backdrop they touch (border box plus
+the blur's 3σ, `FillInput.backdrops`, `withBackdrops`), in one draw, and
+a full band to the backdrops it cuts through; `drawBackdrop` skips one
+outside the draw's scissor. The snapshot's `effectOf(group)`
 is the one place an active region pass takes precedence over a layer
 transform. Layer transforms and active region passes are damage
 (`layers`:
@@ -597,7 +603,13 @@ compositor re-copies just its texture (`ImagePass.refreshDynamic`) and
 hands the renderer its rows and frame key (`renderer.media`), which the
 effect snapshot adds to the layer damage, so only those rows are redrawn
 (a new texture or size, a canvas, or an image fade still re-uploads the
-layer; a viewport-space video counts as a content change).
+layer; a viewport-space video counts as a content change). A video on
+the canvas region wakes the loop through `requestVideoFrameCallback`
+(`watchVideo`) when it presents a frame, so a playing 30 fps video runs
+~30 compositor frames a second, not one per refresh (without the API the
+loop runs while it plays). /duo, 2026-11-16 (`MDS-home/scripts/profile/
+duo-video.json`, M1 Pro, dpr 2): idle with the hero video playing, 120.2
+→ 30.4 frames/s and 494 → 159 ms of GPU time a second.
 
 ### RenderPass contract (`gpu/frame.ts`)
 Every layer implements `upload(scene)` / `draw(encoder, first, count,

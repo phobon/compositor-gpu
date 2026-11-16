@@ -139,7 +139,14 @@ describe('content', () => {
       [registries(), { dirty: true }],
       [
         registries(),
-        { scene: { groups: [], batches, version: 1, backdrops: [{}] } }
+        {
+          scene: {
+            groups: [],
+            batches,
+            version: 1,
+            backdrops: [{ space: 'viewport' }]
+          }
+        }
       ],
       [
         registries({
@@ -152,6 +159,21 @@ describe('content', () => {
     for (const [reg, over] of cases) {
       assert.equal(snapshotEffects(reg, input(over)).content.now, null)
     }
+  })
+
+  test('a backdrop in document space keeps the key (it is damage)', () => {
+    const s = snapshotEffects(
+      registries(),
+      input({
+        scene: {
+          groups: [],
+          batches,
+          version: 1,
+          backdrops: [{ space: 'doc' }]
+        }
+      })
+    )
+    assert.notEqual(s.content.now, null)
   })
 
   test('a changing material commits its key; an extra layer commits none', () => {

@@ -29,7 +29,7 @@ export interface SnapshotScene {
   readonly groups: readonly OpacityGroup[]
   readonly batches: readonly DrawBatch[]
   readonly version: number
-  readonly backdrops: { readonly length: number }
+  readonly backdrops: readonly { readonly space?: string }[]
 }
 
 export interface SnapshotInput {
@@ -192,9 +192,11 @@ export function snapshotEffects(
 
   const base = `${batchId(scene.batches)}|${scene.version}|${input.settled}|${mats}`
   const content: ContentKey = {
+    // A backdrop is damage (fill_planner.ts withBackdrops) unless it sits
+    // in viewport space, where it moves against the kept rows.
     now:
       input.dirty ||
-      scene.backdrops.length > 0 ||
+      scene.backdrops.some((b) => b.space === 'viewport') ||
       extrasActive ||
       matsChanging ||
       fallback

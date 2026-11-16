@@ -37,7 +37,8 @@ function traceInput(f: FillTraceFrame): FillInput {
     backdrop: f.backdrops > 0,
     content: { now: f.changed ? null : 'same', commit: 'same' },
     layers: { rows: f.layers.rows, key: f.layers.key, live: f.layers.live },
-    fixed: () => f.fixed
+    fixed: () => f.fixed,
+    backdrops: () => []
   }
 }
 
@@ -137,6 +138,7 @@ function frame(over: Partial<FillInput> = {}): FillInput {
     content: { now: 'a', commit: 'a' },
     layers: { rows: [], key: '', live: false },
     fixed: () => [],
+    backdrops: () => [],
     ...over
   }
 }
@@ -237,6 +239,38 @@ describe('scenarios', () => {
       assert.equal(planner.pendingRowCount, 0)
       assert.ok(p.band && p.band[1] + p.band[3] === 3000)
     }
+  })
+
+  test('a backdrop is damage: still frames skip, rows touching it grow to it', () => {
+    const planner = new FillPlanner()
+    const backdrops = () => [[1050, 1200]] as [number, number][]
+    const at = (key: string) =>
+      frame({
+        backdrop: true,
+        backdrops,
+        layers: { rows: [[1100, 1110]], key, live: false }
+      })
+    planner.plan(at('a'))
+    assert.equal(planner.plan(at('a')).kind, 'skip')
+    const p = draw(planner.plan(at('b')))
+    assert.equal(p.cull, 'rows')
+    assert.deepEqual(p.band, [0, 1050, 1000, 150])
+    assert.deepEqual(p.extra, [])
+  })
+
+  test('a full band grows to the backdrops it cuts through', () => {
+    const planner = new FillPlanner()
+    const backdrops = () => [[1990, 2100]] as [number, number][]
+    planner.plan(frame({ backdrop: true, backdrops }))
+    const p = draw(
+      planner.plan(
+        frame({ backdrop: true, backdrops, content: { now: 'b', commit: 'b' } })
+      )
+    )
+    // The band is 872..2028 (128 px around the viewport): it ends inside
+    // the backdrop, so it reaches to its end.
+    assert.ok(p.band)
+    assert.equal(p.band[1] + p.band[3], 2100)
   })
 
   test('a shift that is not whole device rows redraws everything', () => {

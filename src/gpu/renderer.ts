@@ -550,6 +550,17 @@ export class Renderer {
     return rows
   }
 
+  /** Doc-y CSS px rows each backdrop reads and paints: its border box
+   * grown by the blur's reach (drawBackdrop's pad) and a pixel. */
+  private backdropRows(scene: Scene): [number, number][] {
+    const out: [number, number][] = []
+    for (const b of scene.backdrops) {
+      const pad = b.filter.blur * 3 + 3
+      out.push([b.rect.y - pad, b.rect.y + b.rect.height + pad])
+    }
+    return out
+  }
+
   /**
    * Walk scene.batches in order. A push ends the current render pass and
    * begins one on a pooled offscreen target (cleared) whose Frame uniform
@@ -593,7 +604,8 @@ export class Renderer {
       content: fx.content,
       // A group drawn at a rounded scale is drawn again at its own.
       layers: this.scaleSettling ? { ...fx.layers, live: true } : fx.layers,
-      fixed: () => this.fixedRows(scene)
+      fixed: () => this.fixedRows(scene),
+      backdrops: () => this.backdropRows(scene)
     }
     // The post chain over last frame's scene texture: nothing feeding it
     // changed.
@@ -1715,6 +1727,12 @@ export class Renderer {
     const h = y1 - y0
     const backdrop = this.backdrop
     if (w <= 0 || h <= 0 || !backdrop) {
+      return rp
+    }
+    // Outside this draw's rows: nothing of it would land (the planner
+    // draws each backdrop's rows whole, in one draw).
+    const sc = target.scissor
+    if (sc && (y1 <= sc[1] || y0 >= sc[1] + sc[3])) {
       return rp
     }
     rp.end()
