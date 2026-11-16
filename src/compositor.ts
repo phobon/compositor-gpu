@@ -300,6 +300,24 @@ export async function createCompositor(
 
   /** Each video's last frame (decoded-frame count, else currentTime). */
   const videoFrames = new WeakMap<HTMLVideoElement, number>()
+  /** Videos with a requestVideoFrameCallback outstanding. */
+  const watching = new WeakSet<HTMLVideoElement>()
+  /** Ask for a compositor frame when `v` presents its next frame (play,
+   * playback, a seek). False where the browser has no
+   * requestVideoFrameCallback: the loop then runs while it plays. */
+  const watchVideo = (v: HTMLVideoElement): boolean => {
+    if (typeof v.requestVideoFrameCallback !== 'function') {
+      return false
+    }
+    if (!watching.has(v)) {
+      watching.add(v)
+      v.requestVideoFrameCallback(() => {
+        watching.delete(v)
+        scheduler.request()
+      })
+    }
+    return true
+  }
   /** The scene's live media: a canvas (redrawn every frame), a video
    * playing on the canvas region, and whether one showed a new frame
    * since the last look. */
@@ -348,7 +366,11 @@ export async function createCompositor(
       m.key += `${n++}:${key};`
       m.fixed ||= r.space === 'viewport'
       m.rows.push([b.y - 2, b.y + b.height + 2])
-      if (!src.paused && !src.ended) {
+      // A playing video wakes the loop when it shows a frame (~30 a
+      // second), not every display refresh: a frame between two of its
+      // frames has nothing new to draw, and on a page whose content counts
+      // as changed every frame (a backdrop) it would redraw the band.
+      if (!watchVideo(src) && !src.paused && !src.ended) {
         m.playing = true
       }
     }
