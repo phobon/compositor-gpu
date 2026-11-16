@@ -88,6 +88,9 @@ export interface FrameSample {
   /** Nothing was drawn (CompositorOptions.skipUnchanged); absent in
    * reports from before 2026-10-16. */
   skipped?: boolean
+  /** Device rows the main pass drew (stats().fillRows); absent in reports
+   * from before 2026-11-16. */
+  fillRows?: number
   /** Filled in a frame or two later; null without timestamp-query. */
   gpu: GpuFrameTiming | null
   /** What triggered the frame's work and kept the loop running; absent

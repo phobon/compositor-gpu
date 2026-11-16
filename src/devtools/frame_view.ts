@@ -242,7 +242,7 @@ export function renderFrame(
   did.append(
     kv(
       'drawing',
-      `${s.draws} draws, ${s.batches} batches, ${s.groups} groups${s.reused ? ', scene reused' : ''}${s.skipped ? ', nothing drawn (unchanged)' : ''}`
+      `${s.draws} draws, ${s.batches} batches, ${s.groups} groups${s.fillRows !== undefined && !s.skipped ? `, ${s.fillRows} rows` : ''}${s.reused ? ', scene reused' : ''}${s.skipped ? ', nothing drawn (unchanged)' : ''}`
     )
   )
   if (s.gpu) {

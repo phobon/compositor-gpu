@@ -691,6 +691,7 @@ export async function createCompositor(
           groups: renderer.lastGroups,
           reused: renderer.lastReused,
           skipped: renderer.lastSkipped,
+          fillRows: renderer.lastFillRows,
           gpu: null
         },
         {
