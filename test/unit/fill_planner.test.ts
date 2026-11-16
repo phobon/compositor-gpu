@@ -308,6 +308,28 @@ describe('scenarios', () => {
     assert.equal(planner.plan(frame({ layers: at(1500) })).kind, 'skip')
   })
 
+  test('with parts, only the parts whose key changed are damage', () => {
+    const planner = new FillPlanner()
+    const at = (y: number, frame: number) => {
+      const parts = [
+        { id: 'g1', key: `1:${y}`, rows: [[y, y + 100]] as [number, number][] },
+        { id: 'm', key: `${frame}`, rows: [[1600, 1700]] as [number, number][] }
+      ]
+      return {
+        rows: parts.flatMap((p) => p.rows),
+        key: parts.map((p) => p.key).join(';'),
+        live: false,
+        parts
+      }
+    }
+    planner.plan(frame({ layers: at(1200, 0) }))
+    // The video's frame changed; the group stayed.
+    const p = draw(planner.plan(frame({ layers: at(1200, 1) })))
+    assert.equal(p.cull, 'rows')
+    assert.deepEqual(p.band, [0, 1600, 1000, 100])
+    assert.deepEqual(p.extra, [])
+  })
+
   test('a frame after the post chain is never skipped', () => {
     const planner = new FillPlanner()
     planner.plan(frame())

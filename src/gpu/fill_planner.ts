@@ -44,6 +44,16 @@ export interface LayerDamage {
   key: string
   /** A region pass is active (it may draw differently every frame). */
   live: boolean
+  /** The same rows and key per group or video, by id: only the parts
+   * whose key changed (and their rows last frame) are damage. Absent: all
+   * of `rows` when `key` changed. */
+  parts?: readonly LayerPart[]
+}
+
+export interface LayerPart {
+  id: string
+  key: string
+  rows: Rows
 }
 
 export type CanvasFill = 'full' | 'band' | 'band-clear'
@@ -145,6 +155,7 @@ export class FillPlanner {
   private fixedScrollY: number | null = null
   private layerKey = ''
   private layerRows: Rows = []
+  private layerParts = new Map<string, LayerPart>()
   /** The last frame that drew presented the post chain. */
   private lastChain = false
   private bandY: [number, number] | null = null
@@ -525,7 +536,7 @@ export class FillPlanner {
         }
       }
       if (i.layers.live || i.layers.key !== this.layerKey) {
-        for (const [a, b] of [...i.layers.rows, ...this.layerRows]) {
+        for (const [a, b] of this.layerDamage(i.layers)) {
           const y0 = clamp(Math.floor((a - i.canvasY) * i.sy), i.devH)
           const y1 = clamp(Math.ceil((b - i.canvasY) * i.sy), i.devH)
           if (y1 > y0) {
@@ -576,6 +587,7 @@ export class FillPlanner {
       this.fixedScrollY = i.scrollY
       this.layerKey = i.layers.key
       this.layerRows = i.layers.rows
+      this.layerParts = new Map((i.layers.parts ?? []).map((p) => [p.id, p]))
     }
     const fillRows =
       (band ? band[3] : i.devH) +
@@ -597,6 +609,28 @@ export class FillPlanner {
       stripFrom: this.from,
       fillRows
     }
+  }
+
+  /** Doc-y CSS px rows the layers damage since last drawn: their rows
+   * now and then, only for the parts whose key changed when they're
+   * given (and neither frame is live). */
+  private layerDamage(l: LayerDamage): Rows {
+    if (!l.parts || l.live) {
+      return [...l.rows, ...this.layerRows]
+    }
+    const out: [number, number][] = []
+    for (const p of l.parts) {
+      const was = this.layerParts.get(p.id)
+      if (was?.key !== p.key) {
+        out.push(...p.rows, ...(was?.rows ?? []))
+      }
+    }
+    for (const [id, was] of this.layerParts) {
+      if (!l.parts.some((p) => p.id === id)) {
+        out.push(...was.rows)
+      }
+    }
+    return out
   }
 
   /** For tests and traces: the rows state. */

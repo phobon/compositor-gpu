@@ -150,8 +150,9 @@ is the one place an active region pass takes precedence over a layer
 transform. Layer transforms and active region passes are damage
 (`layers`:
 their groups' rows at this frame's and the last drawn frame's affine,
-padded by the region's `pad()`; nested or viewport-space ones fall
-back to the full redraw;
+padded by the region's `pad()`, per group and per video (`parts`: only
+the parts whose key changed are drawn); nested or viewport-space ones
+fall back to the full redraw;
 `docs/rd/experiments/2026-10-17-layer-damage.md`). Fixed
 (viewport-space) content is damage instead: when the scroll differs
 from the one it was last drawn at (`fixedScrollY`), its rows at both
@@ -541,7 +542,10 @@ and that each reports `changed() === false`, the material-pipeline
 settle counter; no active extra layer or region pass in the scene; the same
 batch list; no dirty layer) and runs the chain on last frame's texture
 (`renderPostOnly`, `stats().sceneReused`). `/fx` materials report
-`changed()` from their params, time use, trail and pointer reads.
+`changed()` from their params, time use, trail and pointer reads;
+scroll and viewport count only for code that reads `fx.scroll` /
+`fx.viewport`, a trail, the pointer or a `reach`, and a material whose
+`reach` is 'none' two frames running is unchanged.
 `sceneReuse: false` turns it off.
 
 **Replace-mode handoff:** `start()` doesn't hide the source. The canvas

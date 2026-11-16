@@ -7,7 +7,7 @@
 import type { DrawBatch } from '../scene/batches'
 import type { OpacityGroup } from '../scene/stacking'
 import type { FrameContext } from '../types'
-import type { ContentKey, LayerDamage, Rows } from './fill_planner'
+import type { ContentKey, LayerDamage, LayerPart, Rows } from './fill_planner'
 import type {
   ExtraLayer,
   LayerTransform,
@@ -116,6 +116,7 @@ export function snapshotEffects(
   // or sit in viewport space (`fallback`: the content counts as changed).
   let rows: Rows = []
   let layerKey = ''
+  const parts: LayerPart[] = []
   let live = false
   let fallback = false
   let regionActive = false
@@ -145,18 +146,24 @@ export function snapshotEffects(
       continue
     }
     const pad = (active ? Math.max(0, region?.pad() ?? 0) : 0) + 2
-    rows = addRows(rows, e[1] - pad, e[3] + pad)
+    const own: Rows = [[e[1] - pad, e[3] + pad]]
+    let key = ''
     if (t) {
-      layerKey += transformKey(id, t)
+      key += transformKey(id, t)
       const m = layerAffine(g, t, ctx)
       if (m) {
         const r = mapRect(m, e[0], e[1], e[2], e[3])
-        rows = addRows(rows, r[1] - pad, r[3] + pad)
+        own.push([r[1] - pad, r[3] + pad])
       }
     }
     if (active) {
-      layerKey += `${id}:r;`
+      key += `${id}:r;`
     }
+    for (const [a, b] of own) {
+      rows = addRows(rows, a, b)
+    }
+    layerKey += key
+    parts.push({ id: `g${id}`, key, rows: own })
   }
 
   // Videos: a new frame is damage in the rows they paint.
@@ -166,6 +173,7 @@ export function snapshotEffects(
       rows = addRows(rows, a, b)
     }
     layerKey += `m:${media.key}`
+    parts.push({ id: 'm', key: media.key, rows: media.rows })
     fallback ||= media.fixed
   }
 
@@ -237,7 +245,7 @@ export function snapshotEffects(
   return {
     effectOf,
     content,
-    layers: { rows, key: layerKey, live },
+    layers: { rows, key: layerKey, live, parts },
     reuseKey
   }
 }

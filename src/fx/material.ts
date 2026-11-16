@@ -277,6 +277,16 @@ export function createMaterial<S extends ParamSchema>(
   const usesPointer = [hooks, ...Object.values(o.raw ?? {})].some(
     (c) => typeof c === 'string' && /\bpointer\s*\./.test(c)
   )
+  // Whether scroll and viewport changes can change the draw: the code
+  // reads them, the trail is sampled at page - scroll, or the pointer or
+  // reach (viewport space) moves against the page.
+  const readsView =
+    trail !== null ||
+    usesPointer ||
+    (o.reach !== undefined && !o.vertex && !o.raw) ||
+    [hooks, ...Object.values(o.raw ?? {})].some(
+      (c) => typeof c === 'string' && /\bfx\s*\.\s*(scroll|viewport)\b/.test(c)
+    )
   let changedNow = true
   let reachNow: MaterialReach = 'all'
   const reachOf =
@@ -474,18 +484,23 @@ export function createMaterial<S extends ParamSchema>(
       f[AT.viewport] = ctx.width
       f[AT.viewport + 1] = ctx.height
       // dpr, glyph count, scroll and viewport (time is covered by
-      // `continuous`).
+      // `continuous`); scroll and viewport only when they reach the draw.
       for (let i = AT.dpr; i < MATERIAL_FX_BYTES / 4; i++) {
         if (f[i] !== lastFx[i]) {
-          changed = true
+          changed ||= readsView || i < AT.scroll
           lastFx[i] = f[i] ?? 0
         }
+      }
+      const reachWas = reachNow
+      reachNow = reachOf ? reachOf(handle, ctx) : 'all'
+      if (reachNow === 'none' && reachWas === 'none') {
+        // Drawn as the records' own colour, as last frame.
+        changed = false
       }
       changedNow = changed
       if (changed) {
         entry.version = (entry.version ?? 0) + 1
       }
-      reachNow = reachOf ? reachOf(handle, ctx) : 'all'
       device.queue.writeBuffer(fxBuf, 0, f)
     },
     destroy() {
